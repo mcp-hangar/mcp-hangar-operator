@@ -1,0 +1,37 @@
+# Binaries
+bin/
+!bin/.gitkeep
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+cover.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# AI assistant local settings
+.claude/
+**/.claude/
+.opencode/
+**/.opencode/
+
+# Planning docs (local only)
+.planning
+**/.planning
+
+# Build artifacts
+dist/
+
