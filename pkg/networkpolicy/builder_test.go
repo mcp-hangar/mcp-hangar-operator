@@ -47,17 +47,17 @@ func TestNetworkPolicyName(t *testing.T) {
 func TestBuildNetworkPolicy(t *testing.T) {
 	tests := []struct {
 		name     string
-		provider *mcpv1alpha1.MCPProvider
+		provider *mcpv1alpha1.MCPServer
 		validate func(t *testing.T, np *networkingv1.NetworkPolicy)
 	}{
 		{
 			name: "nil_capabilities",
-			provider: &mcpv1alpha1.MCPProvider{
+			provider: &mcpv1alpha1.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPProviderSpec{
+				Spec: mcpv1alpha1.MCPServerSpec{
 					Capabilities: nil,
 				},
 			},
@@ -67,13 +67,13 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "nil_network",
-			provider: &mcpv1alpha1.MCPProvider{
+			provider: &mcpv1alpha1.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPProviderSpec{
-					Capabilities: &mcpv1alpha1.ProviderCapabilities{
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 						Network: nil,
 					},
 				},
@@ -84,13 +84,13 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "empty_egress_dns_allowed",
-			provider: &mcpv1alpha1.MCPProvider{
+			provider: &mcpv1alpha1.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPProviderSpec{
-					Capabilities: &mcpv1alpha1.ProviderCapabilities{
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 							Egress:     []mcpv1alpha1.EgressRuleSpec{},
 							DNSAllowed: boolPtr(true),
@@ -110,13 +110,13 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "empty_egress_dns_default_nil",
-			provider: &mcpv1alpha1.MCPProvider{
+			provider: &mcpv1alpha1.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPProviderSpec{
-					Capabilities: &mcpv1alpha1.ProviderCapabilities{
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 							Egress:     []mcpv1alpha1.EgressRuleSpec{},
 							DNSAllowed: nil, // default is true
@@ -133,13 +133,13 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "cidr_rule_with_port",
-			provider: &mcpv1alpha1.MCPProvider{
+			provider: &mcpv1alpha1.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPProviderSpec{
-					Capabilities: &mcpv1alpha1.ProviderCapabilities{
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 							Egress: []mcpv1alpha1.EgressRuleSpec{
 								{
@@ -173,13 +173,13 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "host_only_rule",
-			provider: &mcpv1alpha1.MCPProvider{
+			provider: &mcpv1alpha1.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPProviderSpec{
-					Capabilities: &mcpv1alpha1.ProviderCapabilities{
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 							Egress: []mcpv1alpha1.EgressRuleSpec{
 								{
@@ -215,13 +215,13 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "port_zero_any_port",
-			provider: &mcpv1alpha1.MCPProvider{
+			provider: &mcpv1alpha1.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPProviderSpec{
-					Capabilities: &mcpv1alpha1.ProviderCapabilities{
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 							Egress: []mcpv1alpha1.EgressRuleSpec{
 								{
@@ -250,13 +250,13 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "dns_disabled",
-			provider: &mcpv1alpha1.MCPProvider{
+			provider: &mcpv1alpha1.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPProviderSpec{
-					Capabilities: &mcpv1alpha1.ProviderCapabilities{
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 							Egress: []mcpv1alpha1.EgressRuleSpec{
 								{
@@ -282,13 +282,13 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "loopback_allowed",
-			provider: &mcpv1alpha1.MCPProvider{
+			provider: &mcpv1alpha1.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPProviderSpec{
-					Capabilities: &mcpv1alpha1.ProviderCapabilities{
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 							Egress:          []mcpv1alpha1.EgressRuleSpec{},
 							DNSAllowed:      boolPtr(true),
@@ -310,13 +310,13 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "multiple_rules",
-			provider: &mcpv1alpha1.MCPProvider{
+			provider: &mcpv1alpha1.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "multi-provider",
 					Namespace: "production",
 				},
-				Spec: mcpv1alpha1.MCPProviderSpec{
-					Capabilities: &mcpv1alpha1.ProviderCapabilities{
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 							Egress: []mcpv1alpha1.EgressRuleSpec{
 								{
@@ -356,13 +356,13 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "protocol_mapping_https_to_tcp",
-			provider: &mcpv1alpha1.MCPProvider{
+			provider: &mcpv1alpha1.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPProviderSpec{
-					Capabilities: &mcpv1alpha1.ProviderCapabilities{
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 							Egress: []mcpv1alpha1.EgressRuleSpec{
 								{Host: "a", Port: 443, Protocol: "https", CIDR: "10.0.0.1/32"},
@@ -381,13 +381,13 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "protocol_mapping_any_omits_protocol",
-			provider: &mcpv1alpha1.MCPProvider{
+			provider: &mcpv1alpha1.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPProviderSpec{
-					Capabilities: &mcpv1alpha1.ProviderCapabilities{
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 							Egress: []mcpv1alpha1.EgressRuleSpec{
 								{Host: "a", Port: 8080, Protocol: "any", CIDR: "10.0.0.1/32"},
@@ -406,13 +406,13 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "protocol_mapping_http_grpc_tcp",
-			provider: &mcpv1alpha1.MCPProvider{
+			provider: &mcpv1alpha1.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPProviderSpec{
-					Capabilities: &mcpv1alpha1.ProviderCapabilities{
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 							Egress: []mcpv1alpha1.EgressRuleSpec{
 								{Host: "a", Port: 80, Protocol: "http", CIDR: "10.0.0.1/32"},
@@ -447,13 +447,13 @@ func TestBuildNetworkPolicy(t *testing.T) {
 // --- Labels ---
 
 func TestBuildNetworkPolicy_Labels(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Capabilities: &mcpv1alpha1.ProviderCapabilities{
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 					DNSAllowed: boolPtr(true),
 				},
@@ -472,13 +472,13 @@ func TestBuildNetworkPolicy_Labels(t *testing.T) {
 // --- PodSelector ---
 
 func TestBuildNetworkPolicy_PodSelector(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "math-provider",
 			Namespace: "mcp-system",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Capabilities: &mcpv1alpha1.ProviderCapabilities{
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 					DNSAllowed: boolPtr(true),
 				},

@@ -19,23 +19,23 @@ import (
 	v1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
 
-// --- MCPProvider conversion ---
+// --- MCPServer conversion ---
 
-// Ensure MCPProvider implements conversion.Convertible
-var _ conversion.Convertible = &MCPProvider{}
+// Ensure MCPServer implements conversion.Convertible
+var _ conversion.Convertible = &MCPServer{}
 
-// ConvertTo converts this v1alpha1 MCPProvider to the Hub version (v1alpha2).
-func (src *MCPProvider) ConvertTo(dstRaw conversion.Hub) error {
-	dst, ok := dstRaw.(*v1alpha2.MCPProvider)
+// ConvertTo converts this v1alpha1 MCPServer to the Hub version (v1alpha2).
+func (src *MCPServer) ConvertTo(dstRaw conversion.Hub) error {
+	dst, ok := dstRaw.(*v1alpha2.MCPServer)
 	if !ok {
-		return fmt.Errorf("expected *v1alpha2.MCPProvider, got %T", dstRaw)
+		return fmt.Errorf("expected *v1alpha2.MCPServer, got %T", dstRaw)
 	}
 
 	// ObjectMeta
 	dst.ObjectMeta = src.ObjectMeta
 
 	// Spec: direct fields
-	dst.Spec.Mode = v1alpha2.ProviderMode(src.Spec.Mode)
+	dst.Spec.Mode = v1alpha2.MCPServerMode(src.Spec.Mode)
 	dst.Spec.Image = src.Spec.Image
 	dst.Spec.Command = src.Spec.Command
 	dst.Spec.Args = src.Spec.Args
@@ -109,11 +109,11 @@ func (src *MCPProvider) ConvertTo(dstRaw conversion.Hub) error {
 	}
 
 	if src.Spec.Capabilities != nil {
-		dst.Spec.Capabilities = convertProviderCapabilitiesTo(src.Spec.Capabilities)
+		dst.Spec.Capabilities = convertMCPServerCapabilitiesTo(src.Spec.Capabilities)
 	}
 
 	// Status
-	dst.Status.State = v1alpha2.ProviderState(src.Status.State)
+	dst.Status.State = v1alpha2.MCPServerState(src.Status.State)
 	dst.Status.Phase = src.Status.Phase
 	dst.Status.Replicas = src.Status.Replicas
 	dst.Status.ReadyReplicas = src.Status.ReadyReplicas
@@ -133,7 +133,7 @@ func (src *MCPProvider) ConvertTo(dstRaw conversion.Hub) error {
 
 	// Status: capabilities
 	if src.Status.Capabilities != nil {
-		dst.Status.Capabilities = convertProviderCapabilitiesTo(src.Status.Capabilities)
+		dst.Status.Capabilities = convertMCPServerCapabilitiesTo(src.Status.Capabilities)
 	}
 
 	// Status: violations
@@ -142,18 +142,18 @@ func (src *MCPProvider) ConvertTo(dstRaw conversion.Hub) error {
 	return nil
 }
 
-// ConvertFrom converts the Hub version (v1alpha2) to this v1alpha1 MCPProvider.
-func (dst *MCPProvider) ConvertFrom(srcRaw conversion.Hub) error {
-	src, ok := srcRaw.(*v1alpha2.MCPProvider)
+// ConvertFrom converts the Hub version (v1alpha2) to this v1alpha1 MCPServer.
+func (dst *MCPServer) ConvertFrom(srcRaw conversion.Hub) error {
+	src, ok := srcRaw.(*v1alpha2.MCPServer)
 	if !ok {
-		return fmt.Errorf("expected *v1alpha2.MCPProvider, got %T", srcRaw)
+		return fmt.Errorf("expected *v1alpha2.MCPServer, got %T", srcRaw)
 	}
 
 	// ObjectMeta
 	dst.ObjectMeta = src.ObjectMeta
 
 	// Spec: direct fields
-	dst.Spec.Mode = ProviderMode(src.Spec.Mode)
+	dst.Spec.Mode = MCPServerMode(src.Spec.Mode)
 	dst.Spec.Image = src.Spec.Image
 	dst.Spec.Command = src.Spec.Command
 	dst.Spec.Args = src.Spec.Args
@@ -214,11 +214,11 @@ func (dst *MCPProvider) ConvertFrom(srcRaw conversion.Hub) error {
 	}
 
 	if src.Spec.Capabilities != nil {
-		dst.Spec.Capabilities = convertProviderCapabilitiesFrom(src.Spec.Capabilities)
+		dst.Spec.Capabilities = convertMCPServerCapabilitiesFrom(src.Spec.Capabilities)
 	}
 
 	// Status
-	dst.Status.State = ProviderState(src.Status.State)
+	dst.Status.State = MCPServerState(src.Status.State)
 	dst.Status.Phase = src.Status.Phase
 	dst.Status.Replicas = src.Status.Replicas
 	dst.Status.ReadyReplicas = src.Status.ReadyReplicas
@@ -238,7 +238,7 @@ func (dst *MCPProvider) ConvertFrom(srcRaw conversion.Hub) error {
 
 	// Status: capabilities
 	if src.Status.Capabilities != nil {
-		dst.Status.Capabilities = convertProviderCapabilitiesFrom(src.Status.Capabilities)
+		dst.Status.Capabilities = convertMCPServerCapabilitiesFrom(src.Status.Capabilities)
 	}
 
 	// Status: violations
@@ -247,16 +247,16 @@ func (dst *MCPProvider) ConvertFrom(srcRaw conversion.Hub) error {
 	return nil
 }
 
-// --- MCPProviderGroup conversion ---
+// --- MCPServerGroup conversion ---
 
-// Ensure MCPProviderGroup implements conversion.Convertible
-var _ conversion.Convertible = &MCPProviderGroup{}
+// Ensure MCPServerGroup implements conversion.Convertible
+var _ conversion.Convertible = &MCPServerGroup{}
 
-// ConvertTo converts this v1alpha1 MCPProviderGroup to the Hub version (v1alpha2).
-func (src *MCPProviderGroup) ConvertTo(dstRaw conversion.Hub) error {
-	dst, ok := dstRaw.(*v1alpha2.MCPProviderGroup)
+// ConvertTo converts this v1alpha1 MCPServerGroup to the Hub version (v1alpha2).
+func (src *MCPServerGroup) ConvertTo(dstRaw conversion.Hub) error {
+	dst, ok := dstRaw.(*v1alpha2.MCPServerGroup)
 	if !ok {
-		return fmt.Errorf("expected *v1alpha2.MCPProviderGroup, got %T", dstRaw)
+		return fmt.Errorf("expected *v1alpha2.MCPServerGroup, got %T", dstRaw)
 	}
 
 	dst.ObjectMeta = src.ObjectMeta
@@ -318,7 +318,7 @@ func (src *MCPProviderGroup) ConvertTo(dstRaw conversion.Hub) error {
 	dst.Status.Conditions = conditionsToStandard(src.Status.Conditions)
 
 	for _, p := range src.Status.Providers {
-		dst.Status.Providers = append(dst.Status.Providers, v1alpha2.ProviderMemberStatus{
+		dst.Status.Providers = append(dst.Status.Providers, v1alpha2.MCPServerMemberStatus{
 			Name:              p.Name,
 			Namespace:         p.Namespace,
 			State:             p.State,
@@ -331,11 +331,11 @@ func (src *MCPProviderGroup) ConvertTo(dstRaw conversion.Hub) error {
 	return nil
 }
 
-// ConvertFrom converts the Hub version (v1alpha2) to this v1alpha1 MCPProviderGroup.
-func (dst *MCPProviderGroup) ConvertFrom(srcRaw conversion.Hub) error {
-	src, ok := srcRaw.(*v1alpha2.MCPProviderGroup)
+// ConvertFrom converts the Hub version (v1alpha2) to this v1alpha1 MCPServerGroup.
+func (dst *MCPServerGroup) ConvertFrom(srcRaw conversion.Hub) error {
+	src, ok := srcRaw.(*v1alpha2.MCPServerGroup)
 	if !ok {
-		return fmt.Errorf("expected *v1alpha2.MCPProviderGroup, got %T", srcRaw)
+		return fmt.Errorf("expected *v1alpha2.MCPServerGroup, got %T", srcRaw)
 	}
 
 	dst.ObjectMeta = src.ObjectMeta
@@ -389,7 +389,7 @@ func (dst *MCPProviderGroup) ConvertFrom(srcRaw conversion.Hub) error {
 	dst.Status.Conditions = conditionsFromStandard(src.Status.Conditions)
 
 	for _, p := range src.Status.Providers {
-		dst.Status.Providers = append(dst.Status.Providers, ProviderMemberStatus{
+		dst.Status.Providers = append(dst.Status.Providers, MCPServerMemberStatus{
 			Name:              p.Name,
 			Namespace:         p.Namespace,
 			State:             p.State,
@@ -459,23 +459,23 @@ func (src *MCPDiscoverySource) ConvertTo(dstRaw conversion.Hub) error {
 		}
 	}
 
-	if src.Spec.ProviderTemplate != nil {
-		dst.Spec.ProviderTemplate = &v1alpha2.ProviderTemplateConfig{}
-		if src.Spec.ProviderTemplate.Metadata != nil {
-			dst.Spec.ProviderTemplate.Metadata = &v1alpha2.TemplateMetadata{
-				Labels:      src.Spec.ProviderTemplate.Metadata.Labels,
-				Annotations: src.Spec.ProviderTemplate.Metadata.Annotations,
+	if src.Spec.MCPServerTemplate != nil {
+		dst.Spec.MCPServerTemplate = &v1alpha2.MCPServerTemplateConfig{}
+		if src.Spec.MCPServerTemplate.Metadata != nil {
+			dst.Spec.MCPServerTemplate.Metadata = &v1alpha2.TemplateMetadata{
+				Labels:      src.Spec.MCPServerTemplate.Metadata.Labels,
+				Annotations: src.Spec.MCPServerTemplate.Metadata.Annotations,
 			}
 		}
-		if src.Spec.ProviderTemplate.Spec != nil {
-			// Convert the embedded MCPProviderSpec via a temporary MCPProvider round-trip.
+		if src.Spec.MCPServerTemplate.Spec != nil {
+			// Convert the embedded MCPServerSpec via a temporary MCPServer round-trip.
 			// This reuses the provider conversion logic for all the duration and nested fields.
-			tmpSrc := &MCPProvider{Spec: *src.Spec.ProviderTemplate.Spec}
-			tmpDst := &v1alpha2.MCPProvider{}
+			tmpSrc := &MCPServer{Spec: *src.Spec.MCPServerTemplate.Spec}
+			tmpDst := &v1alpha2.MCPServer{}
 			if err := tmpSrc.ConvertTo(tmpDst); err != nil {
 				return fmt.Errorf("converting spec.providerTemplate.spec: %w", err)
 			}
-			dst.Spec.ProviderTemplate.Spec = &tmpDst.Spec
+			dst.Spec.MCPServerTemplate.Spec = &tmpDst.Spec
 		}
 	}
 
@@ -508,8 +508,8 @@ func (src *MCPDiscoverySource) ConvertTo(dstRaw conversion.Hub) error {
 
 	dst.Status.Conditions = conditionsToStandard(src.Status.Conditions)
 
-	for _, p := range src.Status.DiscoveredProviders {
-		dst.Status.DiscoveredProviders = append(dst.Status.DiscoveredProviders, v1alpha2.DiscoveredProvider{
+	for _, p := range src.Status.DiscoveredMCPServers {
+		dst.Status.DiscoveredMCPServers = append(dst.Status.DiscoveredMCPServers, v1alpha2.DiscoveredMCPServer{
 			Name:         p.Name,
 			Source:       p.Source,
 			DiscoveredAt: p.DiscoveredAt,
@@ -569,21 +569,21 @@ func (dst *MCPDiscoverySource) ConvertFrom(srcRaw conversion.Hub) error {
 		}
 	}
 
-	if src.Spec.ProviderTemplate != nil {
-		dst.Spec.ProviderTemplate = &ProviderTemplateConfig{}
-		if src.Spec.ProviderTemplate.Metadata != nil {
-			dst.Spec.ProviderTemplate.Metadata = &TemplateMetadata{
-				Labels:      src.Spec.ProviderTemplate.Metadata.Labels,
-				Annotations: src.Spec.ProviderTemplate.Metadata.Annotations,
+	if src.Spec.MCPServerTemplate != nil {
+		dst.Spec.MCPServerTemplate = &MCPServerTemplateConfig{}
+		if src.Spec.MCPServerTemplate.Metadata != nil {
+			dst.Spec.MCPServerTemplate.Metadata = &TemplateMetadata{
+				Labels:      src.Spec.MCPServerTemplate.Metadata.Labels,
+				Annotations: src.Spec.MCPServerTemplate.Metadata.Annotations,
 			}
 		}
-		if src.Spec.ProviderTemplate.Spec != nil {
-			tmpSrc := &v1alpha2.MCPProvider{Spec: *src.Spec.ProviderTemplate.Spec}
-			tmpDst := &MCPProvider{}
+		if src.Spec.MCPServerTemplate.Spec != nil {
+			tmpSrc := &v1alpha2.MCPServer{Spec: *src.Spec.MCPServerTemplate.Spec}
+			tmpDst := &MCPServer{}
 			if err := tmpDst.ConvertFrom(tmpSrc); err != nil {
 				return fmt.Errorf("converting spec.providerTemplate.spec: %w", err)
 			}
-			dst.Spec.ProviderTemplate.Spec = &tmpDst.Spec
+			dst.Spec.MCPServerTemplate.Spec = &tmpDst.Spec
 		}
 	}
 
@@ -613,8 +613,8 @@ func (dst *MCPDiscoverySource) ConvertFrom(srcRaw conversion.Hub) error {
 
 	dst.Status.Conditions = conditionsFromStandard(src.Status.Conditions)
 
-	for _, p := range src.Status.DiscoveredProviders {
-		dst.Status.DiscoveredProviders = append(dst.Status.DiscoveredProviders, DiscoveredProvider{
+	for _, p := range src.Status.DiscoveredMCPServers {
+		dst.Status.DiscoveredMCPServers = append(dst.Status.DiscoveredMCPServers, DiscoveredMCPServer{
 			Name:         p.Name,
 			Source:       p.Source,
 			DiscoveredAt: p.DiscoveredAt,
@@ -934,8 +934,8 @@ func convertObservabilityFrom(src *v1alpha2.ObservabilityConfig) *ObservabilityC
 	return dst
 }
 
-func convertProviderCapabilitiesTo(src *ProviderCapabilities) *v1alpha2.ProviderCapabilities {
-	dst := &v1alpha2.ProviderCapabilities{
+func convertMCPServerCapabilitiesTo(src *MCPServerCapabilities) *v1alpha2.MCPServerCapabilities {
+	dst := &v1alpha2.MCPServerCapabilities{
 		EnforcementMode: src.EnforcementMode,
 	}
 	if src.Network != nil {
@@ -972,8 +972,8 @@ func convertProviderCapabilitiesTo(src *ProviderCapabilities) *v1alpha2.Provider
 	return dst
 }
 
-func convertProviderCapabilitiesFrom(src *v1alpha2.ProviderCapabilities) *ProviderCapabilities {
-	dst := &ProviderCapabilities{
+func convertMCPServerCapabilitiesFrom(src *v1alpha2.MCPServerCapabilities) *MCPServerCapabilities {
+	dst := &MCPServerCapabilities{
 		EnforcementMode: src.EnforcementMode,
 	}
 	if src.Network != nil {

@@ -14,46 +14,46 @@ import (
 
 // --- Helper constructors ---
 
-func boolPtr(b bool) *bool       { return &b }
-func int32Ptr(i int32) *int32    { return &i }
-func int64Ptr(i int64) *int64    { return &i }
+func boolPtr(b bool) *bool    { return &b }
+func int32Ptr(i int32) *int32 { return &i }
+func int64Ptr(i int64) *int64 { return &i }
 
 func durationPtr(d time.Duration) *metav1.Duration {
 	return &metav1.Duration{Duration: d}
 }
 
-// --- MCPProvider round-trip tests ---
+// --- MCPServer round-trip tests ---
 
-func TestMCPProvider_ConvertTo_MinimalSpec(t *testing.T) {
-	src := &MCPProvider{
+func TestMCPServer_ConvertTo_MinimalSpec(t *testing.T) {
+	src := &MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: MCPProviderSpec{
-			Mode:  ProviderModeContainer,
+		Spec: MCPServerSpec{
+			Mode:  MCPServerModeContainer,
 			Image: "example/provider:latest",
 		},
 	}
 
-	dst := &v1alpha2.MCPProvider{}
+	dst := &v1alpha2.MCPServer{}
 	require.NoError(t, src.ConvertTo(dst))
 
 	assert.Equal(t, "test-provider", dst.Name)
-	assert.Equal(t, v1alpha2.ProviderModeContainer, dst.Spec.Mode)
+	assert.Equal(t, v1alpha2.MCPServerModeContainer, dst.Spec.Mode)
 	assert.Equal(t, "example/provider:latest", dst.Spec.Image)
 	assert.Nil(t, dst.Spec.IdleTTL)
 }
 
-func TestMCPProvider_RoundTrip_FullSpec(t *testing.T) {
-	original := &MCPProvider{
+func TestMCPServer_RoundTrip_FullSpec(t *testing.T) {
+	original := &MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "full-provider",
 			Namespace: "mcp-system",
 			Labels:    map[string]string{"app": "mcp"},
 		},
-		Spec: MCPProviderSpec{
-			Mode:                ProviderModeContainer,
+		Spec: MCPServerSpec{
+			Mode:                MCPServerModeContainer,
 			Image:               "ghcr.io/example/math-mcp:v1.2.3",
 			Command:             []string{"/bin/server"},
 			Args:                []string{"--port=8080"},
@@ -132,7 +132,7 @@ func TestMCPProvider_RoundTrip_FullSpec(t *testing.T) {
 				Tracing: &TracingConfig{Enabled: true, SamplingRate: "0.1"},
 				Metrics: &MetricsConfig{Enabled: true, Port: 9090},
 			},
-			Capabilities: &ProviderCapabilities{
+			Capabilities: &MCPServerCapabilities{
 				EnforcementMode: "block",
 				Network: &NetworkCapabilitiesSpec{
 					Egress:          []EgressRuleSpec{{Host: "api.example.com", Port: 443, Protocol: "https"}},
@@ -153,8 +153,8 @@ func TestMCPProvider_RoundTrip_FullSpec(t *testing.T) {
 				},
 			},
 		},
-		Status: MCPProviderStatus{
-			State:               ProviderStateReady,
+		Status: MCPServerStatus{
+			State:               MCPServerStateReady,
 			Phase:               "Running",
 			Replicas:            3,
 			ReadyReplicas:       3,
@@ -192,7 +192,7 @@ func TestMCPProvider_RoundTrip_FullSpec(t *testing.T) {
 	}
 
 	// Convert v1alpha1 -> v1alpha2
-	hub := &v1alpha2.MCPProvider{}
+	hub := &v1alpha2.MCPServer{}
 	require.NoError(t, original.ConvertTo(hub))
 
 	// Verify key v1alpha2 improvements
@@ -208,7 +208,7 @@ func TestMCPProvider_RoundTrip_FullSpec(t *testing.T) {
 	assert.Equal(t, int64(5), hub.Status.Conditions[0].ObservedGeneration)
 
 	// Convert v1alpha2 -> v1alpha1 (round-trip)
-	roundTripped := &MCPProvider{}
+	roundTripped := &MCPServer{}
 	require.NoError(t, roundTripped.ConvertFrom(hub))
 
 	// Verify round-trip fidelity
@@ -232,30 +232,30 @@ func TestMCPProvider_RoundTrip_FullSpec(t *testing.T) {
 	assert.Equal(t, original.Status.Conditions[0].ObservedGeneration, roundTripped.Status.Conditions[0].ObservedGeneration)
 }
 
-func TestMCPProvider_ConvertTo_InvalidDuration(t *testing.T) {
-	src := &MCPProvider{
-		Spec: MCPProviderSpec{
-			Mode:    ProviderModeContainer,
+func TestMCPServer_ConvertTo_InvalidDuration(t *testing.T) {
+	src := &MCPServer{
+		Spec: MCPServerSpec{
+			Mode:    MCPServerModeContainer,
 			Image:   "test:latest",
 			IdleTTL: "not-a-duration",
 		},
 	}
 
-	dst := &v1alpha2.MCPProvider{}
+	dst := &v1alpha2.MCPServer{}
 	err := src.ConvertTo(dst)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "spec.idleTTL")
 }
 
-func TestMCPProvider_ConvertTo_EmptyDurations(t *testing.T) {
-	src := &MCPProvider{
-		Spec: MCPProviderSpec{
-			Mode:  ProviderModeRemote,
+func TestMCPServer_ConvertTo_EmptyDurations(t *testing.T) {
+	src := &MCPServer{
+		Spec: MCPServerSpec{
+			Mode:     MCPServerModeRemote,
 			Endpoint: "http://example.com",
 		},
 	}
 
-	dst := &v1alpha2.MCPProvider{}
+	dst := &v1alpha2.MCPServer{}
 	require.NoError(t, src.ConvertTo(dst))
 
 	assert.Nil(t, dst.Spec.IdleTTL)
@@ -263,29 +263,29 @@ func TestMCPProvider_ConvertTo_EmptyDurations(t *testing.T) {
 	assert.Nil(t, dst.Spec.ShutdownGracePeriod)
 }
 
-func TestMCPProvider_ConvertTo_WrongType(t *testing.T) {
-	src := &MCPProvider{}
-	err := src.ConvertTo(&v1alpha2.MCPProviderGroup{})
+func TestMCPServer_ConvertTo_WrongType(t *testing.T) {
+	src := &MCPServer{}
+	err := src.ConvertTo(&v1alpha2.MCPServerGroup{})
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "expected *v1alpha2.MCPProvider")
+	assert.Contains(t, err.Error(), "expected *v1alpha2.MCPServer")
 }
 
-func TestMCPProvider_ConvertFrom_WrongType(t *testing.T) {
-	dst := &MCPProvider{}
-	err := dst.ConvertFrom(&v1alpha2.MCPProviderGroup{})
+func TestMCPServer_ConvertFrom_WrongType(t *testing.T) {
+	dst := &MCPServer{}
+	err := dst.ConvertFrom(&v1alpha2.MCPServerGroup{})
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "expected *v1alpha2.MCPProvider")
+	assert.Contains(t, err.Error(), "expected *v1alpha2.MCPServer")
 }
 
-// --- MCPProviderGroup round-trip tests ---
+// --- MCPServerGroup round-trip tests ---
 
-func TestMCPProviderGroup_RoundTrip(t *testing.T) {
-	original := &MCPProviderGroup{
+func TestMCPServerGroup_RoundTrip(t *testing.T) {
+	original := &MCPServerGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-group",
 			Namespace: "default",
 		},
-		Spec: MCPProviderGroupSpec{
+		Spec: MCPServerGroupSpec{
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{"tier": "backend"},
 			},
@@ -313,7 +313,7 @@ func TestMCPProviderGroup_RoundTrip(t *testing.T) {
 				ResetTimeout:     "2m0s",
 			},
 		},
-		Status: MCPProviderGroupStatus{
+		Status: MCPServerGroupStatus{
 			ProviderCount:      5,
 			ReadyCount:         4,
 			DegradedCount:      1,
@@ -324,13 +324,13 @@ func TestMCPProviderGroup_RoundTrip(t *testing.T) {
 			Conditions: []Condition{
 				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Healthy", Message: "Group is healthy"},
 			},
-			Providers: []ProviderMemberStatus{
+			Providers: []MCPServerMemberStatus{
 				{Name: "p1", Namespace: "default", State: "Ready", Weight: 10, ActiveConnections: 5},
 			},
 		},
 	}
 
-	hub := &v1alpha2.MCPProviderGroup{}
+	hub := &v1alpha2.MCPServerGroup{}
 	require.NoError(t, original.ConvertTo(hub))
 
 	// Verify duration conversions
@@ -338,7 +338,7 @@ func TestMCPProviderGroup_RoundTrip(t *testing.T) {
 	assert.Equal(t, durationPtr(15*time.Minute), hub.Spec.SessionAffinity.TTL)
 	assert.Equal(t, durationPtr(2*time.Minute), hub.Spec.CircuitBreaker.ResetTimeout)
 
-	roundTripped := &MCPProviderGroup{}
+	roundTripped := &MCPServerGroup{}
 	require.NoError(t, roundTripped.ConvertFrom(hub))
 
 	assert.Equal(t, original.Spec.Selector, roundTripped.Spec.Selector)
@@ -353,9 +353,9 @@ func TestMCPProviderGroup_RoundTrip(t *testing.T) {
 	assert.Equal(t, original.Status.Providers[0].Name, roundTripped.Status.Providers[0].Name)
 }
 
-func TestMCPProviderGroup_ConvertTo_WrongType(t *testing.T) {
-	src := &MCPProviderGroup{}
-	err := src.ConvertTo(&v1alpha2.MCPProvider{})
+func TestMCPServerGroup_ConvertTo_WrongType(t *testing.T) {
+	src := &MCPServerGroup{}
+	err := src.ConvertTo(&v1alpha2.MCPServer{})
 	assert.Error(t, err)
 }
 
@@ -388,12 +388,12 @@ func TestMCPDiscoverySource_RoundTrip(t *testing.T) {
 			ServiceDiscovery: &ServiceDiscoveryConfig{
 				Selector: map[string]string{"type": "mcp"}, PortName: "mcp", Protocol: "https",
 			},
-			ProviderTemplate: &ProviderTemplateConfig{
+			MCPServerTemplate: &MCPServerTemplateConfig{
 				Metadata: &TemplateMetadata{
 					Labels: map[string]string{"managed-by": "discovery"},
 				},
-				Spec: &MCPProviderSpec{
-					Mode:           ProviderModeContainer,
+				Spec: &MCPServerSpec{
+					Mode:           MCPServerModeContainer,
 					Image:          "default:latest",
 					IdleTTL:        "10m0s",
 					StartupTimeout: "1m0s",
@@ -420,7 +420,7 @@ func TestMCPDiscoverySource_RoundTrip(t *testing.T) {
 			Conditions: []Condition{
 				{Type: "Synced", Status: metav1.ConditionTrue, Reason: "SyncComplete", Message: "All discovered"},
 			},
-			DiscoveredProviders: []DiscoveredProvider{
+			DiscoveredMCPServers: []DiscoveredMCPServer{
 				{Name: "math-provider", Source: "annotation:default/math-pod", Managed: true},
 			},
 		},
@@ -434,10 +434,10 @@ func TestMCPDiscoverySource_RoundTrip(t *testing.T) {
 	assert.Equal(t, durationPtr(3*time.Second), hub.Status.LastSyncDuration)
 
 	// Verify embedded template spec durations
-	require.NotNil(t, hub.Spec.ProviderTemplate)
-	require.NotNil(t, hub.Spec.ProviderTemplate.Spec)
-	assert.Equal(t, durationPtr(10*time.Minute), hub.Spec.ProviderTemplate.Spec.IdleTTL)
-	assert.Equal(t, durationPtr(1*time.Minute), hub.Spec.ProviderTemplate.Spec.StartupTimeout)
+	require.NotNil(t, hub.Spec.MCPServerTemplate)
+	require.NotNil(t, hub.Spec.MCPServerTemplate.Spec)
+	assert.Equal(t, durationPtr(10*time.Minute), hub.Spec.MCPServerTemplate.Spec.IdleTTL)
+	assert.Equal(t, durationPtr(1*time.Minute), hub.Spec.MCPServerTemplate.Spec.StartupTimeout)
 
 	roundTripped := &MCPDiscoverySource{}
 	require.NoError(t, roundTripped.ConvertFrom(hub))
@@ -451,25 +451,25 @@ func TestMCPDiscoverySource_RoundTrip(t *testing.T) {
 	assert.Equal(t, original.Spec.Annotations, roundTripped.Spec.Annotations)
 	assert.Equal(t, original.Spec.ServiceDiscovery, roundTripped.Spec.ServiceDiscovery)
 
-	// ProviderTemplate round-trip (includes embedded duration conversions)
-	require.NotNil(t, roundTripped.Spec.ProviderTemplate)
-	assert.Equal(t, original.Spec.ProviderTemplate.Metadata, roundTripped.Spec.ProviderTemplate.Metadata)
-	require.NotNil(t, roundTripped.Spec.ProviderTemplate.Spec)
-	assert.Equal(t, original.Spec.ProviderTemplate.Spec.Image, roundTripped.Spec.ProviderTemplate.Spec.Image)
-	assert.Equal(t, original.Spec.ProviderTemplate.Spec.IdleTTL, roundTripped.Spec.ProviderTemplate.Spec.IdleTTL)
-	assert.Equal(t, original.Spec.ProviderTemplate.Spec.StartupTimeout, roundTripped.Spec.ProviderTemplate.Spec.StartupTimeout)
+	// MCPServerTemplate round-trip (includes embedded duration conversions)
+	require.NotNil(t, roundTripped.Spec.MCPServerTemplate)
+	assert.Equal(t, original.Spec.MCPServerTemplate.Metadata, roundTripped.Spec.MCPServerTemplate.Metadata)
+	require.NotNil(t, roundTripped.Spec.MCPServerTemplate.Spec)
+	assert.Equal(t, original.Spec.MCPServerTemplate.Spec.Image, roundTripped.Spec.MCPServerTemplate.Spec.Image)
+	assert.Equal(t, original.Spec.MCPServerTemplate.Spec.IdleTTL, roundTripped.Spec.MCPServerTemplate.Spec.IdleTTL)
+	assert.Equal(t, original.Spec.MCPServerTemplate.Spec.StartupTimeout, roundTripped.Spec.MCPServerTemplate.Spec.StartupTimeout)
 
 	assert.Equal(t, original.Spec.Filters, roundTripped.Spec.Filters)
 	assert.Equal(t, original.Spec.Ownership, roundTripped.Spec.Ownership)
 	assert.Equal(t, original.Status.DiscoveredCount, roundTripped.Status.DiscoveredCount)
 	assert.Equal(t, original.Status.LastSyncDuration, roundTripped.Status.LastSyncDuration)
-	require.Len(t, roundTripped.Status.DiscoveredProviders, 1)
-	assert.Equal(t, original.Status.DiscoveredProviders[0].Name, roundTripped.Status.DiscoveredProviders[0].Name)
+	require.Len(t, roundTripped.Status.DiscoveredMCPServers, 1)
+	assert.Equal(t, original.Status.DiscoveredMCPServers[0].Name, roundTripped.Status.DiscoveredMCPServers[0].Name)
 }
 
 func TestMCPDiscoverySource_ConvertTo_WrongType(t *testing.T) {
 	src := &MCPDiscoverySource{}
-	err := src.ConvertTo(&v1alpha2.MCPProvider{})
+	err := src.ConvertTo(&v1alpha2.MCPServer{})
 	assert.Error(t, err)
 }
 

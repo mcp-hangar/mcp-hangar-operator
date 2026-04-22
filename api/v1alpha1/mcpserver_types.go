@@ -6,38 +6,38 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ProviderMode defines the execution mode for a provider
+// MCPServerMode defines the execution mode for a provider
 // +kubebuilder:validation:Enum=container;remote
-type ProviderMode string
+type MCPServerMode string
 
 const (
-	// ProviderModeContainer runs the provider as a Kubernetes Pod
-	ProviderModeContainer ProviderMode = "container"
-	// ProviderModeRemote connects to an external HTTP endpoint
-	ProviderModeRemote ProviderMode = "remote"
+	// MCPServerModeContainer runs the provider as a Kubernetes Pod
+	MCPServerModeContainer MCPServerMode = "container"
+	// MCPServerModeRemote connects to an external HTTP endpoint
+	MCPServerModeRemote MCPServerMode = "remote"
 )
 
-// ProviderState represents the current state of a provider
+// MCPServerState represents the current state of a provider
 // +kubebuilder:validation:Enum=Cold;Initializing;Ready;Degraded;Dead
-type ProviderState string
+type MCPServerState string
 
 const (
-	ProviderStateCold         ProviderState = "Cold"
-	ProviderStateInitializing ProviderState = "Initializing"
-	ProviderStateReady        ProviderState = "Ready"
-	ProviderStateDegraded     ProviderState = "Degraded"
-	ProviderStateDead         ProviderState = "Dead"
+	MCPServerStateCold         MCPServerState = "Cold"
+	MCPServerStateInitializing MCPServerState = "Initializing"
+	MCPServerStateReady        MCPServerState = "Ready"
+	MCPServerStateDegraded     MCPServerState = "Degraded"
+	MCPServerStateDead         MCPServerState = "Dead"
 )
 
 // MaxViolationRecords is the maximum number of violation records kept in status.
 // Prevents CRD status size explosion (etcd ~1.5MB limit).
 const MaxViolationRecords = 100
 
-// MCPProviderSpec defines the desired state of MCPProvider
-type MCPProviderSpec struct {
+// MCPServerSpec defines the desired state of MCPServer
+type MCPServerSpec struct {
 	// Mode is the provider execution mode (container or remote)
 	// +kubebuilder:validation:Required
-	Mode ProviderMode `json:"mode"`
+	Mode MCPServerMode `json:"mode"`
 
 	// Image is the container image for the provider (required for container mode)
 	// +optional
@@ -140,7 +140,7 @@ type MCPProviderSpec struct {
 	// Capabilities declares what resources the MCP server needs.
 	// Used by the operator for NetworkPolicy generation and enforcement.
 	// +optional
-	Capabilities *ProviderCapabilities `json:"capabilities,omitempty"`
+	Capabilities *MCPServerCapabilities `json:"capabilities,omitempty"`
 }
 
 // HealthCheckConfig defines health check settings
@@ -369,10 +369,10 @@ type MetricsConfig struct {
 	Port    int32 `json:"port,omitempty"`
 }
 
-// ProviderCapabilities declares what resources an MCP server needs.
+// MCPServerCapabilities declares what resources an MCP server needs.
 // The operator uses this to generate NetworkPolicy, enforce Pod Security Standards,
 // and verify runtime behavior matches declarations.
-type ProviderCapabilities struct {
+type MCPServerCapabilities struct {
 	// Network defines allowed network access
 	// +optional
 	Network *NetworkCapabilitiesSpec `json:"network,omitempty"`
@@ -498,10 +498,10 @@ type ResourceCapabilitiesSpec struct {
 	MaxCPUPercent string `json:"maxCPUPercent,omitempty"`
 }
 
-// MCPProviderStatus defines the observed state of MCPProvider
-type MCPProviderStatus struct {
+// MCPServerStatus defines the observed state of MCPServer
+type MCPServerStatus struct {
 	// State is the current provider state
-	State ProviderState `json:"state,omitempty"`
+	State MCPServerState `json:"state,omitempty"`
 
 	// Phase is the overall phase
 	Phase string `json:"phase,omitempty"`
@@ -547,7 +547,7 @@ type MCPProviderStatus struct {
 
 	// Capabilities is the observed/normalized capabilities (mirrors spec for Phase 38, enriched in Phase 39)
 	// +optional
-	Capabilities *ProviderCapabilities `json:"capabilities,omitempty"`
+	Capabilities *MCPServerCapabilities `json:"capabilities,omitempty"`
 
 	// Violations records detected capability violations (most recent MaxViolationRecords entries)
 	// +optional
@@ -577,7 +577,7 @@ type Condition struct {
 }
 
 // ViolationRecord represents a detected capability violation.
-// Stored in MCPProviderStatus.Violations for audit and visibility via kubectl.
+// Stored in MCPServerStatus.Violations for audit and visibility via kubectl.
 type ViolationRecord struct {
 	// Type of violation: egress_denied, capability_drift, undeclared_tool, schema_mismatch, quarantine_triggered
 	// +kubebuilder:validation:Enum=egress_denied;capability_drift;undeclared_tool;schema_mismatch;quarantine_triggered
@@ -614,32 +614,32 @@ type ViolationRecord struct {
 // +kubebuilder:resource:shortName=mcpp;provider,categories=mcp
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.capabilities) || !has(self.spec.capabilities.network) || !has(self.spec.capabilities.network.egress) || !self.spec.capabilities.network.egress.exists(e, e.host == '*') || (has(self.metadata.annotations) && ('hangar.io/allow-unrestricted-egress' in self.metadata.annotations) && self.metadata.annotations['hangar.io/allow-unrestricted-egress'] == 'true')",message="wildcard egress (host: '*') requires annotation hangar.io/allow-unrestricted-egress: \"true\""
 
-// MCPProvider is the Schema for the mcpproviders API
-type MCPProvider struct {
+// MCPServer is the Schema for the mcpservers API
+type MCPServer struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   MCPProviderSpec   `json:"spec,omitempty"`
-	Status MCPProviderStatus `json:"status,omitempty"`
+	Spec   MCPServerSpec   `json:"spec,omitempty"`
+	Status MCPServerStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// MCPProviderList contains a list of MCPProvider
-type MCPProviderList struct {
+// MCPServerList contains a list of MCPServer
+type MCPServerList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []MCPProvider `json:"items"`
+	Items           []MCPServer `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&MCPProvider{}, &MCPProviderList{})
+	SchemeBuilder.Register(&MCPServer{}, &MCPServerList{})
 }
 
 // Helper methods
 
 // GetReplicas returns the number of replicas (defaults to 1)
-func (p *MCPProvider) GetReplicas() int32 {
+func (p *MCPServer) GetReplicas() int32 {
 	if p.Spec.Replicas == nil {
 		return 1
 	}
@@ -647,37 +647,37 @@ func (p *MCPProvider) GetReplicas() int32 {
 }
 
 // IsCold returns true if the provider should be cold (replicas=0)
-func (p *MCPProvider) IsCold() bool {
+func (p *MCPServer) IsCold() bool {
 	return p.GetReplicas() == 0
 }
 
 // IsContainerMode returns true if running as container
-func (p *MCPProvider) IsContainerMode() bool {
-	return p.Spec.Mode == ProviderModeContainer
+func (p *MCPServer) IsContainerMode() bool {
+	return p.Spec.Mode == MCPServerModeContainer
 }
 
 // IsRemoteMode returns true if connecting to remote endpoint
-func (p *MCPProvider) IsRemoteMode() bool {
-	return p.Spec.Mode == ProviderModeRemote
+func (p *MCPServer) IsRemoteMode() bool {
+	return p.Spec.Mode == MCPServerModeRemote
 }
 
 // GetPodName returns the expected pod name
-func (p *MCPProvider) GetPodName() string {
+func (p *MCPServer) GetPodName() string {
 	return "mcp-provider-" + p.Name
 }
 
 // SetCondition sets or updates a condition
-func (s *MCPProviderStatus) SetCondition(condType string, status metav1.ConditionStatus, reason, message string) {
+func (s *MCPServerStatus) SetCondition(condType string, status metav1.ConditionStatus, reason, message string) {
 	SetConditionOnSlice(&s.Conditions, condType, status, reason, message)
 }
 
 // GetCondition returns the condition with the given type
-func (s *MCPProviderStatus) GetCondition(condType string) *Condition {
+func (s *MCPServerStatus) GetCondition(condType string) *Condition {
 	return GetConditionFromSlice(s.Conditions, condType)
 }
 
 // IsReady returns true if the Ready condition is True
-func (s *MCPProviderStatus) IsReady() bool {
+func (s *MCPServerStatus) IsReady() bool {
 	cond := s.GetCondition("Ready")
 	return cond != nil && cond.Status == metav1.ConditionTrue
 }

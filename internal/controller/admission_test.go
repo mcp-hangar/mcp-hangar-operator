@@ -15,7 +15,7 @@ import (
 // ---------------------------------------------------------------------------
 // CEL Admission Logic Validation Tests
 //
-// The MCPProvider CRD carries an XValidation CEL rule that rejects wildcard
+// The MCPServer CRD carries an XValidation CEL rule that rejects wildcard
 // egress (host: '*') unless the annotation hangar.io/allow-unrestricted-egress
 // is set to "true". The rule references self.metadata.annotations which
 // requires K8s 1.30+ CEL environment for full API server evaluation.
@@ -26,7 +26,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // validateCELAdmissionLogic mirrors the CEL XValidation rule from
-// MCPProvider types (line 615 of mcpprovider_types.go):
+// MCPServer types (line 615 of mcpserver_types.go):
 //
 //	!has(self.spec.capabilities) ||
 //	!has(self.spec.capabilities.network) ||
@@ -37,7 +37,7 @@ import (
 //	 self.metadata.annotations['hangar.io/allow-unrestricted-egress'] == 'true')
 //
 // Returns true if the provider passes validation (allowed), false if rejected.
-func validateCELAdmissionLogic(provider *mcpv1alpha1.MCPProvider) bool {
+func validateCELAdmissionLogic(provider *mcpv1alpha1.MCPServer) bool {
 	// No capabilities -> pass
 	if provider.Spec.Capabilities == nil {
 		return true
@@ -70,15 +70,15 @@ func validateCELAdmissionLogic(provider *mcpv1alpha1.MCPProvider) bool {
 }
 
 func TestAdmission_WildcardEgressRejected(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cel-wildcard-rejected",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:  mcpv1alpha1.ProviderModeContainer,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:  mcpv1alpha1.MCPServerModeContainer,
 			Image: "test:latest",
-			Capabilities: &mcpv1alpha1.ProviderCapabilities{
+			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 					Egress: []mcpv1alpha1.EgressRuleSpec{
 						{Host: "*", Port: 443, Protocol: "https"},
@@ -93,7 +93,7 @@ func TestAdmission_WildcardEgressRejected(t *testing.T) {
 }
 
 func TestAdmission_WildcardEgressWithOverrideAccepted(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cel-wildcard-override",
 			Namespace: "default",
@@ -101,10 +101,10 @@ func TestAdmission_WildcardEgressWithOverrideAccepted(t *testing.T) {
 				"hangar.io/allow-unrestricted-egress": "true",
 			},
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:  mcpv1alpha1.ProviderModeContainer,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:  mcpv1alpha1.MCPServerModeContainer,
 			Image: "test:latest",
-			Capabilities: &mcpv1alpha1.ProviderCapabilities{
+			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 					Egress: []mcpv1alpha1.EgressRuleSpec{
 						{Host: "*", Port: 443, Protocol: "https"},
@@ -119,7 +119,7 @@ func TestAdmission_WildcardEgressWithOverrideAccepted(t *testing.T) {
 }
 
 func TestAdmission_WrongAnnotationValueRejected(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cel-wrong-annotation",
 			Namespace: "default",
@@ -127,10 +127,10 @@ func TestAdmission_WrongAnnotationValueRejected(t *testing.T) {
 				"hangar.io/allow-unrestricted-egress": "yes",
 			},
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:  mcpv1alpha1.ProviderModeContainer,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:  mcpv1alpha1.MCPServerModeContainer,
 			Image: "test:latest",
-			Capabilities: &mcpv1alpha1.ProviderCapabilities{
+			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 					Egress: []mcpv1alpha1.EgressRuleSpec{
 						{Host: "*", Port: 443, Protocol: "https"},
@@ -145,13 +145,13 @@ func TestAdmission_WrongAnnotationValueRejected(t *testing.T) {
 }
 
 func TestAdmission_NoCapabilitiesAccepted(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cel-no-caps",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:  mcpv1alpha1.ProviderModeContainer,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:  mcpv1alpha1.MCPServerModeContainer,
 			Image: "test:latest",
 		},
 	}
@@ -161,15 +161,15 @@ func TestAdmission_NoCapabilitiesAccepted(t *testing.T) {
 }
 
 func TestAdmission_NonWildcardEgressAccepted(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cel-specific-host",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:  mcpv1alpha1.ProviderModeContainer,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:  mcpv1alpha1.MCPServerModeContainer,
 			Image: "test:latest",
-			Capabilities: &mcpv1alpha1.ProviderCapabilities{
+			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 					Egress: []mcpv1alpha1.EgressRuleSpec{
 						{Host: "api.example.com", Port: 443, Protocol: "https"},
@@ -184,15 +184,15 @@ func TestAdmission_NonWildcardEgressAccepted(t *testing.T) {
 }
 
 func TestAdmission_EmptyEgressAccepted(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cel-empty-egress",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:  mcpv1alpha1.ProviderModeContainer,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:  mcpv1alpha1.MCPServerModeContainer,
 			Image: "test:latest",
-			Capabilities: &mcpv1alpha1.ProviderCapabilities{
+			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 					Egress: []mcpv1alpha1.EgressRuleSpec{},
 				},
@@ -205,15 +205,15 @@ func TestAdmission_EmptyEgressAccepted(t *testing.T) {
 }
 
 func TestAdmission_ExpectedToolsAccepted(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cel-expected-tools",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:  mcpv1alpha1.ProviderModeContainer,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:  mcpv1alpha1.MCPServerModeContainer,
 			Image: "test:latest",
-			Capabilities: &mcpv1alpha1.ProviderCapabilities{
+			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 				Tools: &mcpv1alpha1.ToolCapabilitiesSpec{
 					MaxCount:      10,
 					ExpectedTools: []string{"calculate", "convert"},
@@ -235,13 +235,13 @@ func TestAdmission_ExpectedToolsAccepted(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAdmission_Envtest_NoCapsCreated(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "envtest-no-caps",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:  mcpv1alpha1.ProviderModeContainer,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:  mcpv1alpha1.MCPServerModeContainer,
 			Image: "test:latest",
 		},
 	}
@@ -258,7 +258,7 @@ func TestAdmission_Envtest_NoCapsCreated(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReconcileEgressAudit_WildcardOverrideEmitsWarning(t *testing.T) {
-	provider := newTestProvider("egress-audit-wildcard", "default", &mcpv1alpha1.ProviderCapabilities{
+	provider := newTestProvider("egress-audit-wildcard", "default", &mcpv1alpha1.MCPServerCapabilities{
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{
 				{Host: "*", Port: 443, Protocol: "https"},
@@ -280,7 +280,7 @@ func TestReconcileEgressAudit_WildcardOverrideEmitsWarning(t *testing.T) {
 }
 
 func TestReconcileEgressAudit_NoWildcardNoEvent(t *testing.T) {
-	provider := newTestProvider("egress-audit-specific", "default", &mcpv1alpha1.ProviderCapabilities{
+	provider := newTestProvider("egress-audit-specific", "default", &mcpv1alpha1.MCPServerCapabilities{
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{
 				{Host: "api.example.com", Port: 443, Protocol: "https"},

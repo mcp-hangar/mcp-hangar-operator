@@ -12,20 +12,20 @@ import (
 	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
 )
 
-func TestBuildPodForProvider_BasicContainer(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+func TestBuildPodForMCPServer_BasicContainer(t *testing.T) {
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 			UID:       "test-uid-123",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
+		Spec: mcpv1alpha1.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
 		},
 	}
 
-	pod, err := BuildPodForProvider(provider)
+	pod, err := BuildPodForMCPServer(provider)
 
 	require.NoError(t, err)
 	assert.NotNil(t, pod)
@@ -35,32 +35,32 @@ func TestBuildPodForProvider_BasicContainer(t *testing.T) {
 	assert.Equal(t, corev1.RestartPolicyNever, pod.Spec.RestartPolicy)
 }
 
-func TestBuildPodForProvider_NoImage(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+func TestBuildPodForMCPServer_NoImage(t *testing.T) {
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
+		Spec: mcpv1alpha1.MCPServerSpec{
 			Mode: "container",
 			// No image specified
 		},
 	}
 
-	pod, err := BuildPodForProvider(provider)
+	pod, err := BuildPodForMCPServer(provider)
 
 	assert.Error(t, err)
 	assert.Nil(t, pod)
 	assert.Contains(t, err.Error(), "container mode requires image")
 }
 
-func TestBuildPodForProvider_WithResources(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+func TestBuildPodForMCPServer_WithResources(t *testing.T) {
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
+		Spec: mcpv1alpha1.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
 			Resources: &mcpv1alpha1.ResourceRequirements{
@@ -76,7 +76,7 @@ func TestBuildPodForProvider_WithResources(t *testing.T) {
 		},
 	}
 
-	pod, err := BuildPodForProvider(provider)
+	pod, err := BuildPodForMCPServer(provider)
 
 	require.NoError(t, err)
 	container := pod.Spec.Containers[0]
@@ -87,13 +87,13 @@ func TestBuildPodForProvider_WithResources(t *testing.T) {
 	assert.Equal(t, resource.MustParse("512Mi"), container.Resources.Limits[corev1.ResourceMemory])
 }
 
-func TestBuildPodForProvider_WithEnvVars(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+func TestBuildPodForMCPServer_WithEnvVars(t *testing.T) {
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
+		Spec: mcpv1alpha1.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
 			Env: []mcpv1alpha1.EnvVar{
@@ -114,7 +114,7 @@ func TestBuildPodForProvider_WithEnvVars(t *testing.T) {
 		},
 	}
 
-	pod, err := BuildPodForProvider(provider)
+	pod, err := BuildPodForMCPServer(provider)
 
 	require.NoError(t, err)
 	envVars := pod.Spec.Containers[0].Env
@@ -139,13 +139,13 @@ func TestBuildPodForProvider_WithEnvVars(t *testing.T) {
 	assert.Equal(t, "password", secretVar.ValueFrom.SecretKeyRef.Key)
 }
 
-func TestBuildPodForProvider_WithVolumes(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+func TestBuildPodForMCPServer_WithVolumes(t *testing.T) {
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
+		Spec: mcpv1alpha1.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
 			Volumes: []mcpv1alpha1.Volume{
@@ -169,7 +169,7 @@ func TestBuildPodForProvider_WithVolumes(t *testing.T) {
 		},
 	}
 
-	pod, err := BuildPodForProvider(provider)
+	pod, err := BuildPodForMCPServer(provider)
 
 	require.NoError(t, err)
 	assert.Len(t, pod.Spec.Volumes, 2)
@@ -199,18 +199,18 @@ func TestBuildPodForProvider_WithVolumes(t *testing.T) {
 	assert.True(t, configMount.ReadOnly)
 }
 
-func TestBuildPodForProvider_WithSecurityContext(t *testing.T) {
+func TestBuildPodForMCPServer_WithSecurityContext(t *testing.T) {
 	runAsUser := int64(1000)
 	runAsNonRoot := true
 	readOnlyRootFilesystem := true
 	allowPrivilegeEscalation := false
 
-	provider := &mcpv1alpha1.MCPProvider{
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
+		Spec: mcpv1alpha1.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
 			SecurityContext: &mcpv1alpha1.SecurityContext{
@@ -226,7 +226,7 @@ func TestBuildPodForProvider_WithSecurityContext(t *testing.T) {
 		},
 	}
 
-	pod, err := BuildPodForProvider(provider)
+	pod, err := BuildPodForMCPServer(provider)
 
 	require.NoError(t, err)
 	secCtx := pod.Spec.Containers[0].SecurityContext
@@ -242,20 +242,20 @@ func TestBuildPodForProvider_WithSecurityContext(t *testing.T) {
 	assert.Contains(t, secCtx.Capabilities.Add, corev1.Capability("NET_BIND_SERVICE"))
 }
 
-func TestBuildPodForProvider_WithDefaultSecurityContext(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+func TestBuildPodForMCPServer_WithDefaultSecurityContext(t *testing.T) {
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
+		Spec: mcpv1alpha1.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
 			// No security context specified
 		},
 	}
 
-	pod, err := BuildPodForProvider(provider)
+	pod, err := BuildPodForMCPServer(provider)
 
 	require.NoError(t, err)
 
@@ -270,13 +270,13 @@ func TestBuildPodForProvider_WithDefaultSecurityContext(t *testing.T) {
 	assert.Contains(t, secCtx.Capabilities.Drop, corev1.Capability("ALL"))
 }
 
-func TestBuildPodForProvider_WithCommandAndArgs(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+func TestBuildPodForMCPServer_WithCommandAndArgs(t *testing.T) {
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
+		Spec: mcpv1alpha1.MCPServerSpec{
 			Mode:    "container",
 			Image:   "test-image:latest",
 			Command: []string{"/app/provider"},
@@ -284,7 +284,7 @@ func TestBuildPodForProvider_WithCommandAndArgs(t *testing.T) {
 		},
 	}
 
-	pod, err := BuildPodForProvider(provider)
+	pod, err := BuildPodForMCPServer(provider)
 
 	require.NoError(t, err)
 	container := pod.Spec.Containers[0]
@@ -293,13 +293,13 @@ func TestBuildPodForProvider_WithCommandAndArgs(t *testing.T) {
 	assert.Equal(t, []string{"--config", "/config/app.yaml", "--verbose"}, container.Args)
 }
 
-func TestBuildPodForProvider_WithNodeSelector(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+func TestBuildPodForMCPServer_WithNodeSelector(t *testing.T) {
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
+		Spec: mcpv1alpha1.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
 			NodeSelector: map[string]string{
@@ -309,20 +309,20 @@ func TestBuildPodForProvider_WithNodeSelector(t *testing.T) {
 		},
 	}
 
-	pod, err := BuildPodForProvider(provider)
+	pod, err := BuildPodForMCPServer(provider)
 
 	require.NoError(t, err)
 	assert.Equal(t, "ssd", pod.Spec.NodeSelector["disktype"])
 	assert.Equal(t, "us-west-1a", pod.Spec.NodeSelector["zone"])
 }
 
-func TestBuildPodForProvider_WithTolerations(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+func TestBuildPodForMCPServer_WithTolerations(t *testing.T) {
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
+		Spec: mcpv1alpha1.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
 			Tolerations: []mcpv1alpha1.Toleration{
@@ -336,7 +336,7 @@ func TestBuildPodForProvider_WithTolerations(t *testing.T) {
 		},
 	}
 
-	pod, err := BuildPodForProvider(provider)
+	pod, err := BuildPodForMCPServer(provider)
 
 	require.NoError(t, err)
 	require.Len(t, pod.Spec.Tolerations, 1)
@@ -346,27 +346,27 @@ func TestBuildPodForProvider_WithTolerations(t *testing.T) {
 	assert.Equal(t, corev1.TaintEffect("NoSchedule"), pod.Spec.Tolerations[0].Effect)
 }
 
-func TestBuildPodForProvider_WithServiceAccount(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+func TestBuildPodForMCPServer_WithServiceAccount(t *testing.T) {
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
+		Spec: mcpv1alpha1.MCPServerSpec{
 			Mode:               "container",
 			Image:              "test-image:latest",
 			ServiceAccountName: "custom-sa",
 		},
 	}
 
-	pod, err := BuildPodForProvider(provider)
+	pod, err := BuildPodForMCPServer(provider)
 
 	require.NoError(t, err)
 	assert.Equal(t, "custom-sa", pod.Spec.ServiceAccountName)
 }
 
 func TestBuildLabels(t *testing.T) {
-	provider := &mcpv1alpha1.MCPProvider{
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",

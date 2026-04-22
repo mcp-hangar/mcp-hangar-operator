@@ -30,8 +30,8 @@ var (
 		[]string{"controller"},
 	)
 
-	// ProviderState tracks current provider states
-	ProviderState = prometheus.NewGaugeVec(
+	// MCPServerState tracks current provider states
+	MCPServerState = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "mcp",
 			Subsystem: "operator",
@@ -41,8 +41,8 @@ var (
 		[]string{"namespace", "name", "state"},
 	)
 
-	// ProviderToolsCount tracks tools per provider
-	ProviderToolsCount = prometheus.NewGaugeVec(
+	// MCPServerToolsCount tracks tools per provider
+	MCPServerToolsCount = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "mcp",
 			Subsystem: "operator",
@@ -52,8 +52,8 @@ var (
 		[]string{"namespace", "name"},
 	)
 
-	// ProviderHealthCheckFailures tracks health check failures
-	ProviderHealthCheckFailures = prometheus.NewCounterVec(
+	// MCPServerHealthCheckFailures tracks health check failures
+	MCPServerHealthCheckFailures = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "mcp",
 			Subsystem: "operator",
@@ -63,8 +63,8 @@ var (
 		[]string{"namespace", "name"},
 	)
 
-	// ProviderRestarts tracks provider restarts
-	ProviderRestarts = prometheus.NewCounterVec(
+	// MCPServerRestarts tracks provider restarts
+	MCPServerRestarts = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "mcp",
 			Subsystem: "operator",
@@ -85,8 +85,8 @@ var (
 		[]string{"kind"},
 	)
 
-	// GroupProviderCount tracks providers per group
-	GroupProviderCount = prometheus.NewGaugeVec(
+	// GroupMCPServerCount tracks providers per group
+	GroupMCPServerCount = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "mcp",
 			Subsystem: "operator",
@@ -159,12 +159,12 @@ func init() {
 	metrics.Registry.MustRegister(
 		ReconcileTotal,
 		ReconcileDuration,
-		ProviderState,
-		ProviderToolsCount,
-		ProviderHealthCheckFailures,
-		ProviderRestarts,
+		MCPServerState,
+		MCPServerToolsCount,
+		MCPServerHealthCheckFailures,
+		MCPServerRestarts,
 		CRDCount,
-		GroupProviderCount,
+		GroupMCPServerCount,
 		DiscoverySourceCount,
 		DiscoverySyncDuration,
 		HangarClientErrors,
@@ -173,16 +173,16 @@ func init() {
 	)
 }
 
-// SetProviderState updates state gauge for a provider
+// SetMCPServerState updates state gauge for a provider
 // Sets the specified state to 1 and all others to 0
-func SetProviderState(namespace, name, state string) {
+func SetMCPServerState(namespace, name, state string) {
 	states := []string{"Cold", "Initializing", "Ready", "Degraded", "Dead"}
 	for _, s := range states {
 		val := float64(0)
 		if s == state {
 			val = 1
 		}
-		ProviderState.WithLabelValues(namespace, name, s).Set(val)
+		MCPServerState.WithLabelValues(namespace, name, s).Set(val)
 	}
 }
 
@@ -190,18 +190,18 @@ func SetProviderState(namespace, name, state string) {
 func ClearProviderMetrics(namespace, name string) {
 	states := []string{"Cold", "Initializing", "Ready", "Degraded", "Dead"}
 	for _, s := range states {
-		ProviderState.DeleteLabelValues(namespace, name, s)
+		MCPServerState.DeleteLabelValues(namespace, name, s)
 	}
-	ProviderToolsCount.DeleteLabelValues(namespace, name)
-	ProviderHealthCheckFailures.DeleteLabelValues(namespace, name)
-	ProviderRestarts.DeleteLabelValues(namespace, name)
+	MCPServerToolsCount.DeleteLabelValues(namespace, name)
+	MCPServerHealthCheckFailures.DeleteLabelValues(namespace, name)
+	MCPServerRestarts.DeleteLabelValues(namespace, name)
 }
 
 // ClearGroupMetrics removes all metrics for a deleted group
 func ClearGroupMetrics(namespace, name string) {
 	states := []string{"Cold", "Initializing", "Ready", "Degraded", "Dead"}
 	for _, s := range states {
-		GroupProviderCount.DeleteLabelValues(namespace, name, s)
+		GroupMCPServerCount.DeleteLabelValues(namespace, name, s)
 	}
 }
 

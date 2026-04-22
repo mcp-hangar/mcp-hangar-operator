@@ -131,8 +131,8 @@ func (c *Client) doWithRetry(ctx context.Context, method, url string, body []byt
 	return nil, fmt.Errorf("request failed after %d retries: %w", c.maxRetries, lastErr)
 }
 
-// ProviderInfo represents provider information from Hangar
-type ProviderInfo struct {
+// MCPServerInfo represents provider information from Hangar
+type MCPServerInfo struct {
 	Name       string   `json:"name"`
 	Namespace  string   `json:"namespace"`
 	State      string   `json:"state"`
@@ -148,8 +148,8 @@ type ToolInfo struct {
 	InputSchema map[string]interface{} `json:"input_schema,omitempty"`
 }
 
-// GetProviderTools fetches the list of tools from a provider
-func (c *Client) GetProviderTools(ctx context.Context, name, namespace string) ([]string, error) {
+// GetMCPServerTools fetches the list of tools from a provider
+func (c *Client) GetMCPServerTools(ctx context.Context, name, namespace string) ([]string, error) {
 	url := fmt.Sprintf("%s/api/v1/providers/%s/%s/tools", c.baseURL, namespace, name)
 
 	resp, err := c.doWithRetry(ctx, http.MethodGet, url, nil)
@@ -178,7 +178,7 @@ func (c *Client) GetProviderTools(ctx context.Context, name, namespace string) (
 }
 
 // GetProvider fetches provider information
-func (c *Client) GetProvider(ctx context.Context, name, namespace string) (*ProviderInfo, error) {
+func (c *Client) GetMCPServer(ctx context.Context, name, namespace string) (*MCPServerInfo, error) {
 	url := fmt.Sprintf("%s/api/v1/providers/%s/%s", c.baseURL, namespace, name)
 
 	resp, err := c.doWithRetry(ctx, http.MethodGet, url, nil)
@@ -196,7 +196,7 @@ func (c *Client) GetProvider(ctx context.Context, name, namespace string) (*Prov
 		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var info ProviderInfo
+	var info MCPServerInfo
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
@@ -242,7 +242,7 @@ func (c *Client) HealthCheckRemote(ctx context.Context, endpoint string) (bool, 
 }
 
 // RegisterProvider registers a provider with Hangar core
-type RegisterProviderRequest struct {
+type RegisterMCPServerRequest struct {
 	Name      string            `json:"name"`
 	Namespace string            `json:"namespace"`
 	Mode      string            `json:"mode"`
@@ -251,7 +251,7 @@ type RegisterProviderRequest struct {
 	Labels    map[string]string `json:"labels,omitempty"`
 }
 
-func (c *Client) RegisterProvider(ctx context.Context, req *RegisterProviderRequest) error {
+func (c *Client) RegisterMCPServer(ctx context.Context, req *RegisterMCPServerRequest) error {
 	url := fmt.Sprintf("%s/api/v1/providers", c.baseURL)
 
 	body, err := json.Marshal(req)
@@ -282,7 +282,7 @@ func (c *Client) RegisterProvider(ctx context.Context, req *RegisterProviderRequ
 }
 
 // DeregisterProvider removes a provider from Hangar core
-func (c *Client) DeregisterProvider(ctx context.Context, name, namespace string) error {
+func (c *Client) DeregisterMCPServer(ctx context.Context, name, namespace string) error {
 	url := fmt.Sprintf("%s/api/v1/providers/%s/%s", c.baseURL, namespace, name)
 
 	resp, err := c.doWithRetry(ctx, http.MethodDelete, url, nil)
@@ -301,7 +301,7 @@ func (c *Client) DeregisterProvider(ctx context.Context, name, namespace string)
 }
 
 // StartProvider starts a cold provider
-func (c *Client) StartProvider(ctx context.Context, name, namespace string) error {
+func (c *Client) StartMCPServer(ctx context.Context, name, namespace string) error {
 	url := fmt.Sprintf("%s/api/v1/providers/%s/%s/start", c.baseURL, namespace, name)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
@@ -326,7 +326,7 @@ func (c *Client) StartProvider(ctx context.Context, name, namespace string) erro
 }
 
 // StopProvider stops a provider
-func (c *Client) StopProvider(ctx context.Context, name, namespace string) error {
+func (c *Client) StopMCPServer(ctx context.Context, name, namespace string) error {
 	url := fmt.Sprintf("%s/api/v1/providers/%s/%s/stop", c.baseURL, namespace, name)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)

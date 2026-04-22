@@ -39,8 +39,8 @@ rules:
   - mcp-hangar.io
   resources:
   - mcpdiscoverysources
-  - mcpprovidergroups
-  - mcpproviders
+  - mcpservergroups
+  - mcpservers
   verbs:
   - create
   - delete
@@ -53,16 +53,16 @@ rules:
   - mcp-hangar.io
   resources:
   - mcpdiscoverysources/finalizers
-  - mcpprovidergroups/finalizers
-  - mcpproviders/finalizers
+  - mcpservergroups/finalizers
+  - mcpservers/finalizers
   verbs:
   - update
 - apiGroups:
   - mcp-hangar.io
   resources:
   - mcpdiscoverysources/status
-  - mcpprovidergroups/status
-  - mcpproviders/status
+  - mcpservergroups/status
+  - mcpservers/status
   verbs:
   - get
   - patch

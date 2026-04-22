@@ -1,7 +1,7 @@
 // Package main is the entrypoint for the MCP Hangar operator.
 //
 // It bootstraps a controller-runtime manager, registers all three reconcilers
-// (MCPProvider, MCPProviderGroup, MCPDiscoverySource), configures health/ready
+// (MCPServer, MCPServerGroup, MCPDiscoverySource), configures health/ready
 // probes, and starts the manager with leader election.
 package main
 
@@ -117,26 +117,26 @@ func main() {
 		setupLog.Info("Hangar core client configured", "url", hangarURL)
 	}
 
-	// Register MCPProvider controller.
-	if err := (&controller.MCPProviderReconciler{
+	// Register MCPServer controller.
+	if err := (&controller.MCPServerReconciler{
 		Client:       mgr.GetClient(),
 		Scheme:       mgr.GetScheme(),
-		Recorder:     mgr.GetEventRecorderFor("mcpprovider-controller"),
+		Recorder:     mgr.GetEventRecorderFor("mcpserver-controller"),
 		HangarClient: hangarClient,
 		Config:       controller.DefaultReconcilerConfig(),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "MCPProvider")
+		setupLog.Error(err, "unable to create controller", "controller", "MCPServer")
 		os.Exit(1)
 	}
 
-	// Register MCPProviderGroup controller.
-	if err := (&controller.MCPProviderGroupReconciler{
+	// Register MCPServerGroup controller.
+	if err := (&controller.MCPServerGroupReconciler{
 		Client:       mgr.GetClient(),
 		Scheme:       mgr.GetScheme(),
-		Recorder:     mgr.GetEventRecorderFor("mcpprovidergroup-controller"),
+		Recorder:     mgr.GetEventRecorderFor("mcpservergroup-controller"),
 		HangarClient: hangarClient,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "MCPProviderGroup")
+		setupLog.Error(err, "unable to create controller", "controller", "MCPServerGroup")
 		os.Exit(1)
 	}
 
@@ -151,16 +151,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Register validating admission webhook for MCPProvider.
+	// Register validating admission webhook for MCPServer.
 	if enableWebhooks {
 		if err := ctrl.NewWebhookManagedBy(mgr).
-			For(&mcpv1alpha1.MCPProvider{}).
-			WithValidator(&webhook.MCPProviderValidator{}).
+			For(&mcpv1alpha1.MCPServer{}).
+			WithValidator(&webhook.MCPServerValidator{}).
 			Complete(); err != nil {
-			setupLog.Error(err, "unable to create webhook", "webhook", "MCPProvider")
+			setupLog.Error(err, "unable to create webhook", "webhook", "MCPServer")
 			os.Exit(1)
 		}
-		setupLog.Info("validating webhook registered for MCPProvider")
+		setupLog.Info("validating webhook registered for MCPServer")
 	}
 
 	// Health and readiness probes.

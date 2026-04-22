@@ -195,7 +195,7 @@ spec:
                 description: Paused pauses discovery (for maintenance)
                 type: boolean
               providerTemplate:
-                description: ProviderTemplate provides default settings for discovered
+                description: MCPServerTemplate provides default settings for discovered
                   providers
                 properties:
                   metadata:
@@ -211,7 +211,7 @@ spec:
                         type: object
                     type: object
                   spec:
-                    description: Spec contains default MCPProvider spec fields
+                    description: Spec contains default MCPServer spec fields
                     properties:
                       affinity:
                         description: Affinity rules for pod scheduling
@@ -1718,9 +1718,9 @@ spec:
                 format: int32
                 type: integer
               discoveredProviders:
-                description: DiscoveredProviders lists discovered providers
+                description: DiscoveredMCPServers lists discovered providers
                 items:
-                  description: DiscoveredProvider describes a discovered provider
+                  description: DiscoveredMCPServer describes a discovered provider
                   properties:
                     discoveredAt:
                       description: DiscoveredAt is when it was discovered
@@ -1730,7 +1730,7 @@ spec:
                       description: Error creating provider (if any)
                       type: string
                     managed:
-                      description: Managed indicates if MCPProvider was created
+                      description: Managed indicates if MCPServer was created
                       type: boolean
                     name:
                       description: Name of the provider
@@ -1754,7 +1754,7 @@ spec:
                 format: date-time
                 type: string
               managedCount:
-                description: ManagedCount is the number of managed MCPProvider resources
+                description: ManagedCount is the number of managed MCPServer resources
                 format: int32
                 type: integer
               nextSyncTime:
@@ -1947,7 +1947,7 @@ spec:
                 description: Paused pauses discovery (for maintenance)
                 type: boolean
               providerTemplate:
-                description: ProviderTemplate provides default settings for discovered
+                description: MCPServerTemplate provides default settings for discovered
                   providers
                 properties:
                   metadata:
@@ -1963,7 +1963,7 @@ spec:
                         type: object
                     type: object
                   spec:
-                    description: Spec contains default MCPProvider spec fields
+                    description: Spec contains default MCPServer spec fields
                     properties:
                       affinity:
                         description: Affinity rules for pod scheduling
@@ -3501,9 +3501,9 @@ spec:
                 format: int32
                 type: integer
               discoveredProviders:
-                description: DiscoveredProviders lists discovered providers
+                description: DiscoveredMCPServers lists discovered providers
                 items:
-                  description: DiscoveredProvider describes a discovered provider
+                  description: DiscoveredMCPServer describes a discovered provider
                   properties:
                     discoveredAt:
                       description: DiscoveredAt is when it was discovered
@@ -3513,7 +3513,7 @@ spec:
                       description: Error creating provider (if any)
                       type: string
                     managed:
-                      description: Managed indicates if MCPProvider was created
+                      description: Managed indicates if MCPServer was created
                       type: boolean
                     name:
                       description: Name of the provider
@@ -3539,7 +3539,7 @@ spec:
                 format: date-time
                 type: string
               managedCount:
-                description: ManagedCount is the number of managed MCPProvider resources
+                description: ManagedCount is the number of managed MCPServer resources
                 format: int32
                 type: integer
               nextSyncTime:
