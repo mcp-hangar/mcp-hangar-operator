@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	// LabelDiscoveryManagedBy identifies MCPProviders created by a discovery source
+	// LabelDiscoveryManagedBy identifies MCPServers created by a discovery source
 	LabelDiscoveryManagedBy = "mcp-hangar.io/managed-by"
 
 	// Condition types for discovery sources
@@ -64,17 +64,17 @@ const (
 	ReasonProviderGone  = "ProviderRemoved"
 )
 
-// DiscoveredProviderInfo holds information about a discovered provider
-type DiscoveredProviderInfo struct {
+// DiscoveredMCPServerInfo holds information about a discovered provider
+type DiscoveredMCPServerInfo struct {
 	Name     string
 	Source   string
 	Endpoint string
-	Mode     mcpv1alpha1.ProviderMode
+	Mode     mcpv1alpha1.MCPServerMode
 	Labels   map[string]string
 }
 
-// ConfigMapProviderEntry defines a provider entry in a ConfigMap
-type ConfigMapProviderEntry struct {
+// ConfigMapMCPServerEntry defines a provider entry in a ConfigMap
+type ConfigMapMCPServerEntry struct {
 	Mode     string   `yaml:"mode"`
 	Image    string   `yaml:"image,omitempty"`
 	Endpoint string   `yaml:"endpoint,omitempty"`
@@ -93,7 +93,7 @@ type MCPDiscoverySourceReconciler struct {
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpdiscoverysources,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpdiscoverysources/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpdiscoverysources/finalizers,verbs=update
-// +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpproviders,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
@@ -210,17 +210,17 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 	// Create or update providers
 	var createErrors []string
 	managedCount := int32(0)
-	discoveredProviderStatuses := make([]mcpv1alpha1.DiscoveredProvider, 0, len(discovered))
+	discoveredProviderStatuses := make([]mcpv1alpha1.DiscoveredMCPServer, 0, len(discovered))
 
 	for name, info := range discovered {
-		dp := mcpv1alpha1.DiscoveredProvider{
+		dp := mcpv1alpha1.DiscoveredMCPServer{
 			Name:         name,
 			Source:       info.Source,
 			DiscoveredAt: metav1.Now(),
 			Managed:      true,
 		}
 
-		if err := r.createOrUpdateProvider(ctx, source, info); err != nil {
+		if err := r.createOrUpdateMCPServer(ctx, source, info); err != nil {
 			logger.Error(err, "Failed to create/update provider", "provider", name)
 			createErrors = append(createErrors, fmt.Sprintf("%s: %v", name, err))
 			dp.Managed = false
@@ -249,7 +249,7 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 	source.Status.LastSyncTime = &now
 	source.Status.LastSyncDuration = syncDuration.String()
 	source.Status.NextSyncTime = &nextSync
-	source.Status.DiscoveredProviders = discoveredProviderStatuses
+	source.Status.DiscoveredMCPServers = discoveredProviderStatuses
 
 	// Collect all errors
 	allErrors := append(scanErrors, createErrors...)
@@ -283,7 +283,7 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 }
 
 // discoverProviders routes to the appropriate discovery method based on type
-func (r *MCPDiscoverySourceReconciler) discoverProviders(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource) (map[string]DiscoveredProviderInfo, []string, error) {
+func (r *MCPDiscoverySourceReconciler) discoverProviders(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource) (map[string]DiscoveredMCPServerInfo, []string, error) {
 	switch source.Spec.Type {
 	case mcpv1alpha1.DiscoveryTypeNamespace:
 		return r.discoverNamespace(ctx, source)
@@ -299,9 +299,9 @@ func (r *MCPDiscoverySourceReconciler) discoverProviders(ctx context.Context, so
 }
 
 // discoverNamespace discovers providers by scanning namespaces matching labels
-func (r *MCPDiscoverySourceReconciler) discoverNamespace(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource) (map[string]DiscoveredProviderInfo, []string, error) {
+func (r *MCPDiscoverySourceReconciler) discoverNamespace(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource) (map[string]DiscoveredMCPServerInfo, []string, error) {
 	logger := log.FromContext(ctx)
-	discovered := make(map[string]DiscoveredProviderInfo)
+	discovered := make(map[string]DiscoveredMCPServerInfo)
 	var scanErrors []string
 
 	if source.Spec.NamespaceSelector == nil {
@@ -358,10 +358,10 @@ func (r *MCPDiscoverySourceReconciler) discoverNamespace(ctx context.Context, so
 		}
 
 		providerName := fmt.Sprintf("%s-%s", source.Name, ns.Name)
-		discovered[providerName] = DiscoveredProviderInfo{
+		discovered[providerName] = DiscoveredMCPServerInfo{
 			Name:   providerName,
 			Source: fmt.Sprintf("namespace/%s", ns.Name),
-			Mode:   mcpv1alpha1.ProviderModeRemote,
+			Mode:   mcpv1alpha1.MCPServerModeRemote,
 			Labels: map[string]string{
 				"discovery-namespace": ns.Name,
 			},
@@ -373,9 +373,9 @@ func (r *MCPDiscoverySourceReconciler) discoverNamespace(ctx context.Context, so
 }
 
 // discoverConfigMap discovers providers from a ConfigMap containing YAML definitions
-func (r *MCPDiscoverySourceReconciler) discoverConfigMap(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource) (map[string]DiscoveredProviderInfo, []string, error) {
+func (r *MCPDiscoverySourceReconciler) discoverConfigMap(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource) (map[string]DiscoveredMCPServerInfo, []string, error) {
 	logger := log.FromContext(ctx)
-	discovered := make(map[string]DiscoveredProviderInfo)
+	discovered := make(map[string]DiscoveredMCPServerInfo)
 
 	if source.Spec.ConfigMapRef == nil {
 		return discovered, nil, nil
@@ -407,19 +407,19 @@ func (r *MCPDiscoverySourceReconciler) discoverConfigMap(ctx context.Context, so
 	}
 
 	// Parse YAML
-	var entries map[string]ConfigMapProviderEntry
+	var entries map[string]ConfigMapMCPServerEntry
 	if err := yaml.Unmarshal([]byte(data), &entries); err != nil {
 		return nil, nil, fmt.Errorf("failed to parse providers YAML from ConfigMap: %w", err)
 	}
 
 	for name, entry := range entries {
 		providerName := fmt.Sprintf("%s-%s", source.Name, name)
-		mode := mcpv1alpha1.ProviderModeRemote
+		mode := mcpv1alpha1.MCPServerModeRemote
 		if entry.Mode == "container" {
-			mode = mcpv1alpha1.ProviderModeContainer
+			mode = mcpv1alpha1.MCPServerModeContainer
 		}
 
-		discovered[providerName] = DiscoveredProviderInfo{
+		discovered[providerName] = DiscoveredMCPServerInfo{
 			Name:     providerName,
 			Source:   fmt.Sprintf("configmap/%s", source.Spec.ConfigMapRef.Name),
 			Endpoint: entry.Endpoint,
@@ -436,9 +436,9 @@ func (r *MCPDiscoverySourceReconciler) discoverConfigMap(ctx context.Context, so
 }
 
 // discoverAnnotations discovers providers from annotated Pods and Services
-func (r *MCPDiscoverySourceReconciler) discoverAnnotations(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource) (map[string]DiscoveredProviderInfo, []string, error) {
+func (r *MCPDiscoverySourceReconciler) discoverAnnotations(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource) (map[string]DiscoveredMCPServerInfo, []string, error) {
 	logger := log.FromContext(ctx)
-	discovered := make(map[string]DiscoveredProviderInfo)
+	discovered := make(map[string]DiscoveredMCPServerInfo)
 	var scanErrors []string
 
 	if source.Spec.Annotations == nil {
@@ -485,11 +485,11 @@ func (r *MCPDiscoverySourceReconciler) discoverAnnotations(ctx context.Context, 
 				}
 
 				fullName := fmt.Sprintf("%s-%s", source.Name, providerName)
-				discovered[fullName] = DiscoveredProviderInfo{
+				discovered[fullName] = DiscoveredMCPServerInfo{
 					Name:     fullName,
 					Source:   fmt.Sprintf("annotation/Pod/%s", pod.Name),
 					Endpoint: endpoint,
-					Mode:     mcpv1alpha1.ProviderModeRemote,
+					Mode:     mcpv1alpha1.MCPServerModeRemote,
 					Labels: map[string]string{
 						"discovery-kind":     "Pod",
 						"discovery-resource": pod.Name,
@@ -533,11 +533,11 @@ func (r *MCPDiscoverySourceReconciler) discoverAnnotations(ctx context.Context, 
 				}
 
 				fullName := fmt.Sprintf("%s-%s", source.Name, providerName)
-				discovered[fullName] = DiscoveredProviderInfo{
+				discovered[fullName] = DiscoveredMCPServerInfo{
 					Name:     fullName,
 					Source:   fmt.Sprintf("annotation/Service/%s", svc.Name),
 					Endpoint: endpoint,
-					Mode:     mcpv1alpha1.ProviderModeRemote,
+					Mode:     mcpv1alpha1.MCPServerModeRemote,
 					Labels: map[string]string{
 						"discovery-kind":     "Service",
 						"discovery-resource": svc.Name,
@@ -552,9 +552,9 @@ func (r *MCPDiscoverySourceReconciler) discoverAnnotations(ctx context.Context, 
 }
 
 // discoverServices discovers providers from Kubernetes Services matching a label selector
-func (r *MCPDiscoverySourceReconciler) discoverServices(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource) (map[string]DiscoveredProviderInfo, []string, error) {
+func (r *MCPDiscoverySourceReconciler) discoverServices(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource) (map[string]DiscoveredMCPServerInfo, []string, error) {
 	logger := log.FromContext(ctx)
-	discovered := make(map[string]DiscoveredProviderInfo)
+	discovered := make(map[string]DiscoveredMCPServerInfo)
 
 	if source.Spec.ServiceDiscovery == nil {
 		return discovered, nil, nil
@@ -602,11 +602,11 @@ func (r *MCPDiscoverySourceReconciler) discoverServices(ctx context.Context, sou
 		endpoint := fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", protocol, svc.Name, svc.Namespace, svcPort)
 		providerName := fmt.Sprintf("%s-%s", source.Name, svc.Name)
 
-		discovered[providerName] = DiscoveredProviderInfo{
+		discovered[providerName] = DiscoveredMCPServerInfo{
 			Name:     providerName,
 			Source:   fmt.Sprintf("service/%s", svc.Name),
 			Endpoint: endpoint,
-			Mode:     mcpv1alpha1.ProviderModeRemote,
+			Mode:     mcpv1alpha1.MCPServerModeRemote,
 			Labels: map[string]string{
 				"discovery-service": svc.Name,
 			},
@@ -617,9 +617,9 @@ func (r *MCPDiscoverySourceReconciler) discoverServices(ctx context.Context, sou
 	return discovered, nil, nil
 }
 
-// createOrUpdateProvider creates or updates an MCPProvider CR for a discovered provider
-func (r *MCPDiscoverySourceReconciler) createOrUpdateProvider(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource, info DiscoveredProviderInfo) error {
-	provider := &mcpv1alpha1.MCPProvider{
+// createOrUpdateMCPServer creates or updates an MCPServer CR for a discovered provider
+func (r *MCPDiscoverySourceReconciler) createOrUpdateMCPServer(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource, info DiscoveredMCPServerInfo) error {
+	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      info.Name,
 			Namespace: source.Namespace,
@@ -634,8 +634,8 @@ func (r *MCPDiscoverySourceReconciler) createOrUpdateProvider(ctx context.Contex
 		provider.Labels[LabelDiscoveryManagedBy] = source.Name
 
 		// Apply template labels
-		if source.Spec.ProviderTemplate != nil && source.Spec.ProviderTemplate.Metadata != nil {
-			for k, v := range source.Spec.ProviderTemplate.Metadata.Labels {
+		if source.Spec.MCPServerTemplate != nil && source.Spec.MCPServerTemplate.Metadata != nil {
+			for k, v := range source.Spec.MCPServerTemplate.Metadata.Labels {
 				provider.Labels[k] = v
 			}
 		}
@@ -646,18 +646,18 @@ func (r *MCPDiscoverySourceReconciler) createOrUpdateProvider(ctx context.Contex
 		}
 
 		// Apply template annotations
-		if source.Spec.ProviderTemplate != nil && source.Spec.ProviderTemplate.Metadata != nil {
+		if source.Spec.MCPServerTemplate != nil && source.Spec.MCPServerTemplate.Metadata != nil {
 			if provider.Annotations == nil {
 				provider.Annotations = make(map[string]string)
 			}
-			for k, v := range source.Spec.ProviderTemplate.Metadata.Annotations {
+			for k, v := range source.Spec.MCPServerTemplate.Metadata.Annotations {
 				provider.Annotations[k] = v
 			}
 		}
 
 		// Apply template spec if present
-		if source.Spec.ProviderTemplate != nil && source.Spec.ProviderTemplate.Spec != nil {
-			provider.Spec = *source.Spec.ProviderTemplate.Spec.DeepCopy()
+		if source.Spec.MCPServerTemplate != nil && source.Spec.MCPServerTemplate.Spec != nil {
+			provider.Spec = *source.Spec.MCPServerTemplate.Spec.DeepCopy()
 		}
 
 		// Override with discovered values
@@ -679,13 +679,13 @@ func (r *MCPDiscoverySourceReconciler) createOrUpdateProvider(ctx context.Contex
 	return err
 }
 
-// authoritativeSync deletes MCPProviders that are no longer discovered (scoped to successfully-scanned sources only)
-func (r *MCPDiscoverySourceReconciler) authoritativeSync(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource, discovered map[string]DiscoveredProviderInfo) []string {
+// authoritativeSync deletes MCPServers that are no longer discovered (scoped to successfully-scanned sources only)
+func (r *MCPDiscoverySourceReconciler) authoritativeSync(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource, discovered map[string]DiscoveredMCPServerInfo) []string {
 	logger := log.FromContext(ctx)
 	var deleteErrors []string
 
-	// List all MCPProviders managed by this source
-	providerList := &mcpv1alpha1.MCPProviderList{}
+	// List all MCPServers managed by this source
+	providerList := &mcpv1alpha1.MCPServerList{}
 	if err := r.List(ctx, providerList,
 		client.InNamespace(source.Namespace),
 		client.MatchingLabels{LabelDiscoveryManagedBy: source.Name},
@@ -713,13 +713,13 @@ func (r *MCPDiscoverySourceReconciler) authoritativeSync(ctx context.Context, so
 }
 
 // applyFilters applies include/exclude patterns and max provider count to discovered providers
-func (r *MCPDiscoverySourceReconciler) applyFilters(source *mcpv1alpha1.MCPDiscoverySource, discovered map[string]DiscoveredProviderInfo) map[string]DiscoveredProviderInfo {
+func (r *MCPDiscoverySourceReconciler) applyFilters(source *mcpv1alpha1.MCPDiscoverySource, discovered map[string]DiscoveredMCPServerInfo) map[string]DiscoveredMCPServerInfo {
 	if source.Spec.Filters == nil {
 		return discovered
 	}
 
 	logger := log.Log.WithName("discovery-filter")
-	filtered := make(map[string]DiscoveredProviderInfo)
+	filtered := make(map[string]DiscoveredMCPServerInfo)
 
 	for name, info := range discovered {
 		// Check include patterns
@@ -761,7 +761,7 @@ func (r *MCPDiscoverySourceReconciler) applyFilters(source *mcpv1alpha1.MCPDisco
 		}
 		sort.Strings(names)
 
-		truncated := make(map[string]DiscoveredProviderInfo)
+		truncated := make(map[string]DiscoveredMCPServerInfo)
 		for i := 0; i < int(*source.Spec.Filters.MaxProviders) && i < len(names); i++ {
 			truncated[names[i]] = filtered[names[i]]
 		}
@@ -776,8 +776,8 @@ func (r *MCPDiscoverySourceReconciler) reconcileDelete(ctx context.Context, sour
 	logger := log.FromContext(ctx)
 	logger.Info("Handling deletion for MCPDiscoverySource")
 
-	// Delete all MCPProviders managed by this source
-	providerList := &mcpv1alpha1.MCPProviderList{}
+	// Delete all MCPServers managed by this source
+	providerList := &mcpv1alpha1.MCPServerList{}
 	if err := r.List(ctx, providerList,
 		client.InNamespace(source.Namespace),
 		client.MatchingLabels{LabelDiscoveryManagedBy: source.Name},
@@ -812,7 +812,7 @@ func (r *MCPDiscoverySourceReconciler) reconcileDelete(ctx context.Context, sour
 func (r *MCPDiscoverySourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&mcpv1alpha1.MCPDiscoverySource{}).
-		Owns(&mcpv1alpha1.MCPProvider{}).
+		Owns(&mcpv1alpha1.MCPServer{}).
 		Complete(r)
 }
 
@@ -828,4 +828,3 @@ func hasRequiredAnnotations(annotations map[string]string, required []string) bo
 	}
 	return true
 }
-

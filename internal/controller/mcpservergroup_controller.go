@@ -24,43 +24,43 @@ import (
 	"github.com/mcp-hangar/operator/pkg/metrics"
 )
 
-// MCPProviderGroupReconciler reconciles a MCPProviderGroup object.
-// It is a read-only aggregation controller: it selects MCPProviders by label
+// MCPServerGroupReconciler reconciles a MCPServerGroup object.
+// It is a read-only aggregation controller: it selects MCPServers by label
 // selector, counts provider states, evaluates health policy thresholds, and
 // reports Ready/Degraded/Available conditions on the group status subresource.
-type MCPProviderGroupReconciler struct {
+type MCPServerGroupReconciler struct {
 	client.Client
 	Scheme       *runtime.Scheme
 	Recorder     record.EventRecorder
 	HangarClient *hangar.Client // Optional, nil-checked
 }
 
-// +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpprovidergroups,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpprovidergroups/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpprovidergroups/finalizers,verbs=update
-// +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpproviders,verbs=get;list;watch
+// +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservergroups,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservergroups/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservergroups/finalizers,verbs=update
+// +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
-// Reconcile performs the reconciliation loop for MCPProviderGroup
-func (r *MCPProviderGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+// Reconcile performs the reconciliation loop for MCPServerGroup
+func (r *MCPServerGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	startTime := time.Now()
 
-	logger.Info("Reconciling MCPProviderGroup", "namespacedName", req.NamespacedName)
+	logger.Info("Reconciling MCPServerGroup", "namespacedName", req.NamespacedName)
 	defer func() {
 		duration := time.Since(startTime)
-		metrics.ReconcileDuration.WithLabelValues("mcpprovidergroup").Observe(duration.Seconds())
+		metrics.ReconcileDuration.WithLabelValues("mcpservergroup").Observe(duration.Seconds())
 	}()
 
-	// Fetch the MCPProviderGroup instance
-	group := &mcpv1alpha1.MCPProviderGroup{}
+	// Fetch the MCPServerGroup instance
+	group := &mcpv1alpha1.MCPServerGroup{}
 	if err := r.Get(ctx, req.NamespacedName, group); err != nil {
 		if errors.IsNotFound(err) {
-			logger.Info("MCPProviderGroup resource not found, ignoring")
+			logger.Info("MCPServerGroup resource not found, ignoring")
 			return ctrl.Result{}, nil
 		}
-		logger.Error(err, "Failed to get MCPProviderGroup")
-		metrics.ReconcileTotal.WithLabelValues("mcpprovidergroup", "error").Inc()
+		logger.Error(err, "Failed to get MCPServerGroup")
+		metrics.ReconcileTotal.WithLabelValues("mcpservergroup", "error").Inc()
 		return ctrl.Result{}, err
 	}
 
@@ -68,9 +68,9 @@ func (r *MCPProviderGroupReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if !group.ObjectMeta.DeletionTimestamp.IsZero() {
 		result, err := r.reconcileDelete(ctx, group)
 		if err != nil {
-			metrics.ReconcileTotal.WithLabelValues("mcpprovidergroup", "error").Inc()
+			metrics.ReconcileTotal.WithLabelValues("mcpservergroup", "error").Inc()
 		} else {
-			metrics.ReconcileTotal.WithLabelValues("mcpprovidergroup", "success").Inc()
+			metrics.ReconcileTotal.WithLabelValues("mcpservergroup", "success").Inc()
 		}
 		return result, err
 	}
@@ -87,16 +87,16 @@ func (r *MCPProviderGroupReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// Main reconciliation logic
 	result, err := r.reconcileNormal(ctx, group)
 	if err != nil {
-		metrics.ReconcileTotal.WithLabelValues("mcpprovidergroup", "error").Inc()
+		metrics.ReconcileTotal.WithLabelValues("mcpservergroup", "error").Inc()
 	} else {
-		metrics.ReconcileTotal.WithLabelValues("mcpprovidergroup", "success").Inc()
+		metrics.ReconcileTotal.WithLabelValues("mcpservergroup", "success").Inc()
 	}
 
 	return result, err
 }
 
 // reconcileNormal handles normal (non-deletion) reconciliation for groups
-func (r *MCPProviderGroupReconciler) reconcileNormal(ctx context.Context, group *mcpv1alpha1.MCPProviderGroup) (ctrl.Result, error) {
+func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *mcpv1alpha1.MCPServerGroup) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	// Update observed generation if changed
@@ -123,24 +123,24 @@ func (r *MCPProviderGroupReconciler) reconcileNormal(ctx context.Context, group 
 		return ctrl.Result{}, nil
 	}
 
-	// List MCPProviders matching selector in same namespace
-	providerList := &mcpv1alpha1.MCPProviderList{}
+	// List MCPServers matching selector in same namespace
+	providerList := &mcpv1alpha1.MCPServerList{}
 	listOpts := &client.ListOptions{
 		Namespace:     group.Namespace,
 		LabelSelector: selector,
 	}
 	if err := r.List(ctx, providerList, listOpts); err != nil {
-		logger.Error(err, "Failed to list MCPProviders")
+		logger.Error(err, "Failed to list MCPServers")
 		return ctrl.Result{RequeueAfter: errorRequeueAfter}, err
 	}
 
 	// Aggregate status counts
 	var readyCount, degradedCount, coldCount, deadCount int32
-	memberStatuses := make([]mcpv1alpha1.ProviderMemberStatus, 0, len(providerList.Items))
+	memberStatuses := make([]mcpv1alpha1.MCPServerMemberStatus, 0, len(providerList.Items))
 
 	for i := range providerList.Items {
 		p := &providerList.Items[i]
-		member := mcpv1alpha1.ProviderMemberStatus{
+		member := mcpv1alpha1.MCPServerMemberStatus{
 			Name:            p.Name,
 			Namespace:       p.Namespace,
 			State:           string(p.Status.State),
@@ -149,13 +149,13 @@ func (r *MCPProviderGroupReconciler) reconcileNormal(ctx context.Context, group 
 		memberStatuses = append(memberStatuses, member)
 
 		switch p.Status.State {
-		case mcpv1alpha1.ProviderStateReady:
+		case mcpv1alpha1.MCPServerStateReady:
 			readyCount++
-		case mcpv1alpha1.ProviderStateDegraded:
+		case mcpv1alpha1.MCPServerStateDegraded:
 			degradedCount++
-		case mcpv1alpha1.ProviderStateCold:
+		case mcpv1alpha1.MCPServerStateCold:
 			coldCount++
-		case mcpv1alpha1.ProviderStateDead:
+		case mcpv1alpha1.MCPServerStateDead:
 			deadCount++
 		default:
 			// Initializing or empty state treated as cold
@@ -176,18 +176,18 @@ func (r *MCPProviderGroupReconciler) reconcileNormal(ctx context.Context, group 
 	r.evaluateConditions(group)
 
 	// Update metrics
-	metrics.GroupProviderCount.WithLabelValues(group.Namespace, group.Name, "Ready").Set(float64(readyCount))
-	metrics.GroupProviderCount.WithLabelValues(group.Namespace, group.Name, "Degraded").Set(float64(degradedCount))
-	metrics.GroupProviderCount.WithLabelValues(group.Namespace, group.Name, "Cold").Set(float64(coldCount))
-	metrics.GroupProviderCount.WithLabelValues(group.Namespace, group.Name, "Dead").Set(float64(deadCount))
+	metrics.GroupMCPServerCount.WithLabelValues(group.Namespace, group.Name, "Ready").Set(float64(readyCount))
+	metrics.GroupMCPServerCount.WithLabelValues(group.Namespace, group.Name, "Degraded").Set(float64(degradedCount))
+	metrics.GroupMCPServerCount.WithLabelValues(group.Namespace, group.Name, "Cold").Set(float64(coldCount))
+	metrics.GroupMCPServerCount.WithLabelValues(group.Namespace, group.Name, "Dead").Set(float64(deadCount))
 
 	// Update status subresource
 	if err := r.Status().Update(ctx, group); err != nil {
-		logger.Error(err, "Failed to update MCPProviderGroup status")
+		logger.Error(err, "Failed to update MCPServerGroup status")
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("MCPProviderGroup reconciled",
+	logger.Info("MCPServerGroup reconciled",
 		"providerCount", group.Status.ProviderCount,
 		"readyCount", readyCount,
 		"degradedCount", degradedCount,
@@ -200,7 +200,7 @@ func (r *MCPProviderGroupReconciler) reconcileNormal(ctx context.Context, group 
 
 // evaluateConditions sets Ready, Degraded, and Available conditions based on
 // provider counts and health policy thresholds.
-func (r *MCPProviderGroupReconciler) evaluateConditions(group *mcpv1alpha1.MCPProviderGroup) {
+func (r *MCPServerGroupReconciler) evaluateConditions(group *mcpv1alpha1.MCPServerGroup) {
 	status := &group.Status
 
 	// Zero-member groups
@@ -239,9 +239,9 @@ func (r *MCPProviderGroupReconciler) evaluateConditions(group *mcpv1alpha1.MCPPr
 }
 
 // reconcileDelete handles group deletion by cleaning up the finalizer and metrics
-func (r *MCPProviderGroupReconciler) reconcileDelete(ctx context.Context, group *mcpv1alpha1.MCPProviderGroup) (ctrl.Result, error) {
+func (r *MCPServerGroupReconciler) reconcileDelete(ctx context.Context, group *mcpv1alpha1.MCPServerGroup) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	logger.Info("Handling deletion for MCPProviderGroup")
+	logger.Info("Handling deletion for MCPServerGroup")
 
 	// Clear group metrics
 	metrics.ClearGroupMetrics(group.Namespace, group.Name)
@@ -253,26 +253,26 @@ func (r *MCPProviderGroupReconciler) reconcileDelete(ctx context.Context, group 
 	}
 
 	r.Recorder.Event(group, "Normal", ReasonDeleted, "Provider group deleted")
-	logger.Info("MCPProviderGroup deleted successfully")
+	logger.Info("MCPServerGroup deleted successfully")
 
 	return ctrl.Result{}, nil
 }
 
-// findGroupsForProvider returns reconcile requests for all MCPProviderGroups
-// whose label selector matches the given MCPProvider. This ensures groups
+// findGroupsForMCPServer returns reconcile requests for all MCPServerGroups
+// whose label selector matches the given MCPServer. This ensures groups
 // re-reconcile when matching providers change state.
-func (r *MCPProviderGroupReconciler) findGroupsForProvider(ctx context.Context, obj client.Object) []reconcile.Request {
+func (r *MCPServerGroupReconciler) findGroupsForMCPServer(ctx context.Context, obj client.Object) []reconcile.Request {
 	logger := log.FromContext(ctx)
 
-	provider, ok := obj.(*mcpv1alpha1.MCPProvider)
+	provider, ok := obj.(*mcpv1alpha1.MCPServer)
 	if !ok {
 		return nil
 	}
 
 	// List all groups in the provider's namespace
-	groupList := &mcpv1alpha1.MCPProviderGroupList{}
+	groupList := &mcpv1alpha1.MCPServerGroupList{}
 	if err := r.List(ctx, groupList, client.InNamespace(provider.Namespace)); err != nil {
-		logger.Error(err, "Failed to list MCPProviderGroups for provider mapping")
+		logger.Error(err, "Failed to list MCPServerGroups for provider mapping")
 		return nil
 	}
 
@@ -306,12 +306,12 @@ func (r *MCPProviderGroupReconciler) findGroupsForProvider(ctx context.Context, 
 }
 
 // SetupWithManager sets up the controller with the Manager
-func (r *MCPProviderGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *MCPServerGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&mcpv1alpha1.MCPProviderGroup{}).
+		For(&mcpv1alpha1.MCPServerGroup{}).
 		Watches(
-			&mcpv1alpha1.MCPProvider{},
-			handler.EnqueueRequestsFromMapFunc(r.findGroupsForProvider),
+			&mcpv1alpha1.MCPServer{},
+			handler.EnqueueRequestsFromMapFunc(r.findGroupsForMCPServer),
 		).
 		Complete(r)
 }

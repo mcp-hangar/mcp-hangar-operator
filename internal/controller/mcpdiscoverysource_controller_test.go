@@ -32,11 +32,11 @@ func waitForDiscoveryCondition(t *testing.T, name, namespace, condType string, s
 	}, 15*time.Second, 250*time.Millisecond, "condition %s=%s not met for source %s/%s", condType, status, namespace, name)
 }
 
-// waitForManagedProviderCount polls until the number of MCPProviders managed by the given source equals count.
+// waitForManagedProviderCount polls until the number of MCPServers managed by the given source equals count.
 func waitForManagedProviderCount(t *testing.T, sourceName, namespace string, count int) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		providerList := &mcpv1alpha1.MCPProviderList{}
+		providerList := &mcpv1alpha1.MCPServerList{}
 		if err := k8sClient.List(ctx, providerList,
 			client.InNamespace(namespace),
 			client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},
@@ -127,7 +127,7 @@ func TestMCPDiscoverySource_ConfigMapDiscovery(t *testing.T) {
 	waitForManagedProviderCount(t, sourceName, ns.Name, 2)
 
 	// Verify providers have correct labels and owner references
-	providerList := &mcpv1alpha1.MCPProviderList{}
+	providerList := &mcpv1alpha1.MCPServerList{}
 	require.NoError(t, k8sClient.List(ctx, providerList,
 		client.InNamespace(ns.Name),
 		client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},
@@ -185,7 +185,7 @@ func TestMCPDiscoverySource_AdditiveNeverDeletes(t *testing.T) {
 	// Additive mode: 2 providers should still exist (never deletes)
 	// Give enough time for at least 2 reconcile cycles, then verify
 	require.Eventually(t, func() bool {
-		providerList := &mcpv1alpha1.MCPProviderList{}
+		providerList := &mcpv1alpha1.MCPServerList{}
 		if err := k8sClient.List(ctx, providerList,
 			client.InNamespace(ns.Name),
 			client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},
@@ -197,7 +197,7 @@ func TestMCPDiscoverySource_AdditiveNeverDeletes(t *testing.T) {
 	}, 10*time.Second, 500*time.Millisecond, "additive mode should never delete providers")
 
 	// Final assertion for clarity
-	providerList := &mcpv1alpha1.MCPProviderList{}
+	providerList := &mcpv1alpha1.MCPServerList{}
 	require.NoError(t, k8sClient.List(ctx, providerList,
 		client.InNamespace(ns.Name),
 		client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},
@@ -239,7 +239,7 @@ func TestMCPDiscoverySource_AuthoritativeDeletes(t *testing.T) {
 	waitForManagedProviderCount(t, sourceName, ns.Name, 1)
 
 	// Verify only provider-a remains
-	providerList := &mcpv1alpha1.MCPProviderList{}
+	providerList := &mcpv1alpha1.MCPServerList{}
 	require.NoError(t, k8sClient.List(ctx, providerList,
 		client.InNamespace(ns.Name),
 		client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},
@@ -264,7 +264,7 @@ func TestMCPDiscoverySource_OwnerReferences(t *testing.T) {
 	waitForManagedProviderCount(t, sourceName, ns.Name, 2)
 
 	// Verify owner references on each provider
-	providerList := &mcpv1alpha1.MCPProviderList{}
+	providerList := &mcpv1alpha1.MCPServerList{}
 	require.NoError(t, k8sClient.List(ctx, providerList,
 		client.InNamespace(ns.Name),
 		client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},
@@ -293,7 +293,7 @@ func TestMCPDiscoverySource_OwnerReferences(t *testing.T) {
 
 	// Providers should be cleaned up (by finalizer or GC)
 	require.Eventually(t, func() bool {
-		list := &mcpv1alpha1.MCPProviderList{}
+		list := &mcpv1alpha1.MCPServerList{}
 		if err := k8sClient.List(ctx, list,
 			client.InNamespace(ns.Name),
 			client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},
@@ -337,7 +337,7 @@ func TestMCPDiscoverySource_PausedFreeze(t *testing.T) {
 	// Wait enough time for at least one requeue cycle, then verify
 	// No new provider-c should be created while paused
 	require.Eventually(t, func() bool {
-		providerList := &mcpv1alpha1.MCPProviderList{}
+		providerList := &mcpv1alpha1.MCPServerList{}
 		if err := k8sClient.List(ctx, providerList,
 			client.InNamespace(ns.Name),
 			client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},
@@ -386,7 +386,7 @@ func TestMCPDiscoverySource_Deletion(t *testing.T) {
 
 	// Managed providers should be cleaned up
 	require.Eventually(t, func() bool {
-		list := &mcpv1alpha1.MCPProviderList{}
+		list := &mcpv1alpha1.MCPServerList{}
 		if err := k8sClient.List(ctx, list,
 			client.InNamespace(ns.Name),
 			client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},

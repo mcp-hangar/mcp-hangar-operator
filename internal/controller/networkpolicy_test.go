@@ -18,8 +18,8 @@ import (
 	"github.com/mcp-hangar/operator/pkg/networkpolicy"
 )
 
-// newTestReconciler creates an MCPProviderReconciler backed by a fake client.
-func newTestReconciler(objs ...runtime.Object) *MCPProviderReconciler {
+// newTestReconciler creates an MCPServerReconciler backed by a fake client.
+func newTestReconciler(objs ...runtime.Object) *MCPServerReconciler {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = mcpv1alpha1.AddToScheme(scheme)
@@ -27,26 +27,26 @@ func newTestReconciler(objs ...runtime.Object) *MCPProviderReconciler {
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithRuntimeObjects(objs...).
-		WithStatusSubresource(&mcpv1alpha1.MCPProvider{}).
+		WithStatusSubresource(&mcpv1alpha1.MCPServer{}).
 		Build()
 
-	return &MCPProviderReconciler{
+	return &MCPServerReconciler{
 		Client:   fakeClient,
 		Scheme:   scheme,
 		Recorder: record.NewFakeRecorder(10),
 	}
 }
 
-// newTestProvider creates an MCPProvider test fixture with optional capabilities.
-func newTestProvider(name, namespace string, caps *mcpv1alpha1.ProviderCapabilities) *mcpv1alpha1.MCPProvider {
-	return &mcpv1alpha1.MCPProvider{
+// newTestProvider creates an MCPServer test fixture with optional capabilities.
+func newTestProvider(name, namespace string, caps *mcpv1alpha1.MCPServerCapabilities) *mcpv1alpha1.MCPServer {
+	return &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 			UID:       "test-uid-123",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:         mcpv1alpha1.ProviderModeContainer,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:         mcpv1alpha1.MCPServerModeContainer,
 			Image:        "test:latest",
 			Capabilities: caps,
 		},
@@ -59,7 +59,7 @@ func boolPtr(b bool) *bool {
 }
 
 func TestReconcileNetworkPolicy_CreatesPolicy(t *testing.T) {
-	provider := newTestProvider("test-provider", "default", &mcpv1alpha1.ProviderCapabilities{
+	provider := newTestProvider("test-provider", "default", &mcpv1alpha1.MCPServerCapabilities{
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{
 				{
@@ -138,7 +138,7 @@ func TestReconcileNetworkPolicy_NoCapabilities_NoPolicy(t *testing.T) {
 
 func TestReconcileNetworkPolicy_UpdatesPolicy(t *testing.T) {
 	// Start with egress to port 443
-	provider := newTestProvider("update-provider", "default", &mcpv1alpha1.ProviderCapabilities{
+	provider := newTestProvider("update-provider", "default", &mcpv1alpha1.MCPServerCapabilities{
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{
 				{
@@ -190,7 +190,7 @@ func TestReconcileNetworkPolicy_UpdatesPolicy(t *testing.T) {
 
 func TestReconcileNetworkPolicy_DeletesPolicyWhenCapabilitiesRemoved(t *testing.T) {
 	// Start with capabilities
-	provider := newTestProvider("delete-provider", "default", &mcpv1alpha1.ProviderCapabilities{
+	provider := newTestProvider("delete-provider", "default", &mcpv1alpha1.MCPServerCapabilities{
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{
 				{
@@ -238,7 +238,7 @@ func TestReconcileNetworkPolicy_DeletesPolicyWhenCapabilitiesRemoved(t *testing.
 }
 
 func TestReconcileNetworkPolicy_OwnerReference(t *testing.T) {
-	provider := newTestProvider("owner-provider", "default", &mcpv1alpha1.ProviderCapabilities{
+	provider := newTestProvider("owner-provider", "default", &mcpv1alpha1.MCPServerCapabilities{
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{
 				{
@@ -268,7 +268,7 @@ func TestReconcileNetworkPolicy_OwnerReference(t *testing.T) {
 
 	require.Len(t, np.OwnerReferences, 1)
 	ownerRef := np.OwnerReferences[0]
-	assert.Equal(t, "MCPProvider", ownerRef.Kind)
+	assert.Equal(t, "MCPServer", ownerRef.Kind)
 	assert.Equal(t, "owner-provider", ownerRef.Name)
 	assert.Equal(t, provider.UID, ownerRef.UID)
 	assert.NotNil(t, ownerRef.Controller)
@@ -277,7 +277,7 @@ func TestReconcileNetworkPolicy_OwnerReference(t *testing.T) {
 
 func TestReconcileNetworkPolicy_DefaultDenyDNSOnly(t *testing.T) {
 	// Empty egress list -- should produce only DNS egress rule (default-deny baseline)
-	provider := newTestProvider("dns-only-provider", "default", &mcpv1alpha1.ProviderCapabilities{
+	provider := newTestProvider("dns-only-provider", "default", &mcpv1alpha1.MCPServerCapabilities{
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{},
 		},

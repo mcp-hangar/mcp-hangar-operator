@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestClient_GetProviderTools_Success(t *testing.T) {
+func TestClient_GetMCPServerTools_Success(t *testing.T) {
 	// Setup mock server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/providers/default/test-provider/tools", r.URL.Path)
@@ -33,7 +33,7 @@ func TestClient_GetProviderTools_Success(t *testing.T) {
 	})
 
 	// Execute
-	tools, err := client.GetProviderTools(context.Background(), "test-provider", "default")
+	tools, err := client.GetMCPServerTools(context.Background(), "test-provider", "default")
 
 	// Assert
 	require.NoError(t, err)
@@ -43,7 +43,7 @@ func TestClient_GetProviderTools_Success(t *testing.T) {
 	assert.Contains(t, tools, "tool3")
 }
 
-func TestClient_GetProviderTools_NotFound(t *testing.T) {
+func TestClient_GetMCPServerTools_NotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]string{
@@ -57,14 +57,14 @@ func TestClient_GetProviderTools_NotFound(t *testing.T) {
 		APIKey: "test-api-key",
 	})
 
-	tools, err := client.GetProviderTools(context.Background(), "nonexistent", "default")
+	tools, err := client.GetMCPServerTools(context.Background(), "nonexistent", "default")
 
 	assert.Error(t, err)
 	assert.Nil(t, tools)
 	assert.Contains(t, err.Error(), "provider not found")
 }
 
-func TestClient_GetProviderTools_Timeout(t *testing.T) {
+func TestClient_GetMCPServerTools_Timeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(100 * time.Millisecond)
 	}))
@@ -77,7 +77,7 @@ func TestClient_GetProviderTools_Timeout(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	tools, err := client.GetProviderTools(ctx, "test-provider", "default")
+	tools, err := client.GetMCPServerTools(ctx, "test-provider", "default")
 
 	assert.Error(t, err)
 	assert.Nil(t, tools)
@@ -141,7 +141,7 @@ func TestClient_RegisterProvider_Success(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
-		var body RegisterProviderRequest
+		var body RegisterMCPServerRequest
 		err := json.NewDecoder(r.Body).Decode(&body)
 		require.NoError(t, err)
 
@@ -160,14 +160,14 @@ func TestClient_RegisterProvider_Success(t *testing.T) {
 		APIKey: "test-api-key",
 	})
 
-	req := &RegisterProviderRequest{
+	req := &RegisterMCPServerRequest{
 		Name:      "test-provider",
 		Namespace: "default",
 		Mode:      "container",
 		Image:     "test:latest",
 	}
 
-	err := client.RegisterProvider(context.Background(), req)
+	err := client.RegisterMCPServer(context.Background(), req)
 
 	assert.NoError(t, err)
 }
@@ -190,7 +190,7 @@ func TestClient_DeregisterProvider_Success(t *testing.T) {
 		APIKey: "test-api-key",
 	})
 
-	err := client.DeregisterProvider(context.Background(), "test-provider", "default")
+	err := client.DeregisterMCPServer(context.Background(), "test-provider", "default")
 
 	assert.NoError(t, err)
 }
@@ -207,7 +207,7 @@ func TestClient_DeregisterProvider_NotFound(t *testing.T) {
 	})
 
 	// Should not error on 404 - provider already gone
-	err := client.DeregisterProvider(context.Background(), "nonexistent", "default")
+	err := client.DeregisterMCPServer(context.Background(), "nonexistent", "default")
 
 	assert.NoError(t, err)
 }
@@ -226,7 +226,7 @@ func TestClient_ServerError(t *testing.T) {
 		APIKey: "test-api-key",
 	})
 
-	tools, err := client.GetProviderTools(context.Background(), "test-provider", "default")
+	tools, err := client.GetMCPServerTools(context.Background(), "test-provider", "default")
 
 	assert.Error(t, err)
 	assert.Nil(t, tools)
@@ -245,7 +245,7 @@ func TestClient_InvalidJSON(t *testing.T) {
 		APIKey: "test-api-key",
 	})
 
-	tools, err := client.GetProviderTools(context.Background(), "test-provider", "default")
+	tools, err := client.GetMCPServerTools(context.Background(), "test-provider", "default")
 
 	assert.Error(t, err)
 	assert.Nil(t, tools)
@@ -265,7 +265,7 @@ func TestClient_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	tools, err := client.GetProviderTools(ctx, "test-provider", "default")
+	tools, err := client.GetMCPServerTools(ctx, "test-provider", "default")
 
 	assert.Error(t, err)
 	assert.Nil(t, tools)
@@ -324,7 +324,7 @@ func TestClient_Retry_On5xx(t *testing.T) {
 		BaseDelay:  10 * time.Millisecond, // Fast retries for test
 	})
 
-	tools, err := client.GetProviderTools(context.Background(), "test-provider", "default")
+	tools, err := client.GetMCPServerTools(context.Background(), "test-provider", "default")
 
 	require.NoError(t, err)
 	assert.Len(t, tools, 1)
@@ -347,7 +347,7 @@ func TestClient_Retry_ExhaustedReturnsError(t *testing.T) {
 		BaseDelay:  10 * time.Millisecond,
 	})
 
-	tools, err := client.GetProviderTools(context.Background(), "test-provider", "default")
+	tools, err := client.GetMCPServerTools(context.Background(), "test-provider", "default")
 
 	assert.Error(t, err)
 	assert.Nil(t, tools)
@@ -371,7 +371,7 @@ func TestClient_Retry_No4xxRetry(t *testing.T) {
 		BaseDelay:  10 * time.Millisecond,
 	})
 
-	tools, err := client.GetProviderTools(context.Background(), "nonexistent", "default")
+	tools, err := client.GetMCPServerTools(context.Background(), "nonexistent", "default")
 
 	assert.Error(t, err)
 	assert.Nil(t, tools)

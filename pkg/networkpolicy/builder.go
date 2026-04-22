@@ -1,5 +1,5 @@
 // Package networkpolicy contains utilities for generating Kubernetes NetworkPolicy
-// resources from MCPProvider capability declarations.
+// resources from MCPServer capability declarations.
 package networkpolicy
 
 import (
@@ -16,7 +16,7 @@ import (
 const (
 	// LabelManagedBy identifies resources managed by the operator.
 	LabelManagedBy = "app.kubernetes.io/managed-by"
-	// LabelProvider identifies the owning MCPProvider.
+	// LabelProvider identifies the owning MCPServer.
 	LabelProvider = "mcp-hangar.io/provider"
 	// LabelComponent classifies the resource type within the operator.
 	LabelComponent = "mcp-hangar.io/component"
@@ -36,14 +36,14 @@ func NetworkPolicyName(providerName string) string {
 	return "mcp-provider-" + providerName + "-egress"
 }
 
-// BuildNetworkPolicy translates an MCPProvider's capability declarations into a
+// BuildNetworkPolicy translates an MCPServer's capability declarations into a
 // Kubernetes NetworkPolicy resource. Returns nil if the provider declares no
 // network capabilities.
 //
 // This is a pure function with no side effects -- it reads from the provider
 // struct and returns a new NetworkPolicy. The reconciler is responsible for
 // creating/updating the resource in the cluster.
-func BuildNetworkPolicy(provider *mcpv1alpha1.MCPProvider) *networkingv1.NetworkPolicy {
+func BuildNetworkPolicy(provider *mcpv1alpha1.MCPServer) *networkingv1.NetworkPolicy {
 	if provider.Spec.Capabilities == nil || provider.Spec.Capabilities.Network == nil {
 		return nil
 	}
@@ -78,7 +78,7 @@ func BuildNetworkPolicy(provider *mcpv1alpha1.MCPProvider) *networkingv1.Network
 }
 
 // buildLabels returns standard labels for the NetworkPolicy resource.
-func buildLabels(provider *mcpv1alpha1.MCPProvider) map[string]string {
+func buildLabels(provider *mcpv1alpha1.MCPServer) map[string]string {
 	return map[string]string{
 		LabelManagedBy: DefaultManagerName,
 		LabelProvider:  provider.Name,

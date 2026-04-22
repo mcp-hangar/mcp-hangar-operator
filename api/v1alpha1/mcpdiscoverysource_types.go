@@ -61,9 +61,9 @@ type MCPDiscoverySourceSpec struct {
 	// +optional
 	ServiceDiscovery *ServiceDiscoveryConfig `json:"serviceDiscovery,omitempty"`
 
-	// ProviderTemplate provides default settings for discovered providers
+	// MCPServerTemplate provides default settings for discovered providers
 	// +optional
-	ProviderTemplate *ProviderTemplateConfig `json:"providerTemplate,omitempty"`
+	MCPServerTemplate *MCPServerTemplateConfig `json:"providerTemplate,omitempty"`
 
 	// Filters limit discovered providers
 	// +optional
@@ -133,13 +133,13 @@ type ServiceDiscoveryConfig struct {
 	Protocol string `json:"protocol,omitempty"`
 }
 
-// ProviderTemplateConfig provides defaults for discovered providers
-type ProviderTemplateConfig struct {
+// MCPServerTemplateConfig provides defaults for discovered providers
+type MCPServerTemplateConfig struct {
 	// Metadata contains default labels and annotations
 	Metadata *TemplateMetadata `json:"metadata,omitempty"`
 
-	// Spec contains default MCPProvider spec fields
-	Spec *MCPProviderSpec `json:"spec,omitempty"`
+	// Spec contains default MCPServer spec fields
+	Spec *MCPServerSpec `json:"spec,omitempty"`
 }
 
 // TemplateMetadata defines template metadata
@@ -177,7 +177,7 @@ type MCPDiscoverySourceStatus struct {
 	// DiscoveredCount is the number of discovered providers
 	DiscoveredCount int32 `json:"discoveredCount,omitempty"`
 
-	// ManagedCount is the number of managed MCPProvider resources
+	// ManagedCount is the number of managed MCPServer resources
 	ManagedCount int32 `json:"managedCount,omitempty"`
 
 	// LastSyncTime is the last successful sync time
@@ -192,8 +192,8 @@ type MCPDiscoverySourceStatus struct {
 	// NextSyncTime is when the next sync is scheduled
 	NextSyncTime *metav1.Time `json:"nextSyncTime,omitempty"`
 
-	// DiscoveredProviders lists discovered providers
-	DiscoveredProviders []DiscoveredProvider `json:"discoveredProviders,omitempty"`
+	// DiscoveredMCPServers lists discovered providers
+	DiscoveredMCPServers []DiscoveredMCPServer `json:"discoveredProviders,omitempty"`
 
 	// ObservedGeneration is the generation observed by controller
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -202,8 +202,8 @@ type MCPDiscoverySourceStatus struct {
 	Conditions []Condition `json:"conditions,omitempty"`
 }
 
-// DiscoveredProvider describes a discovered provider
-type DiscoveredProvider struct {
+// DiscoveredMCPServer describes a discovered provider
+type DiscoveredMCPServer struct {
 	// Name of the provider
 	Name string `json:"name"`
 
@@ -213,7 +213,7 @@ type DiscoveredProvider struct {
 	// DiscoveredAt is when it was discovered
 	DiscoveredAt metav1.Time `json:"discoveredAt,omitempty"`
 
-	// Managed indicates if MCPProvider was created
+	// Managed indicates if MCPServer was created
 	Managed bool `json:"managed,omitempty"`
 
 	// Error creating provider (if any)

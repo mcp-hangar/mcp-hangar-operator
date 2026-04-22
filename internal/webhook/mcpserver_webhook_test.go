@@ -12,13 +12,13 @@ import (
 	"github.com/mcp-hangar/operator/internal/webhook"
 )
 
-func newProvider(name string, mode mcpv1alpha1.ProviderMode) *mcpv1alpha1.MCPProvider {
-	return &mcpv1alpha1.MCPProvider{
+func newProvider(name string, mode mcpv1alpha1.MCPServerMode) *mcpv1alpha1.MCPServer {
+	return &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
+		Spec: mcpv1alpha1.MCPServerSpec{
 			Mode: mode,
 		},
 	}
@@ -29,8 +29,8 @@ func int32Ptr(i int32) *int32 { return &i }
 // ── Container mode ────────────────────────────────────────────────────
 
 func TestValidateCreate_ContainerMode_Valid(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("valid-container", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("valid-container", mcpv1alpha1.MCPServerModeContainer)
 	p.Spec.Image = "ghcr.io/test/provider:latest"
 
 	warnings, err := v.ValidateCreate(context.Background(), p)
@@ -39,8 +39,8 @@ func TestValidateCreate_ContainerMode_Valid(t *testing.T) {
 }
 
 func TestValidateCreate_ContainerMode_MissingImage(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("no-image", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("no-image", mcpv1alpha1.MCPServerModeContainer)
 
 	_, err := v.ValidateCreate(context.Background(), p)
 	require.Error(t, err)
@@ -48,8 +48,8 @@ func TestValidateCreate_ContainerMode_MissingImage(t *testing.T) {
 }
 
 func TestValidateCreate_ContainerMode_EndpointWarning(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("container-with-endpoint", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("container-with-endpoint", mcpv1alpha1.MCPServerModeContainer)
 	p.Spec.Image = "test:latest"
 	p.Spec.Endpoint = "http://ignored.example.com"
 
@@ -62,8 +62,8 @@ func TestValidateCreate_ContainerMode_EndpointWarning(t *testing.T) {
 // ── Remote mode ────────────────────────────────────────────────────────
 
 func TestValidateCreate_RemoteMode_Valid(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("valid-remote", mcpv1alpha1.ProviderModeRemote)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("valid-remote", mcpv1alpha1.MCPServerModeRemote)
 	p.Spec.Endpoint = "https://api.example.com/mcp"
 
 	warnings, err := v.ValidateCreate(context.Background(), p)
@@ -72,8 +72,8 @@ func TestValidateCreate_RemoteMode_Valid(t *testing.T) {
 }
 
 func TestValidateCreate_RemoteMode_MissingEndpoint(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("no-endpoint", mcpv1alpha1.ProviderModeRemote)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("no-endpoint", mcpv1alpha1.MCPServerModeRemote)
 
 	_, err := v.ValidateCreate(context.Background(), p)
 	require.Error(t, err)
@@ -81,8 +81,8 @@ func TestValidateCreate_RemoteMode_MissingEndpoint(t *testing.T) {
 }
 
 func TestValidateCreate_RemoteMode_InvalidEndpoint(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("bad-endpoint", mcpv1alpha1.ProviderModeRemote)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("bad-endpoint", mcpv1alpha1.MCPServerModeRemote)
 	p.Spec.Endpoint = "not-a-url"
 
 	_, err := v.ValidateCreate(context.Background(), p)
@@ -91,8 +91,8 @@ func TestValidateCreate_RemoteMode_InvalidEndpoint(t *testing.T) {
 }
 
 func TestValidateCreate_RemoteMode_ImageWarning(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("remote-with-image", mcpv1alpha1.ProviderModeRemote)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("remote-with-image", mcpv1alpha1.MCPServerModeRemote)
 	p.Spec.Endpoint = "https://api.example.com"
 	p.Spec.Image = "test:latest"
 
@@ -105,8 +105,8 @@ func TestValidateCreate_RemoteMode_ImageWarning(t *testing.T) {
 // ── Duration validation ────────────────────────────────────────────────
 
 func TestValidateCreate_InvalidDuration(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("bad-duration", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("bad-duration", mcpv1alpha1.MCPServerModeContainer)
 	p.Spec.Image = "test:latest"
 	p.Spec.IdleTTL = "not-a-duration"
 
@@ -117,8 +117,8 @@ func TestValidateCreate_InvalidDuration(t *testing.T) {
 }
 
 func TestValidateCreate_NegativeDuration(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("negative-duration", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("negative-duration", mcpv1alpha1.MCPServerModeContainer)
 	p.Spec.Image = "test:latest"
 	p.Spec.StartupTimeout = "-5s"
 
@@ -129,8 +129,8 @@ func TestValidateCreate_NegativeDuration(t *testing.T) {
 }
 
 func TestValidateCreate_ValidDurations(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("valid-durations", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("valid-durations", mcpv1alpha1.MCPServerModeContainer)
 	p.Spec.Image = "test:latest"
 	p.Spec.IdleTTL = "10m"
 	p.Spec.StartupTimeout = "1m30s"
@@ -149,8 +149,8 @@ func TestValidateCreate_ValidDurations(t *testing.T) {
 }
 
 func TestValidateCreate_HealthCheckInvalidDuration(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("bad-hc-duration", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("bad-hc-duration", mcpv1alpha1.MCPServerModeContainer)
 	p.Spec.Image = "test:latest"
 	p.Spec.HealthCheck = &mcpv1alpha1.HealthCheckConfig{
 		Interval: "abc",
@@ -164,8 +164,8 @@ func TestValidateCreate_HealthCheckInvalidDuration(t *testing.T) {
 // ── Tools validation ──────────────────────────────────────────────────
 
 func TestValidateCreate_ToolsAllowAndDenyMutuallyExclusive(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("both-lists", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("both-lists", mcpv1alpha1.MCPServerModeContainer)
 	p.Spec.Image = "test:latest"
 	p.Spec.Tools = &mcpv1alpha1.ToolsConfig{
 		AllowList: []string{"calc"},
@@ -178,8 +178,8 @@ func TestValidateCreate_ToolsAllowAndDenyMutuallyExclusive(t *testing.T) {
 }
 
 func TestValidateCreate_ToolsAllowListOnly(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("allow-only", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("allow-only", mcpv1alpha1.MCPServerModeContainer)
 	p.Spec.Image = "test:latest"
 	p.Spec.Tools = &mcpv1alpha1.ToolsConfig{
 		AllowList: []string{"calc", "convert"},
@@ -193,10 +193,10 @@ func TestValidateCreate_ToolsAllowListOnly(t *testing.T) {
 // ── Capabilities validation ──────────────────────────────────────────
 
 func TestValidateCreate_DuplicateExpectedTools(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("dup-tools", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("dup-tools", mcpv1alpha1.MCPServerModeContainer)
 	p.Spec.Image = "test:latest"
-	p.Spec.Capabilities = &mcpv1alpha1.ProviderCapabilities{
+	p.Spec.Capabilities = &mcpv1alpha1.MCPServerCapabilities{
 		Tools: &mcpv1alpha1.ToolCapabilitiesSpec{
 			ExpectedTools: []string{"calc", "convert", "calc"},
 		},
@@ -209,10 +209,10 @@ func TestValidateCreate_DuplicateExpectedTools(t *testing.T) {
 }
 
 func TestValidateCreate_EmptyExpectedTool(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("empty-tool", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("empty-tool", mcpv1alpha1.MCPServerModeContainer)
 	p.Spec.Image = "test:latest"
-	p.Spec.Capabilities = &mcpv1alpha1.ProviderCapabilities{
+	p.Spec.Capabilities = &mcpv1alpha1.MCPServerCapabilities{
 		Tools: &mcpv1alpha1.ToolCapabilitiesSpec{
 			ExpectedTools: []string{"calc", ""},
 		},
@@ -224,10 +224,10 @@ func TestValidateCreate_EmptyExpectedTool(t *testing.T) {
 }
 
 func TestValidateCreate_EgressMissingHostAndCIDR(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("empty-egress-rule", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("empty-egress-rule", mcpv1alpha1.MCPServerModeContainer)
 	p.Spec.Image = "test:latest"
-	p.Spec.Capabilities = &mcpv1alpha1.ProviderCapabilities{
+	p.Spec.Capabilities = &mcpv1alpha1.MCPServerCapabilities{
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{
 				{Port: 443},
@@ -241,10 +241,10 @@ func TestValidateCreate_EgressMissingHostAndCIDR(t *testing.T) {
 }
 
 func TestValidateCreate_EgressValidCIDR(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("cidr-egress", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("cidr-egress", mcpv1alpha1.MCPServerModeContainer)
 	p.Spec.Image = "test:latest"
-	p.Spec.Capabilities = &mcpv1alpha1.ProviderCapabilities{
+	p.Spec.Capabilities = &mcpv1alpha1.MCPServerCapabilities{
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{
 				{CIDR: "10.0.0.0/8", Port: 5432},
@@ -258,10 +258,10 @@ func TestValidateCreate_EgressValidCIDR(t *testing.T) {
 }
 
 func TestValidateCreate_ValidCapabilities(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("full-caps", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("full-caps", mcpv1alpha1.MCPServerModeContainer)
 	p.Spec.Image = "test:latest"
-	p.Spec.Capabilities = &mcpv1alpha1.ProviderCapabilities{
+	p.Spec.Capabilities = &mcpv1alpha1.MCPServerCapabilities{
 		EnforcementMode: "block",
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{
@@ -283,8 +283,8 @@ func TestValidateCreate_ValidCapabilities(t *testing.T) {
 // ── Update validation ─────────────────────────────────────────────────
 
 func TestValidateUpdate_Valid(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	old := newProvider("update-test", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	old := newProvider("update-test", mcpv1alpha1.MCPServerModeContainer)
 	old.Spec.Image = "test:v1"
 
 	updated := old.DeepCopy()
@@ -296,8 +296,8 @@ func TestValidateUpdate_Valid(t *testing.T) {
 }
 
 func TestValidateUpdate_InvalidNewSpec(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	old := newProvider("update-invalid", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	old := newProvider("update-invalid", mcpv1alpha1.MCPServerModeContainer)
 	old.Spec.Image = "test:v1"
 
 	updated := old.DeepCopy()
@@ -311,8 +311,8 @@ func TestValidateUpdate_InvalidNewSpec(t *testing.T) {
 // ── Delete validation ─────────────────────────────────────────────────
 
 func TestValidateDelete_AlwaysAllowed(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("delete-me", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("delete-me", mcpv1alpha1.MCPServerModeContainer)
 
 	warnings, err := v.ValidateDelete(context.Background(), p)
 	assert.NoError(t, err)
@@ -322,11 +322,11 @@ func TestValidateDelete_AlwaysAllowed(t *testing.T) {
 // ── Multiple errors ───────────────────────────────────────────────────
 
 func TestValidateCreate_MultipleErrors(t *testing.T) {
-	v := &webhook.MCPProviderValidator{}
-	p := newProvider("multi-error", mcpv1alpha1.ProviderModeContainer)
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("multi-error", mcpv1alpha1.MCPServerModeContainer)
 	// Missing image + bad duration + duplicate tools
 	p.Spec.IdleTTL = "xyz"
-	p.Spec.Capabilities = &mcpv1alpha1.ProviderCapabilities{
+	p.Spec.Capabilities = &mcpv1alpha1.MCPServerCapabilities{
 		Tools: &mcpv1alpha1.ToolCapabilitiesSpec{
 			ExpectedTools: []string{"a", "a"},
 		},

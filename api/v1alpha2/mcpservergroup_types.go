@@ -1,5 +1,5 @@
-// Package v1alpha1 contains API Schema definitions for the mcp-hangar.io v1alpha1 API group
-package v1alpha1
+// Package v1alpha2 contains API Schema definitions for the mcp-hangar.io v1alpha2 API group
+package v1alpha2
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,9 +17,9 @@ const (
 	StrategyFailover         LoadBalancingStrategy = "Failover"
 )
 
-// MCPProviderGroupSpec defines the desired state of MCPProviderGroup
-type MCPProviderGroupSpec struct {
-	// Selector selects MCPProviders to include in the group
+// MCPServerGroupSpec defines the desired state of MCPServerGroup
+type MCPServerGroupSpec struct {
+	// Selector selects MCPServers to include in the group
 	// +kubebuilder:validation:Required
 	Selector *metav1.LabelSelector `json:"selector"`
 
@@ -56,9 +56,10 @@ type FailoverConfig struct {
 	// +kubebuilder:validation:Maximum=10
 	MaxRetries int32 `json:"maxRetries,omitempty"`
 
-	// RetryDelay is the delay between retries
-	// +kubebuilder:default="1s"
-	RetryDelay string `json:"retryDelay,omitempty"`
+	// RetryDelay is the delay between retries.
+	// Uses standard Kubernetes duration format (e.g. "1s").
+	// +optional
+	RetryDelay *metav1.Duration `json:"retryDelay,omitempty"`
 
 	// RetryOn lists conditions that trigger retry
 	// +kubebuilder:default={"timeout","connection_error"}
@@ -98,9 +99,10 @@ type SessionAffinityConfig struct {
 	// +optional
 	Header string `json:"header,omitempty"`
 
-	// TTL is the session TTL
-	// +kubebuilder:default="10m"
-	TTL string `json:"ttl,omitempty"`
+	// TTL is the session TTL.
+	// Uses standard Kubernetes duration format (e.g. "10m0s").
+	// +optional
+	TTL *metav1.Duration `json:"ttl,omitempty"`
 }
 
 // GroupCircuitBreakerConfig defines group-level circuit breaker
@@ -113,13 +115,14 @@ type GroupCircuitBreakerConfig struct {
 	// +kubebuilder:default=10
 	FailureThreshold int32 `json:"failureThreshold,omitempty"`
 
-	// ResetTimeout before attempting recovery
-	// +kubebuilder:default="1m"
-	ResetTimeout string `json:"resetTimeout,omitempty"`
+	// ResetTimeout before attempting recovery.
+	// Uses standard Kubernetes duration format (e.g. "1m0s").
+	// +optional
+	ResetTimeout *metav1.Duration `json:"resetTimeout,omitempty"`
 }
 
-// MCPProviderGroupStatus defines the observed state of MCPProviderGroup
-type MCPProviderGroupStatus struct {
+// MCPServerGroupStatus defines the observed state of MCPServerGroup
+type MCPServerGroupStatus struct {
 	// ProviderCount is total providers in group
 	ProviderCount int32 `json:"providerCount,omitempty"`
 
@@ -139,17 +142,21 @@ type MCPProviderGroupStatus struct {
 	ActiveStrategy string `json:"activeStrategy,omitempty"`
 
 	// Providers contains provider member details
-	Providers []ProviderMemberStatus `json:"providers,omitempty"`
+	Providers []MCPServerMemberStatus `json:"providers,omitempty"`
 
 	// ObservedGeneration is the generation observed by controller
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// Conditions represent the latest available observations
-	Conditions []Condition `json:"conditions,omitempty"`
+	// Conditions represent the latest available observations.
+	// Uses standard metav1.Condition (improved from v1alpha1 custom Condition type).
+	// +optional
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
-// ProviderMemberStatus defines the status of a group member
-type ProviderMemberStatus struct {
+// MCPServerMemberStatus defines the status of a group member
+type MCPServerMemberStatus struct {
 	// Name of the provider
 	Name string `json:"name"`
 
@@ -177,33 +184,34 @@ type ProviderMemberStatus struct {
 // +kubebuilder:printcolumn:name="Degraded",type=integer,JSONPath=`.status.degradedCount`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:resource:shortName=mcppg;providergroup,categories=mcp
+// +kubebuilder:storageversion
 
-// MCPProviderGroup is the Schema for the mcpprovidergroups API
-type MCPProviderGroup struct {
+// MCPServerGroup is the Schema for the mcpservergroups API
+type MCPServerGroup struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   MCPProviderGroupSpec   `json:"spec,omitempty"`
-	Status MCPProviderGroupStatus `json:"status,omitempty"`
+	Spec   MCPServerGroupSpec   `json:"spec,omitempty"`
+	Status MCPServerGroupStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// MCPProviderGroupList contains a list of MCPProviderGroup
-type MCPProviderGroupList struct {
+// MCPServerGroupList contains a list of MCPServerGroup
+type MCPServerGroupList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []MCPProviderGroup `json:"items"`
+	Items           []MCPServerGroup `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&MCPProviderGroup{}, &MCPProviderGroupList{})
+	SchemeBuilder.Register(&MCPServerGroup{}, &MCPServerGroupList{})
 }
 
 // Helper methods
 
 // IsFailoverEnabled returns true if failover is enabled
-func (g *MCPProviderGroup) IsFailoverEnabled() bool {
+func (g *MCPServerGroup) IsFailoverEnabled() bool {
 	if g.Spec.Failover == nil || g.Spec.Failover.Enabled == nil {
 		return true // Default enabled
 	}
@@ -211,7 +219,7 @@ func (g *MCPProviderGroup) IsFailoverEnabled() bool {
 }
 
 // GetMaxRetries returns the maximum retry count
-func (g *MCPProviderGroup) GetMaxRetries() int32 {
+func (g *MCPServerGroup) GetMaxRetries() int32 {
 	if g.Spec.Failover == nil {
 		return 2 // Default
 	}
@@ -219,7 +227,7 @@ func (g *MCPProviderGroup) GetMaxRetries() int32 {
 }
 
 // IsHealthy returns true if the group meets health requirements
-func (s *MCPProviderGroupStatus) IsHealthy(policy *HealthPolicy) bool {
+func (s *MCPServerGroupStatus) IsHealthy(policy *HealthPolicy) bool {
 	if s.ProviderCount == 0 {
 		return false
 	}
@@ -236,9 +244,4 @@ func (s *MCPProviderGroupStatus) IsHealthy(policy *HealthPolicy) bool {
 	// Check percentage
 	percentage := (s.ReadyCount * 100) / s.ProviderCount
 	return percentage >= policy.MinHealthyPercentage
-}
-
-// SetCondition sets or updates a condition
-func (s *MCPProviderGroupStatus) SetCondition(condType string, status metav1.ConditionStatus, reason, message string) {
-	SetConditionOnSlice(&s.Conditions, condType, status, reason, message)
 }

@@ -1,4 +1,4 @@
-// Package provider contains utilities for building Kubernetes resources from MCPProvider specs
+// Package provider contains utilities for building Kubernetes resources from MCPServer specs
 package provider
 
 import (
@@ -33,8 +33,8 @@ const (
 	DefaultManagerName = "mcp-hangar-operator"
 )
 
-// BuildPodForProvider creates a Pod spec from MCPProvider
-func BuildPodForProvider(provider *mcpv1alpha1.MCPProvider) (*corev1.Pod, error) {
+// BuildPodForMCPServer creates a Pod spec from MCPServer
+func BuildPodForMCPServer(provider *mcpv1alpha1.MCPServer) (*corev1.Pod, error) {
 	if provider.Spec.Image == "" {
 		return nil, fmt.Errorf("container mode requires image")
 	}
@@ -92,7 +92,7 @@ func BuildPodForProvider(provider *mcpv1alpha1.MCPProvider) (*corev1.Pod, error)
 }
 
 // buildContainer creates the main provider container
-func buildContainer(provider *mcpv1alpha1.MCPProvider) corev1.Container {
+func buildContainer(provider *mcpv1alpha1.MCPServer) corev1.Container {
 	container := corev1.Container{
 		Name:            ContainerProvider,
 		Image:           provider.Spec.Image,
@@ -131,7 +131,7 @@ func buildContainer(provider *mcpv1alpha1.MCPProvider) corev1.Container {
 }
 
 // buildLabels creates standard labels for provider resources
-func buildLabels(provider *mcpv1alpha1.MCPProvider) map[string]string {
+func buildLabels(provider *mcpv1alpha1.MCPServer) map[string]string {
 	labels := map[string]string{
 		LabelManagedBy: DefaultManagerName,
 		LabelName:      provider.Name,
@@ -150,7 +150,7 @@ func buildLabels(provider *mcpv1alpha1.MCPProvider) map[string]string {
 }
 
 // buildEnvVars creates environment variables from provider spec
-func buildEnvVars(provider *mcpv1alpha1.MCPProvider) []corev1.EnvVar {
+func buildEnvVars(provider *mcpv1alpha1.MCPServer) []corev1.EnvVar {
 	envVars := []corev1.EnvVar{
 		{
 			Name:  "MCP_PROVIDER_NAME",
@@ -255,7 +255,7 @@ func buildResourceRequirements(res *mcpv1alpha1.ResourceRequirements) corev1.Res
 }
 
 // buildVolumes creates volume mounts and volumes from provider spec
-func buildVolumes(provider *mcpv1alpha1.MCPProvider) ([]corev1.VolumeMount, []corev1.Volume) {
+func buildVolumes(provider *mcpv1alpha1.MCPServer) ([]corev1.VolumeMount, []corev1.Volume) {
 	var mounts []corev1.VolumeMount
 	var volumes []corev1.Volume
 
@@ -443,7 +443,7 @@ func defaultContainerSecurityContext() *corev1.SecurityContext {
 }
 
 // getTerminationGracePeriod returns termination grace period in seconds
-func getTerminationGracePeriod(provider *mcpv1alpha1.MCPProvider) *int64 {
+func getTerminationGracePeriod(provider *mcpv1alpha1.MCPServer) *int64 {
 	// Default 30 seconds
 	defaultGrace := int64(30)
 

@@ -8,11 +8,11 @@
 // authoritative.
 package v1alpha2
 
-// Hub marks MCPProvider as the Hub type for conversion.
-func (*MCPProvider) Hub() {}
+// Hub marks MCPServer as the Hub type for conversion.
+func (*MCPServer) Hub() {}
 
-// Hub marks MCPProviderGroup as the Hub type for conversion.
-func (*MCPProviderGroup) Hub() {}
+// Hub marks MCPServerGroup as the Hub type for conversion.
+func (*MCPServerGroup) Hub() {}
 
 // Hub marks MCPDiscoverySource as the Hub type for conversion.
 func (*MCPDiscoverySource) Hub() {}

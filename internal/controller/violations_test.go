@@ -27,7 +27,7 @@ func TestReconcileViolationDetection_NoViolations(t *testing.T) {
 	// Provider with capabilities but everything in compliance:
 	// - network egress declared AND NetworkPolicyApplied is True
 	// - tools maxCount is 10, status.toolsCount is 5
-	provider := newTestProvider("compliant", "default", &mcpv1alpha1.ProviderCapabilities{
+	provider := newTestProvider("compliant", "default", &mcpv1alpha1.MCPServerCapabilities{
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{
 				{Host: "api.example.com", Port: 443, Protocol: "https", CIDR: "10.0.0.0/8"},
@@ -52,7 +52,7 @@ func TestReconcileViolationDetection_NoViolations(t *testing.T) {
 
 func TestReconcileViolationDetection_NetworkPolicyDrift(t *testing.T) {
 	// Provider declares network egress but NetworkPolicyApplied condition is not True
-	provider := newTestProvider("np-drift", "default", &mcpv1alpha1.ProviderCapabilities{
+	provider := newTestProvider("np-drift", "default", &mcpv1alpha1.MCPServerCapabilities{
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{
 				{Host: "api.example.com", Port: 443, Protocol: "https", CIDR: "10.0.0.0/8"},
@@ -73,7 +73,7 @@ func TestReconcileViolationDetection_NetworkPolicyDrift(t *testing.T) {
 
 func TestReconcileViolationDetection_ToolCountDrift(t *testing.T) {
 	// Provider declares tools.maxCount=5 but status.toolsCount=8
-	provider := newTestProvider("tool-drift", "default", &mcpv1alpha1.ProviderCapabilities{
+	provider := newTestProvider("tool-drift", "default", &mcpv1alpha1.MCPServerCapabilities{
 		Tools: &mcpv1alpha1.ToolCapabilitiesSpec{
 			MaxCount: 5,
 		},
@@ -94,7 +94,7 @@ func TestReconcileViolationDetection_ToolCountDrift(t *testing.T) {
 
 func TestReconcileViolationDetection_CapsViolations(t *testing.T) {
 	// Pre-fill status.Violations with 99 records, trigger 2 new violations
-	provider := newTestProvider("cap-test", "default", &mcpv1alpha1.ProviderCapabilities{
+	provider := newTestProvider("cap-test", "default", &mcpv1alpha1.MCPServerCapabilities{
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{
 				{Host: "api.example.com", Port: 443, Protocol: "https", CIDR: "10.0.0.0/8"},
@@ -136,7 +136,7 @@ func TestReconcileViolationDetection_CapsViolations(t *testing.T) {
 func TestReconcileViolationDetection_MetricsIncrement(t *testing.T) {
 	metrics.CapabilityViolationsTotal.Reset()
 
-	provider := newTestProvider("metric-test", "default", &mcpv1alpha1.ProviderCapabilities{
+	provider := newTestProvider("metric-test", "default", &mcpv1alpha1.MCPServerCapabilities{
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{
 				{Host: "api.example.com", Port: 443, Protocol: "https", CIDR: "10.0.0.0/8"},
@@ -155,7 +155,7 @@ func TestReconcileViolationDetection_MetricsIncrement(t *testing.T) {
 }
 
 func TestReconcileViolationDetection_SetsCondition(t *testing.T) {
-	provider := newTestProvider("cond-set", "default", &mcpv1alpha1.ProviderCapabilities{
+	provider := newTestProvider("cond-set", "default", &mcpv1alpha1.MCPServerCapabilities{
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{
 				{Host: "api.example.com", Port: 443, Protocol: "https", CIDR: "10.0.0.0/8"},
@@ -177,7 +177,7 @@ func TestReconcileViolationDetection_SetsCondition(t *testing.T) {
 
 func TestReconcileViolationDetection_ClearsCondition(t *testing.T) {
 	// Set ViolationDetected=True on status, then call with no violations
-	provider := newTestProvider("cond-clear", "default", &mcpv1alpha1.ProviderCapabilities{
+	provider := newTestProvider("cond-clear", "default", &mcpv1alpha1.MCPServerCapabilities{
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{
 				{Host: "api.example.com", Port: 443, Protocol: "https", CIDR: "10.0.0.0/8"},
@@ -205,7 +205,7 @@ func TestReconcileViolationDetection_ClearsCondition(t *testing.T) {
 
 func TestReconcileViolationDetection_EnforcementModeDefault(t *testing.T) {
 	// Empty enforcementMode should default to "alert"
-	provider := newTestProvider("enforce-default", "default", &mcpv1alpha1.ProviderCapabilities{
+	provider := newTestProvider("enforce-default", "default", &mcpv1alpha1.MCPServerCapabilities{
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{
 				{Host: "api.example.com", Port: 443, Protocol: "https", CIDR: "10.0.0.0/8"},
@@ -225,7 +225,7 @@ func TestReconcileViolationDetection_EnforcementModeDefault(t *testing.T) {
 }
 
 func TestReconcileViolationDetection_EnforcementModeQuarantine(t *testing.T) {
-	provider := newTestProvider("enforce-quarantine", "default", &mcpv1alpha1.ProviderCapabilities{
+	provider := newTestProvider("enforce-quarantine", "default", &mcpv1alpha1.MCPServerCapabilities{
 		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha1.EgressRuleSpec{
 				{Host: "api.example.com", Port: 443, Protocol: "https", CIDR: "10.0.0.0/8"},

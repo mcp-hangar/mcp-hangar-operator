@@ -21,8 +21,8 @@ import (
 	"github.com/mcp-hangar/operator/pkg/provider"
 )
 
-// newProviderReconciler creates an MCPProviderReconciler backed by a fake client.
-func newProviderReconciler(objs ...runtime.Object) *MCPProviderReconciler {
+// newMCPServerReconciler creates an MCPServerReconciler backed by a fake client.
+func newMCPServerReconciler(objs ...runtime.Object) *MCPServerReconciler {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = mcpv1alpha1.AddToScheme(scheme)
@@ -30,10 +30,10 @@ func newProviderReconciler(objs ...runtime.Object) *MCPProviderReconciler {
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithRuntimeObjects(objs...).
-		WithStatusSubresource(&mcpv1alpha1.MCPProvider{}).
+		WithStatusSubresource(&mcpv1alpha1.MCPServer{}).
 		Build()
 
-	return &MCPProviderReconciler{
+	return &MCPServerReconciler{
 		Client:   fakeClient,
 		Scheme:   scheme,
 		Recorder: record.NewFakeRecorder(10),
@@ -41,7 +41,7 @@ func newProviderReconciler(objs ...runtime.Object) *MCPProviderReconciler {
 	}
 }
 
-func reconcileProvider(t *testing.T, r *MCPProviderReconciler, name, namespace string) ctrl.Result {
+func reconcileMCPServer(t *testing.T, r *MCPServerReconciler, name, namespace string) ctrl.Result {
 	t.Helper()
 	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: name, Namespace: namespace}}
 	result, err := r.Reconcile(context.Background(), req)
@@ -49,28 +49,28 @@ func reconcileProvider(t *testing.T, r *MCPProviderReconciler, name, namespace s
 	return result
 }
 
-func getProvider(t *testing.T, r *MCPProviderReconciler, name, namespace string) *mcpv1alpha1.MCPProvider {
+func getMCPServer(t *testing.T, r *MCPServerReconciler, name, namespace string) *mcpv1alpha1.MCPServer {
 	t.Helper()
-	p := &mcpv1alpha1.MCPProvider{}
+	p := &mcpv1alpha1.MCPServer{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: name, Namespace: namespace}, p))
 	return p
 }
 
-func TestMCPProvider_ContainerMode_CreatesPod(t *testing.T) {
-	p := &mcpv1alpha1.MCPProvider{
+func TestMCPServer_ContainerMode_CreatesPod(t *testing.T) {
+	p := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-container", Namespace: "default", UID: "uid-1"},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:  mcpv1alpha1.ProviderModeContainer,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:  mcpv1alpha1.MCPServerModeContainer,
 			Image: "busybox:latest",
 		},
 	}
-	r := newProviderReconciler(p)
+	r := newMCPServerReconciler(p)
 
 	// First reconcile: adds finalizer
-	reconcileProvider(t, r, "test-container", "default")
+	reconcileMCPServer(t, r, "test-container", "default")
 
 	// Second reconcile: creates Pod
-	reconcileProvider(t, r, "test-container", "default")
+	reconcileMCPServer(t, r, "test-container", "default")
 
 	// Verify Pod was created
 	pod := &corev1.Pod{}
@@ -81,50 +81,50 @@ func TestMCPProvider_ContainerMode_CreatesPod(t *testing.T) {
 
 	// Verify owner reference
 	require.Len(t, pod.OwnerReferences, 1)
-	assert.Equal(t, "MCPProvider", pod.OwnerReferences[0].Kind)
+	assert.Equal(t, "MCPServer", pod.OwnerReferences[0].Kind)
 
 	// Verify provider status
-	result := getProvider(t, r, "test-container", "default")
-	assert.Equal(t, mcpv1alpha1.ProviderStateInitializing, result.Status.State)
+	result := getMCPServer(t, r, "test-container", "default")
+	assert.Equal(t, mcpv1alpha1.MCPServerStateInitializing, result.Status.State)
 	assert.Equal(t, "mcp-provider-test-container", result.Status.PodName)
 }
 
-func TestMCPProvider_ContainerMode_NoImage_MarksDead(t *testing.T) {
-	p := &mcpv1alpha1.MCPProvider{
+func TestMCPServer_ContainerMode_NoImage_MarksDead(t *testing.T) {
+	p := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "no-image", Namespace: "default", UID: "uid-2",
 			Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode: mcpv1alpha1.ProviderModeContainer,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode: mcpv1alpha1.MCPServerModeContainer,
 		},
 	}
-	r := newProviderReconciler(p)
+	r := newMCPServerReconciler(p)
 
-	reconcileProvider(t, r, "no-image", "default")
+	reconcileMCPServer(t, r, "no-image", "default")
 
-	result := getProvider(t, r, "no-image", "default")
-	assert.Equal(t, mcpv1alpha1.ProviderStateDead, result.Status.State)
+	result := getMCPServer(t, r, "no-image", "default")
+	assert.Equal(t, mcpv1alpha1.MCPServerStateDead, result.Status.State)
 	cond := result.Status.GetCondition(ConditionReady)
 	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
 }
 
-func TestMCPProvider_ColdStart_ReplicasZero(t *testing.T) {
+func TestMCPServer_ColdStart_ReplicasZero(t *testing.T) {
 	replicas := int32(0)
-	p := &mcpv1alpha1.MCPProvider{
+	p := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "cold-provider", Namespace: "default", UID: "uid-3",
 			Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:     mcpv1alpha1.ProviderModeContainer,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:     mcpv1alpha1.MCPServerModeContainer,
 			Image:    "busybox:latest",
 			Replicas: &replicas,
 		},
 	}
-	r := newProviderReconciler(p)
+	r := newMCPServerReconciler(p)
 
-	reconcileProvider(t, r, "cold-provider", "default")
+	reconcileMCPServer(t, r, "cold-provider", "default")
 
-	result := getProvider(t, r, "cold-provider", "default")
-	assert.Equal(t, mcpv1alpha1.ProviderStateCold, result.Status.State)
+	result := getMCPServer(t, r, "cold-provider", "default")
+	assert.Equal(t, mcpv1alpha1.MCPServerStateCold, result.Status.State)
 	assert.Equal(t, int32(0), result.Status.ReadyReplicas)
 
 	// Verify no Pod created
@@ -133,72 +133,72 @@ func TestMCPProvider_ColdStart_ReplicasZero(t *testing.T) {
 	assert.Error(t, err, "Pod should not exist for cold provider")
 }
 
-func TestMCPProvider_RemoteMode_NoEndpoint_MarksDead(t *testing.T) {
-	p := &mcpv1alpha1.MCPProvider{
+func TestMCPServer_RemoteMode_NoEndpoint_MarksDead(t *testing.T) {
+	p := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "remote-no-ep", Namespace: "default", UID: "uid-4",
 			Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode: mcpv1alpha1.ProviderModeRemote,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode: mcpv1alpha1.MCPServerModeRemote,
 		},
 	}
-	r := newProviderReconciler(p)
+	r := newMCPServerReconciler(p)
 
-	reconcileProvider(t, r, "remote-no-ep", "default")
+	reconcileMCPServer(t, r, "remote-no-ep", "default")
 
-	result := getProvider(t, r, "remote-no-ep", "default")
-	assert.Equal(t, mcpv1alpha1.ProviderStateDead, result.Status.State)
+	result := getMCPServer(t, r, "remote-no-ep", "default")
+	assert.Equal(t, mcpv1alpha1.MCPServerStateDead, result.Status.State)
 }
 
-func TestMCPProvider_RemoteMode_WithEndpoint_AssumedReady(t *testing.T) {
-	p := &mcpv1alpha1.MCPProvider{
+func TestMCPServer_RemoteMode_WithEndpoint_AssumedReady(t *testing.T) {
+	p := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "remote-ok", Namespace: "default", UID: "uid-5",
 			Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:     mcpv1alpha1.ProviderModeRemote,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:     mcpv1alpha1.MCPServerModeRemote,
 			Endpoint: "http://example.com:8080",
 		},
 	}
-	r := newProviderReconciler(p)
+	r := newMCPServerReconciler(p)
 
-	reconcileProvider(t, r, "remote-ok", "default")
+	reconcileMCPServer(t, r, "remote-ok", "default")
 
-	result := getProvider(t, r, "remote-ok", "default")
-	assert.Equal(t, mcpv1alpha1.ProviderStateReady, result.Status.State)
+	result := getMCPServer(t, r, "remote-ok", "default")
+	assert.Equal(t, mcpv1alpha1.MCPServerStateReady, result.Status.State)
 	assert.Equal(t, "http://example.com:8080", result.Status.Endpoint)
 }
 
-func TestMCPProvider_SpecDrift_RecreatesPod(t *testing.T) {
-	p := &mcpv1alpha1.MCPProvider{
+func TestMCPServer_SpecDrift_RecreatesPod(t *testing.T) {
+	p := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "drift-test", Namespace: "default", UID: "uid-6",
 			Generation: 1, Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:  mcpv1alpha1.ProviderModeContainer,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:  mcpv1alpha1.MCPServerModeContainer,
 			Image: "busybox:1.0",
 		},
 	}
-	r := newProviderReconciler(p)
+	r := newMCPServerReconciler(p)
 
 	// First reconcile: creates Pod with generation=1 annotation
-	reconcileProvider(t, r, "drift-test", "default")
+	reconcileMCPServer(t, r, "drift-test", "default")
 	pod := &corev1.Pod{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "mcp-provider-drift-test", Namespace: "default"}, pod))
 	assert.Equal(t, "1", pod.Annotations[provider.AnnotationGeneration])
 
 	// Simulate spec change: bump generation, change image
-	pv := getProvider(t, r, "drift-test", "default")
+	pv := getMCPServer(t, r, "drift-test", "default")
 	pv.Generation = 2
 	pv.Spec.Image = "busybox:2.0"
 	require.NoError(t, r.Update(context.Background(), pv))
 
 	// Second reconcile: detects drift, deletes old Pod
-	reconcileProvider(t, r, "drift-test", "default")
+	reconcileMCPServer(t, r, "drift-test", "default")
 
 	// Verify old Pod was deleted
 	err := r.Get(context.Background(), types.NamespacedName{Name: "mcp-provider-drift-test", Namespace: "default"}, pod)
 	assert.Error(t, err, "old Pod should be deleted after spec drift")
 
 	// Third reconcile: creates new Pod with generation=2
-	reconcileProvider(t, r, "drift-test", "default")
+	reconcileMCPServer(t, r, "drift-test", "default")
 
 	newPod := &corev1.Pod{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "mcp-provider-drift-test", Namespace: "default"}, newPod))
@@ -206,14 +206,14 @@ func TestMCPProvider_SpecDrift_RecreatesPod(t *testing.T) {
 	assert.Equal(t, "2", newPod.Annotations[provider.AnnotationGeneration])
 }
 
-func TestMCPProvider_Deletion_CleansPodAndFinalizer(t *testing.T) {
-	p := &mcpv1alpha1.MCPProvider{
+func TestMCPServer_Deletion_CleansPodAndFinalizer(t *testing.T) {
+	p := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "del-test", Namespace: "default", UID: "uid-7",
 			Finalizers: []string{finalizerName},
 		},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:  mcpv1alpha1.ProviderModeContainer,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:  mcpv1alpha1.MCPServerModeContainer,
 			Image: "busybox:latest",
 		},
 	}
@@ -224,10 +224,10 @@ func TestMCPProvider_Deletion_CleansPodAndFinalizer(t *testing.T) {
 			RestartPolicy: corev1.RestartPolicyNever,
 		},
 	}
-	r := newProviderReconciler(p, pod)
+	r := newMCPServerReconciler(p, pod)
 
 	// Call reconcileDelete directly (fake client cannot set DeletionTimestamp)
-	fresh := getProvider(t, r, "del-test", "default")
+	fresh := getMCPServer(t, r, "del-test", "default")
 	_, err := r.reconcileDelete(context.Background(), fresh)
 	require.NoError(t, err)
 
@@ -236,18 +236,18 @@ func TestMCPProvider_Deletion_CleansPodAndFinalizer(t *testing.T) {
 	assert.Error(t, err, "Pod should be deleted during cleanup")
 
 	// Finalizer should be removed
-	updated := getProvider(t, r, "del-test", "default")
+	updated := getMCPServer(t, r, "del-test", "default")
 	assert.NotContains(t, updated.Finalizers, finalizerName)
 }
 
-func TestMCPProvider_CapabilitiesPropagatedToStatus(t *testing.T) {
-	p := &mcpv1alpha1.MCPProvider{
+func TestMCPServer_CapabilitiesPropagatedToStatus(t *testing.T) {
+	p := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "caps-test", Namespace: "default", UID: "uid-8",
 			Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:     mcpv1alpha1.ProviderModeRemote,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:     mcpv1alpha1.MCPServerModeRemote,
 			Endpoint: "http://example.com:8080",
-			Capabilities: &mcpv1alpha1.ProviderCapabilities{
+			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
 				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
 					Egress: []mcpv1alpha1.EgressRuleSpec{
 						{Host: "db.internal", Port: 5432, Protocol: "tcp", CIDR: "10.0.0.0/8"},
@@ -257,11 +257,11 @@ func TestMCPProvider_CapabilitiesPropagatedToStatus(t *testing.T) {
 			},
 		},
 	}
-	r := newProviderReconciler(p)
+	r := newMCPServerReconciler(p)
 
-	reconcileProvider(t, r, "caps-test", "default")
+	reconcileMCPServer(t, r, "caps-test", "default")
 
-	result := getProvider(t, r, "caps-test", "default")
+	result := getMCPServer(t, r, "caps-test", "default")
 	require.NotNil(t, result.Status.Capabilities)
 	assert.Equal(t, "block", result.Status.Capabilities.EnforcementMode)
 	require.NotNil(t, result.Status.Capabilities.Network)
@@ -269,46 +269,46 @@ func TestMCPProvider_CapabilitiesPropagatedToStatus(t *testing.T) {
 	assert.Equal(t, "db.internal", result.Status.Capabilities.Network.Egress[0].Host)
 }
 
-func TestMCPProvider_Finalizer_Added(t *testing.T) {
-	p := &mcpv1alpha1.MCPProvider{
+func TestMCPServer_Finalizer_Added(t *testing.T) {
+	p := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "fin-test", Namespace: "default", UID: "uid-9"},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:  mcpv1alpha1.ProviderModeContainer,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:  mcpv1alpha1.MCPServerModeContainer,
 			Image: "busybox:latest",
 		},
 	}
-	r := newProviderReconciler(p)
+	r := newMCPServerReconciler(p)
 
-	reconcileProvider(t, r, "fin-test", "default")
+	reconcileMCPServer(t, r, "fin-test", "default")
 
-	result := getProvider(t, r, "fin-test", "default")
+	result := getMCPServer(t, r, "fin-test", "default")
 	assert.Contains(t, result.Finalizers, finalizerName)
 }
 
-func TestMCPProvider_ObservedGeneration_Updated(t *testing.T) {
-	p := &mcpv1alpha1.MCPProvider{
+func TestMCPServer_ObservedGeneration_Updated(t *testing.T) {
+	p := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "obsgen-test", Namespace: "default", UID: "uid-10",
 			Generation: 3, Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:     mcpv1alpha1.ProviderModeRemote,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:     mcpv1alpha1.MCPServerModeRemote,
 			Endpoint: "http://example.com:8080",
 		},
 	}
-	r := newProviderReconciler(p)
+	r := newMCPServerReconciler(p)
 
-	reconcileProvider(t, r, "obsgen-test", "default")
+	reconcileMCPServer(t, r, "obsgen-test", "default")
 
-	result := getProvider(t, r, "obsgen-test", "default")
+	result := getMCPServer(t, r, "obsgen-test", "default")
 	assert.Equal(t, int64(3), result.Status.ObservedGeneration,
 		fmt.Sprintf("observedGeneration (%d) should match generation (%d)", result.Status.ObservedGeneration, p.Generation))
 }
 
-func TestMCPProvider_PodRunning_SetsReady(t *testing.T) {
-	p := &mcpv1alpha1.MCPProvider{
+func TestMCPServer_PodRunning_SetsReady(t *testing.T) {
+	p := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "running-test", Namespace: "default", UID: "uid-11",
 			Generation: 1, Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:  mcpv1alpha1.ProviderModeContainer,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:  mcpv1alpha1.MCPServerModeContainer,
 			Image: "busybox:latest",
 		},
 	}
@@ -318,7 +318,7 @@ func TestMCPProvider_PodRunning_SetsReady(t *testing.T) {
 			Name: "mcp-provider-running-test", Namespace: "default",
 			Annotations: map[string]string{provider.AnnotationGeneration: strconv.FormatInt(1, 10)},
 			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: "mcp-hangar.io/v1alpha1", Kind: "MCPProvider",
+				APIVersion: "mcp-hangar.io/v1alpha1", Kind: "MCPServer",
 				Name: "running-test", UID: "uid-11",
 			}},
 		},
@@ -333,12 +333,12 @@ func TestMCPProvider_PodRunning_SetsReady(t *testing.T) {
 			},
 		},
 	}
-	r := newProviderReconciler(p, pod)
+	r := newMCPServerReconciler(p, pod)
 
-	reconcileProvider(t, r, "running-test", "default")
+	reconcileMCPServer(t, r, "running-test", "default")
 
-	result := getProvider(t, r, "running-test", "default")
-	assert.Equal(t, mcpv1alpha1.ProviderStateReady, result.Status.State)
+	result := getMCPServer(t, r, "running-test", "default")
+	assert.Equal(t, mcpv1alpha1.MCPServerStateReady, result.Status.State)
 	assert.Equal(t, int32(1), result.Status.ReadyReplicas)
 	assert.Equal(t, int32(0), result.Status.ConsecutiveFailures)
 
@@ -347,12 +347,12 @@ func TestMCPProvider_PodRunning_SetsReady(t *testing.T) {
 	assert.Equal(t, metav1.ConditionTrue, cond.Status)
 }
 
-func TestMCPProvider_PodFailed_SetsDeadWithBackoff(t *testing.T) {
-	p := &mcpv1alpha1.MCPProvider{
+func TestMCPServer_PodFailed_SetsDeadWithBackoff(t *testing.T) {
+	p := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "failed-test", Namespace: "default", UID: "uid-12",
 			Generation: 1, Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPProviderSpec{
-			Mode:  mcpv1alpha1.ProviderModeContainer,
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:  mcpv1alpha1.MCPServerModeContainer,
 			Image: "busybox:latest",
 		},
 	}
@@ -361,7 +361,7 @@ func TestMCPProvider_PodFailed_SetsDeadWithBackoff(t *testing.T) {
 			Name: "mcp-provider-failed-test", Namespace: "default",
 			Annotations: map[string]string{provider.AnnotationGeneration: strconv.FormatInt(1, 10)},
 			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: "mcp-hangar.io/v1alpha1", Kind: "MCPProvider",
+				APIVersion: "mcp-hangar.io/v1alpha1", Kind: "MCPServer",
 				Name: "failed-test", UID: "uid-12",
 			}},
 		},
@@ -380,12 +380,12 @@ func TestMCPProvider_PodFailed_SetsDeadWithBackoff(t *testing.T) {
 			},
 		},
 	}
-	r := newProviderReconciler(p, pod)
+	r := newMCPServerReconciler(p, pod)
 
-	reconcileProvider(t, r, "failed-test", "default")
+	reconcileMCPServer(t, r, "failed-test", "default")
 
-	result := getProvider(t, r, "failed-test", "default")
-	assert.Equal(t, mcpv1alpha1.ProviderStateDead, result.Status.State)
+	result := getMCPServer(t, r, "failed-test", "default")
+	assert.Equal(t, mcpv1alpha1.MCPServerStateDead, result.Status.State)
 	assert.Equal(t, int32(1), result.Status.ConsecutiveFailures)
 	assert.Equal(t, int32(0), result.Status.ReadyReplicas)
 }
