@@ -1,7 +1,10 @@
 # MCP-Hangar Kubernetes Operator
 
-Kubernetes Operator for managing MCP (Model Context Protocol) providers as native Kubernetes resources.
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8.svg)](https://go.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-1.25+-326CE5.svg)](https://kubernetes.io)
 
+**Kubernetes Operator for managing MCP (Model Context Protocol) providers as native Kubernetes resources.**
 
 ## Features
 
@@ -146,3 +149,6 @@ See [TESTING.md](TESTING.md) for detailed testing documentation.
 ## License
 
 MIT License
+
+---
+[Docs](https://mcp-hangar.io) | [GitHub](https://github.com/mcp-hangar/mcp-hangar-operator)
