@@ -1,0 +1,17 @@
+# CODEOWNERS for mcp-hangar/mcp-hangar-operator
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default
+* @mapyr
+
+# CRD API types
+/api/ @mapyr
+
+# Controllers and webhooks
+/internal/ @mapyr
+
+# Kustomize config
+/config/ @mapyr
+
+# CI/CD
+.github/ @mapyr
