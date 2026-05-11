@@ -1,0 +1,103 @@
+- name: type/bug
+  color: d73a4a
+  description: Confirmed defect in shipped behavior
+
+- name: type/chore
+  color: cfd3d7
+  description: Tooling, deps, repo hygiene; no user-facing change
+
+- name: type/docs
+  color: "0075ca"
+  description: Documentation only
+
+- name: type/feature
+  color: a2eeef
+  description: New user-facing capability
+
+- name: type/refactor
+  color: bfd4f2
+  description: Internal restructuring; no behavior change
+
+- name: scope/api
+  color: ededed
+  description: CRD type definitions (api/)
+
+- name: scope/controller
+  color: ededed
+  description: Reconciler controllers
+
+- name: scope/webhook
+  color: ededed
+  description: Admission webhooks
+
+- name: scope/health
+  color: ededed
+  description: Health check infrastructure
+
+- name: scope/config
+  color: ededed
+  description: Kustomize/RBAC config
+
+- name: scope/ci
+  color: ededed
+  description: GitHub Actions, automation
+
+- name: scope/deps
+  color: ededed
+  description: Dependency upgrades
+
+- name: scope/docs
+  color: ededed
+  description: Documentation, READMEs
+
+- name: scope/infra
+  color: ededed
+  description: Repo settings, infrastructure
+
+- name: scope/tests
+  color: ededed
+  description: Test infrastructure
+
+- name: priority/p0-critical
+  color: b60205
+  description: Production down or active CVE; drop everything
+
+- name: priority/p1-high
+  color: d93f0b
+  description: Should ship next release
+
+- name: priority/p2-normal
+  color: fbca04
+  description: Default priority
+
+- name: priority/p3-low
+  color: c2c2c2
+  description: Nice to have; no deadline
+
+- name: agent-friendly
+  color: 0e8a16
+  description: Suitable for AI agent (Copilot/Claude) -- well-scoped, <=400 LOC, no sensitive paths
+
+- name: human-required
+  color: d93f0b
+  description: Must be authored by a human; agent may comment but not open PR
+
+- name: status/blocked
+  color: b60205
+  description: Cannot progress until external dependency resolves
+
+- name: status/triage
+  color: fef2c0
+  description: Issue needs initial review; priority and scope not yet assigned
+
+- name: skip-changelog
+  color: ededed
+  description: PR is exempt from CHANGELOG entry requirement
+
+- name: trivial
+  color: cfd3d7
+  description: Small/obvious change exempt from PR body structure requirements
+
+- name: pinned
+  color: "000000"
+  description: Long-lived issue; exempt from stale bot

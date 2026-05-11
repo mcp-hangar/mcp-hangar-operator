@@ -1,0 +1,55 @@
+name: Agent Task
+description: >-
+  Well-scoped work for a coding agent (Copilot, Claude, etc.).
+title: "[AGENT] "
+labels: ["agent-friendly", "priority/p2-normal"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      placeholder: Single, atomic objective
+    validations: {required: true}
+  - type: textarea
+    id: files-in-scope
+    attributes:
+      label: Files in scope
+    validations: {required: true}
+  - type: textarea
+    id: files-out-of-scope
+    attributes:
+      label: Files out of scope
+    validations: {required: true}
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+    validations: {required: true}
+  - type: input
+    id: max-loc
+    attributes:
+      label: Max LOC declared
+      placeholder: "e.g. 200"
+    validations: {required: true}
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Single Conventional Commit scope
+      options:
+        - api
+        - controller
+        - webhook
+        - health
+        - config
+        - ci
+        - docs
+        - deps
+        - infra
+        - tests
+        - other
+    validations: {required: true}
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+    validations: {required: false}

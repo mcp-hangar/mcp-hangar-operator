@@ -1,0 +1,6 @@
+# CODEOWNERS for mcp-hangar/mcp-hangar-operator
+*                     @mapyr
+/api/                 @mapyr
+/internal/            @mapyr
+/config/              @mapyr
+/.github/             @mapyr
