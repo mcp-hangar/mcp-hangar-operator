@@ -277,7 +277,33 @@ func TestValidateCreate_ValidCapabilities(t *testing.T) {
 
 	warnings, err := v.ValidateCreate(context.Background(), p)
 	assert.NoError(t, err)
-	assert.Empty(t, warnings)
+	// The host-only egress rule (api.example.com, no CIDR) is not enforceable
+	// by the NetworkPolicy backend, so it produces a non-fatal warning.
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0], "api.example.com")
+	assert.Contains(t, warnings[0], "not enforceable")
+}
+
+// TestValidateCreate_EgressHostOnlyWarns verifies that a host/FQDN-only egress
+// rule (no CIDR) is accepted but warns that it will not be enforced by the
+// NetworkPolicy backend (it is failed closed in the generated policy).
+func TestValidateCreate_EgressHostOnlyWarns(t *testing.T) {
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("host-only-egress", mcpv1alpha1.MCPServerModeContainer)
+	p.Spec.Image = "test:latest"
+	p.Spec.Capabilities = &mcpv1alpha1.MCPServerCapabilities{
+		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
+			Egress: []mcpv1alpha1.EgressRuleSpec{
+				{Host: "api.internal.example", Port: 443, Protocol: "https"},
+			},
+		},
+	}
+
+	warnings, err := v.ValidateCreate(context.Background(), p)
+	assert.NoError(t, err)
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0], "api.internal.example")
+	assert.Contains(t, warnings[0], "will NOT be applied")
 }
 
 // ── Update validation ─────────────────────────────────────────────────

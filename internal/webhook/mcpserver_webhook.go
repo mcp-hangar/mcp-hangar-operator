@@ -103,8 +103,9 @@ func validateProvider(p *mcpv1alpha1.MCPServer) (admission.Warnings, error) {
 
 	// Capabilities validation
 	if p.Spec.Capabilities != nil {
-		capErrs := validateCapabilities(p.Spec.Capabilities)
+		capErrs, capWarnings := validateCapabilities(p.Spec.Capabilities)
 		errs = append(errs, capErrs...)
+		warnings = append(warnings, capWarnings...)
 	}
 
 	if len(errs) > 0 {
@@ -113,15 +114,29 @@ func validateProvider(p *mcpv1alpha1.MCPServer) (admission.Warnings, error) {
 	return warnings, nil
 }
 
-// validateCapabilities validates the capabilities block.
-func validateCapabilities(caps *mcpv1alpha1.MCPServerCapabilities) []string {
+// validateCapabilities validates the capabilities block. It returns hard
+// validation errors and non-fatal admission warnings.
+func validateCapabilities(caps *mcpv1alpha1.MCPServerCapabilities) ([]string, admission.Warnings) {
 	var errs []string
+	var warnings admission.Warnings
 
 	// Egress rules: CIDR or host must be set (not both empty)
 	if caps.Network != nil {
 		for i, rule := range caps.Network.Egress {
 			if rule.Host == "" && rule.CIDR == "" {
 				errs = append(errs, fmt.Sprintf("spec.capabilities.network.egress[%d]: host or cidr must be set", i))
+				continue
+			}
+			// A host/FQDN-only rule (no CIDR) cannot be enforced by the
+			// NetworkPolicy backend, which matches only on IP/CIDR. It is
+			// failed closed (the port is NOT opened) rather than downgraded
+			// into an all-destinations opening. Warn so the operator knows the
+			// rule is inert until the Tetragon backend (ADR-006 v1.5) enforces
+			// it.
+			if rule.CIDR == "" {
+				warnings = append(warnings, fmt.Sprintf(
+					"spec.capabilities.network.egress[%d] (host %q) is not enforceable by the NetworkPolicy backend and will NOT be applied; specify a cidr for network-level enforcement. FQDN egress enforcement is deferred to the Tetragon backend (ADR-006 v1.5).",
+					i, rule.Host))
 			}
 		}
 	}
@@ -141,5 +156,5 @@ func validateCapabilities(caps *mcpv1alpha1.MCPServerCapabilities) []string {
 		}
 	}
 
-	return errs
+	return errs, warnings
 }
