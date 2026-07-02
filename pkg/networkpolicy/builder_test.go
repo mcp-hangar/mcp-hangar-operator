@@ -196,19 +196,18 @@ func TestBuildNetworkPolicy(t *testing.T) {
 			},
 			validate: func(t *testing.T, np *networkingv1.NetworkPolicy) {
 				require.NotNil(t, np)
-				// DNS rule + 1 host-only rule
-				require.Len(t, np.Spec.Egress, 2)
+				// Fail closed: host/FQDN-only rules are NOT translated into an
+				// egress rule. Only the DNS rule remains -- the host-only rule
+				// must NOT open the port to all destinations.
+				require.Len(t, np.Spec.Egress, 1, "host-only rule must not produce an egress rule")
 
-				hostRule := np.Spec.Egress[1]
-				// No IPBlock peer for host-only rules
-				assert.Empty(t, hostRule.To, "host-only rules should have no To peers")
+				// The remaining rule is DNS, not a permissive port-only rule.
+				assertDNSPorts(t, np.Spec.Egress[0].Ports)
 
-				// Should have port 8080 TCP
-				require.Len(t, hostRule.Ports, 1)
-				assert.Equal(t, int32(8080), hostRule.Ports[0].Port.IntVal)
-				assert.Equal(t, corev1.ProtocolTCP, *hostRule.Ports[0].Protocol)
+				// No egress rule may open a port without a To peer.
+				assertNoPermissivePortOnlyRule(t, np)
 
-				// Should have host-warnings annotation
+				// The unenforceable host is still surfaced via the annotation.
 				require.Contains(t, np.Annotations, "mcp-hangar.io/host-warnings")
 				assert.Contains(t, np.Annotations["mcp-hangar.io/host-warnings"], "api.example.com")
 			},
@@ -516,4 +515,72 @@ func assertDNSPorts(t *testing.T, ports []networkingv1.NetworkPolicyPort) {
 	}
 	assert.True(t, hasUDP, "DNS rule should include UDP 53")
 	assert.True(t, hasTCP, "DNS rule should include TCP 53")
+}
+
+// assertNoPermissivePortOnlyRule fails if any egress rule specifies ports but no
+// To peer. Kubernetes interprets such a rule as "allow this port to ANY
+// destination", which is exactly the SSRF/egress-bypass this fix guards against.
+// The DNS rule is the one legitimate port-only rule and is exempt.
+func assertNoPermissivePortOnlyRule(t *testing.T, np *networkingv1.NetworkPolicy) {
+	t.Helper()
+	for i, rule := range np.Spec.Egress {
+		if len(rule.Ports) > 0 && len(rule.To) == 0 {
+			if isDNSRule(rule) {
+				continue
+			}
+			t.Fatalf("egress rule %d opens port(s) with no To peer (allows any destination): %+v", i, rule)
+		}
+	}
+}
+
+// isDNSRule reports whether a port-only rule is the expected DNS rule (port 53).
+func isDNSRule(rule networkingv1.NetworkPolicyEgressRule) bool {
+	for _, p := range rule.Ports {
+		if p.Port == nil || p.Port.IntVal != 53 {
+			return false
+		}
+	}
+	return len(rule.Ports) > 0
+}
+
+// --- FQDN fail-closed ---
+
+func TestBuildNetworkPolicy_FQDNFailClosed(t *testing.T) {
+	// A mix of an enforceable CIDR rule and an unenforceable host/FQDN-only
+	// rule. The CIDR rule must be emitted exactly; the host-only rule must be
+	// dropped (failed closed) and never open its port to all destinations.
+	provider := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "mixed-provider",
+			Namespace: "default",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
+				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
+					Egress: []mcpv1alpha1.EgressRuleSpec{
+						{Host: "api.internal.example", Port: 443, Protocol: "https"}, // no CIDR -> fail closed
+						{Host: "db.example", Port: 5432, Protocol: "tcp", CIDR: "10.0.0.0/8"},
+					},
+					DNSAllowed: boolPtr(false),
+				},
+			},
+		},
+	}
+
+	np := BuildNetworkPolicy(provider)
+	require.NotNil(t, np)
+
+	// DNS disabled + host-only dropped => only the CIDR rule survives.
+	require.Len(t, np.Spec.Egress, 1, "only the CIDR rule should be emitted")
+	require.Len(t, np.Spec.Egress[0].To, 1)
+	assert.Equal(t, "10.0.0.0/8", np.Spec.Egress[0].To[0].IPBlock.CIDR)
+	require.Len(t, np.Spec.Egress[0].Ports, 1)
+	assert.Equal(t, int32(5432), np.Spec.Egress[0].Ports[0].Port.IntVal)
+
+	// No rule may open a port to all destinations.
+	assertNoPermissivePortOnlyRule(t, np)
+
+	// The dropped host is recorded in the host-warnings annotation.
+	require.Contains(t, np.Annotations, "mcp-hangar.io/host-warnings")
+	assert.Contains(t, np.Annotations["mcp-hangar.io/host-warnings"], "api.internal.example")
 }

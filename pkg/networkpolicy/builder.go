@@ -21,7 +21,10 @@ const (
 	// LabelComponent classifies the resource type within the operator.
 	LabelComponent = "mcp-hangar.io/component"
 
-	// AnnotationHostWarnings lists host-only rules that lack CIDR enforcement.
+	// AnnotationHostWarnings lists host/FQDN-only egress rules (no CIDR) that
+	// are NOT enforced by this NetworkPolicy. Such rules are failed closed (no
+	// egress rule is emitted for them); enforcement is deferred to the Tetragon
+	// backend (ADR-006 v1.5).
 	AnnotationHostWarnings = "mcp-hangar.io/host-warnings"
 
 	// DefaultManagerName is the value for managed-by labels.
@@ -102,35 +105,50 @@ func buildEgressRules(caps *mcpv1alpha1.NetworkCapabilitiesSpec) []networkingv1.
 		rules = append(rules, loopbackEgressRule())
 	}
 
-	// Declared egress rules
+	// Declared egress rules. Host/FQDN-only rules are skipped (fail closed) --
+	// see translateEgressRule.
 	for _, rule := range caps.Egress {
-		rules = append(rules, translateEgressRule(rule))
+		if egressRule, ok := translateEgressRule(rule); ok {
+			rules = append(rules, egressRule)
+		}
 	}
 
 	return rules
 }
 
-// translateEgressRule converts a single EgressRuleSpec into a NetworkPolicy egress rule.
+// translateEgressRule converts a single EgressRuleSpec into a NetworkPolicy
+// egress rule. The bool return reports whether an egress rule was produced;
+// host/FQDN-only rules are skipped and report false.
 //
-// CIDR rules produce IPBlock peers. Host-only rules (no CIDR) produce port-only
-// rules because Kubernetes NetworkPolicy does not support hostname-based filtering.
-// Host-only rules are documented via the host-warnings annotation.
+// Only CIDR rules produce an enforceable IPBlock peer. A host/FQDN-only rule
+// (Host set, no CIDR) is FAILED CLOSED: it produces no egress rule at all.
+// Emitting a port-only rule (Ports set, no To) would be interpreted by
+// Kubernetes as "allow this port to ANY destination", silently downgrading a
+// hostname allowlist into an all-destinations egress opening (SSRF /
+// data-exfiltration vector). Vanilla NetworkPolicy cannot match on DNS/FQDN, so
+// we refuse to open the port rather than open it too widely. Such rules are
+// still surfaced via the host-warnings annotation and a validating-webhook
+// warning. FQDN egress enforcement is deferred to the Tetragon backend
+// (ADR-006 v1.5).
 //
 // Port 0 means "any port" and omits the Ports field entirely.
-func translateEgressRule(rule mcpv1alpha1.EgressRuleSpec) networkingv1.NetworkPolicyEgressRule {
-	egressRule := networkingv1.NetworkPolicyEgressRule{}
+func translateEgressRule(rule mcpv1alpha1.EgressRuleSpec) (networkingv1.NetworkPolicyEgressRule, bool) {
+	// Fail closed: host/FQDN-only rules (no CIDR) cannot be enforced by
+	// NetworkPolicy. Do not emit a permissive port-only rule.
+	if rule.CIDR == "" {
+		return networkingv1.NetworkPolicyEgressRule{}, false
+	}
 
-	// Peer: IPBlock from CIDR
-	if rule.CIDR != "" {
-		egressRule.To = []networkingv1.NetworkPolicyPeer{
+	egressRule := networkingv1.NetworkPolicyEgressRule{
+		// Peer: IPBlock from CIDR
+		To: []networkingv1.NetworkPolicyPeer{
 			{
 				IPBlock: &networkingv1.IPBlock{
 					CIDR: rule.CIDR,
 				},
 			},
-		}
+		},
 	}
-	// Host-only (no CIDR): no To peers -- port-level enforcement only
 
 	// Ports: omit for port=0 (any port)
 	if rule.Port > 0 {
@@ -142,7 +160,7 @@ func translateEgressRule(rule mcpv1alpha1.EgressRuleSpec) networkingv1.NetworkPo
 		}
 	}
 
-	return egressRule
+	return egressRule, true
 }
 
 // mapProtocol converts an application-level protocol hint to a Kubernetes network
