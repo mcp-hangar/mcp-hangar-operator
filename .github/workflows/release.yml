@@ -1,0 +1,67 @@
+# Cuts a release when a semver tag (vX.Y.Z) is pushed: builds the multi-arch
+# manager image to GHCR and attaches the rendered install manifest to a GitHub
+# Release. Manual release = push a tag. See ADR-007 (operator & Helm release
+# topology, mcp-hangar/mcp-hangar#410).
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write   # create the GitHub Release
+  packages: write   # push to GHCR
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version from tag
+        id: v
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/mcp-hangar/mcp-hangar-operator
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Render install manifest
+        run: |
+          set -euo pipefail
+          make manifests kustomize
+          IMG=ghcr.io/mcp-hangar/mcp-hangar-operator:${{ steps.v.outputs.version }}
+          (cd config/manager && "$GITHUB_WORKSPACE/bin/kustomize" edit set image controller="$IMG")
+          ./bin/kustomize build config/default > install.yaml
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: install.yaml
+          generate_release_notes: true
