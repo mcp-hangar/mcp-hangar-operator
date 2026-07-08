@@ -1,0 +1,23 @@
+# Adds namespace to all resources.
+namespace: mcp-system
+
+# Value of this field is prepended to the names of all resources, e.g. a
+# deployment named "controller-manager" becomes
+# "mcp-hangar-operator-controller-manager".
+namePrefix: mcp-hangar-operator-
+
+# Labels to add to all resources and selectors.
+labels:
+- includeSelectors: true
+  pairs:
+    app.kubernetes.io/name: mcp-hangar-operator
+
+resources:
+- ../crd
+- ../rbac
+- ../manager
+
+# NOTE: The conversion/admission webhooks and their cert-manager configuration
+# are intentionally NOT wired here. They are tracked separately in issues
+# #11/#12 (human-required) and will be added by a follow-up that introduces
+# config/webhook and config/certmanager overlays plus the relevant patches.

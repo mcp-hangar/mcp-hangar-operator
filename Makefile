@@ -89,22 +89,20 @@ endif
 
 .PHONY: install
 install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
-	kubectl apply -f ../deploy/crds/
+	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply -f -
 
 .PHONY: uninstall
-uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config.
-	kubectl delete -f ../deploy/crds/ --ignore-not-found=$(ignore-not-found)
+uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+	$(KUSTOMIZE) build config/crd | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	helm upgrade --install mcp-hangar-operator ../deploy/helm/mcp-hangar-operator \
-		--namespace mcp-system --create-namespace \
-		--set image.repository=$(shell echo ${IMG} | cut -d: -f1) \
-		--set image.tag=$(shell echo ${IMG} | cut -d: -f2)
+	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
+	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
 
 .PHONY: undeploy
-undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config.
-	helm uninstall mcp-hangar-operator --namespace mcp-system
+undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
 ##@ Dependencies
 
