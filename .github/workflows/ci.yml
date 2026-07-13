@@ -1,0 +1,64 @@
+# Go CI gate: build, vet, race-tested (via setup-envtest) and lint. Runs on
+# every PR into main and on pushes to main. See issue #14.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel superseded runs for the same ref (a new push to a PR/branch supersedes
+# the in-flight run).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: go build
+        run: go build ./...
+      - name: go vet
+        run: go vet ./...
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install setup-envtest
+        run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+      - name: Run tests (race)
+        run: |
+          set -euo pipefail
+          KUBEBUILDER_ASSETS="$(setup-envtest use 1.29.0 -p path)"
+          export KUBEBUILDER_ASSETS
+          go test -race ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          # Pin to the last v1 release: matches the v1 config format in
+          # .golangci.yml and supports the go.mod toolchain.
+          version: v1.64.8

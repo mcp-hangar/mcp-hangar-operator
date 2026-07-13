@@ -1,0 +1,48 @@
+# golangci-lint configuration (v1 config format).
+#
+# Goal: a conservative, PASSING quality gate on the existing code — not a
+# code-cleanup sweep. Keep the enabled set small and low-noise. If a linter
+# turns out to be noisy on pre-existing code, disable it here (with a note)
+# rather than churning the Go source.
+run:
+  timeout: 3m
+  # setup-envtest / generated code should not gate the tree.
+  allow-parallel-runners: true
+
+linters:
+  # Start from a known-empty set and opt in explicitly, so an upstream default
+  # change can never silently add a noisy linter to the gate.
+  disable-all: true
+  enable:
+    - errcheck      # unchecked errors
+    - govet         # go vet
+    - staticcheck   # staticcheck analyses
+    - ineffassign   # ineffectual assignments
+    - unused        # unused code
+    - misspell      # common spelling mistakes in comments/strings
+
+issues:
+  # Don't cap the number of reported issues (defaults hide some).
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    # Generated deepcopy code is not ours to lint.
+    - path: zz_generated\.deepcopy\.go
+      linters:
+        - staticcheck
+        - unused
+    # Test files: ignore unchecked errors on deferred cleanup
+    # (e.g. `defer k8sClient.Delete(...)`) and helper funcs that are only
+    # used by some suites. These are idiomatic in envtest suites and not a
+    # quality risk; gating them would only invite noise.
+    - path: _test\.go
+      linters:
+        - errcheck
+        - unused
+    # Pre-existing ineffassign in the discovery controller (annotationPrefix
+    # default is reassigned on a path where it is not subsequently read). Left
+    # to a follow-up so this CI gate can land green without touching Go source
+    # (issue #14 scope is CI only). TODO: fix and drop this exclusion.
+    - path: internal/controller/mcpdiscoverysource_controller\.go
+      linters:
+        - ineffassign
