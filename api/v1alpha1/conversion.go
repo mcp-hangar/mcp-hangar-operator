@@ -508,14 +508,19 @@ func (src *MCPDiscoverySource) ConvertTo(dstRaw conversion.Hub) error {
 
 	dst.Status.Conditions = conditionsToStandard(src.Status.Conditions)
 
-	for _, p := range src.Status.DiscoveredMCPServers {
-		dst.Status.DiscoveredMCPServers = append(dst.Status.DiscoveredMCPServers, v1alpha2.DiscoveredMCPServer{
-			Name:         p.Name,
-			Source:       p.Source,
-			DiscoveredAt: p.DiscoveredAt,
-			Managed:      p.Managed,
-			Error:        p.Error,
-		})
+	// Preserve nil-vs-empty (see slice helpers above): allocate only for a
+	// non-nil source so an empty-but-non-nil status list survives as empty.
+	if src.Status.DiscoveredMCPServers != nil {
+		dst.Status.DiscoveredMCPServers = make([]v1alpha2.DiscoveredMCPServer, len(src.Status.DiscoveredMCPServers))
+		for i, p := range src.Status.DiscoveredMCPServers {
+			dst.Status.DiscoveredMCPServers[i] = v1alpha2.DiscoveredMCPServer{
+				Name:         p.Name,
+				Source:       p.Source,
+				DiscoveredAt: p.DiscoveredAt,
+				Managed:      p.Managed,
+				Error:        p.Error,
+			}
+		}
 	}
 
 	return nil
@@ -613,14 +618,19 @@ func (dst *MCPDiscoverySource) ConvertFrom(srcRaw conversion.Hub) error {
 
 	dst.Status.Conditions = conditionsFromStandard(src.Status.Conditions)
 
-	for _, p := range src.Status.DiscoveredMCPServers {
-		dst.Status.DiscoveredMCPServers = append(dst.Status.DiscoveredMCPServers, DiscoveredMCPServer{
-			Name:         p.Name,
-			Source:       p.Source,
-			DiscoveredAt: p.DiscoveredAt,
-			Managed:      p.Managed,
-			Error:        p.Error,
-		})
+	// Preserve nil-vs-empty (see slice helpers above): allocate only for a
+	// non-nil source so an empty-but-non-nil status list survives as empty.
+	if src.Status.DiscoveredMCPServers != nil {
+		dst.Status.DiscoveredMCPServers = make([]DiscoveredMCPServer, len(src.Status.DiscoveredMCPServers))
+		for i, p := range src.Status.DiscoveredMCPServers {
+			dst.Status.DiscoveredMCPServers[i] = DiscoveredMCPServer{
+				Name:         p.Name,
+				Source:       p.Source,
+				DiscoveredAt: p.DiscoveredAt,
+				Managed:      p.Managed,
+				Error:        p.Error,
+			}
+		}
 	}
 
 	return nil
@@ -643,6 +653,18 @@ func stringToDuration(s string) (*metav1.Duration, error) {
 
 // durationToString converts *metav1.Duration to a Go duration string.
 // Returns empty string for nil.
+//
+// KNOWN BEHAVIOR (accepted, see epic #15): the v1alpha2 hub stores a typed
+// *metav1.Duration, which has no room for the original literal. A round-trip
+// therefore canonicalizes non-canonical literals ("5m" -> "5m0s",
+// "0.5h" -> "30m0s"), which can surface as perpetual kubectl/Argo/Flux diff.
+// This is inherent to the typed target: ConvertFrom has no access to the
+// original string, so "rewrite only when the value changed" is not
+// implementable here, and the lossless alternative (stashing originals in a
+// hub annotation) is not low-risk (mutates metadata, needs a guard for
+// hub-side edits, and the annotation itself becomes GitOps noise). Workaround:
+// write canonical Go duration strings (e.g. "5m0s") in manifests, which
+// round-trip without drift.
 func durationToString(d *metav1.Duration) string {
 	if d == nil {
 		return ""
@@ -652,7 +674,10 @@ func durationToString(d *metav1.Duration) string {
 
 // conditionsToStandard converts custom v1alpha1 Conditions to standard metav1.Condition.
 func conditionsToStandard(src []Condition) []metav1.Condition {
-	if len(src) == 0 {
+	// Preserve the nil-vs-empty distinction across a conversion round-trip:
+	// return nil only for a nil source, otherwise allocate a (possibly
+	// zero-length) slice so an empty-but-non-nil source survives as empty.
+	if src == nil {
 		return nil
 	}
 	dst := make([]metav1.Condition, len(src))
@@ -671,7 +696,10 @@ func conditionsToStandard(src []Condition) []metav1.Condition {
 
 // conditionsFromStandard converts standard metav1.Condition to custom v1alpha1 Conditions.
 func conditionsFromStandard(src []metav1.Condition) []Condition {
-	if len(src) == 0 {
+	// Preserve the nil-vs-empty distinction across a conversion round-trip:
+	// return nil only for a nil source, otherwise allocate a (possibly
+	// zero-length) slice so an empty-but-non-nil source survives as empty.
+	if src == nil {
 		return nil
 	}
 	dst := make([]Condition, len(src))
@@ -713,7 +741,10 @@ func convertResourceRequirementsFrom(src *v1alpha2.ResourceRequirements) *Resour
 }
 
 func convertEnvVarsTo(src []EnvVar) []v1alpha2.EnvVar {
-	if len(src) == 0 {
+	// Preserve the nil-vs-empty distinction across a conversion round-trip:
+	// return nil only for a nil source, otherwise allocate a (possibly
+	// zero-length) slice so an empty-but-non-nil source survives as empty.
+	if src == nil {
 		return nil
 	}
 	dst := make([]v1alpha2.EnvVar, len(src))
@@ -737,7 +768,10 @@ func convertEnvVarsTo(src []EnvVar) []v1alpha2.EnvVar {
 }
 
 func convertEnvVarsFrom(src []v1alpha2.EnvVar) []EnvVar {
-	if len(src) == 0 {
+	// Preserve the nil-vs-empty distinction across a conversion round-trip:
+	// return nil only for a nil source, otherwise allocate a (possibly
+	// zero-length) slice so an empty-but-non-nil source survives as empty.
+	if src == nil {
 		return nil
 	}
 	dst := make([]EnvVar, len(src))
@@ -761,7 +795,10 @@ func convertEnvVarsFrom(src []v1alpha2.EnvVar) []EnvVar {
 }
 
 func convertVolumesTo(src []Volume) []v1alpha2.Volume {
-	if len(src) == 0 {
+	// Preserve the nil-vs-empty distinction across a conversion round-trip:
+	// return nil only for a nil source, otherwise allocate a (possibly
+	// zero-length) slice so an empty-but-non-nil source survives as empty.
+	if src == nil {
 		return nil
 	}
 	dst := make([]v1alpha2.Volume, len(src))
@@ -792,7 +829,10 @@ func convertVolumesTo(src []Volume) []v1alpha2.Volume {
 }
 
 func convertVolumesFrom(src []v1alpha2.Volume) []Volume {
-	if len(src) == 0 {
+	// Preserve the nil-vs-empty distinction across a conversion round-trip:
+	// return nil only for a nil source, otherwise allocate a (possibly
+	// zero-length) slice so an empty-but-non-nil source survives as empty.
+	if src == nil {
 		return nil
 	}
 	dst := make([]Volume, len(src))
@@ -859,7 +899,10 @@ func convertSecurityContextFrom(src *v1alpha2.SecurityContext) *SecurityContext 
 }
 
 func convertTolerationsTo(src []Toleration) []v1alpha2.Toleration {
-	if len(src) == 0 {
+	// Preserve the nil-vs-empty distinction across a conversion round-trip:
+	// return nil only for a nil source, otherwise allocate a (possibly
+	// zero-length) slice so an empty-but-non-nil source survives as empty.
+	if src == nil {
 		return nil
 	}
 	dst := make([]v1alpha2.Toleration, len(src))
@@ -872,7 +915,10 @@ func convertTolerationsTo(src []Toleration) []v1alpha2.Toleration {
 }
 
 func convertTolerationsFrom(src []v1alpha2.Toleration) []Toleration {
-	if len(src) == 0 {
+	// Preserve the nil-vs-empty distinction across a conversion round-trip:
+	// return nil only for a nil source, otherwise allocate a (possibly
+	// zero-length) slice so an empty-but-non-nil source survives as empty.
+	if src == nil {
 		return nil
 	}
 	dst := make([]Toleration, len(src))
@@ -1011,7 +1057,10 @@ func convertMCPServerCapabilitiesFrom(src *v1alpha2.MCPServerCapabilities) *MCPS
 }
 
 func convertViolationsTo(src []ViolationRecord) []v1alpha2.ViolationRecord {
-	if len(src) == 0 {
+	// Preserve the nil-vs-empty distinction across a conversion round-trip:
+	// return nil only for a nil source, otherwise allocate a (possibly
+	// zero-length) slice so an empty-but-non-nil source survives as empty.
+	if src == nil {
 		return nil
 	}
 	dst := make([]v1alpha2.ViolationRecord, len(src))
@@ -1025,7 +1074,10 @@ func convertViolationsTo(src []ViolationRecord) []v1alpha2.ViolationRecord {
 }
 
 func convertViolationsFrom(src []v1alpha2.ViolationRecord) []ViolationRecord {
-	if len(src) == 0 {
+	// Preserve the nil-vs-empty distinction across a conversion round-trip:
+	// return nil only for a nil source, otherwise allocate a (possibly
+	// zero-length) slice so an empty-but-non-nil source survives as empty.
+	if src == nil {
 		return nil
 	}
 	dst := make([]ViolationRecord, len(src))
