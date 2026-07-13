@@ -1,0 +1,11 @@
+apiVersion: mcp-hangar.io/v1alpha2
+kind: MCPDiscoverySource
+metadata:
+  labels:
+    app.kubernetes.io/name: mcp-hangar-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: mcpdiscoverysource-sample
+spec:
+  type: Namespace
+  mode: Additive
+  paused: false
