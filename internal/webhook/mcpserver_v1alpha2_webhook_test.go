@@ -76,7 +76,7 @@ func TestV2_RemoteMode_InvalidEndpoint(t *testing.T) {
 
 	_, err := v.ValidateCreate(context.Background(), p)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not a valid URL")
+	assert.Contains(t, err.Error(), "http or https")
 }
 
 func TestV2_NegativeDuration(t *testing.T) {
@@ -185,4 +185,43 @@ func TestV2_WrongType(t *testing.T) {
 	_, err := v.ValidateCreate(context.Background(), &mcpv1alpha2.MCPServerGroup{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expected v1alpha2 MCPServer")
+}
+
+// ── Typed-nil guard (#22) ─────────────────────────────────────────────
+
+func TestV2_TypedNilRejected(t *testing.T) {
+	v := &webhook.MCPServerV1alpha2Validator{}
+	var p *mcpv1alpha2.MCPServer
+	_, err := v.ValidateCreate(context.Background(), p)
+	require.Error(t, err)
+}
+
+// ── Remote endpoint scheme (#22) ──────────────────────────────────────
+
+func TestV2_RemoteMode_JavascriptSchemeRejected(t *testing.T) {
+	v := &webhook.MCPServerV1alpha2Validator{}
+	p := newProviderV2("js-endpoint", mcpv1alpha2.MCPServerModeRemote)
+	p.Spec.Endpoint = "javascript:alert(1)"
+
+	_, err := v.ValidateCreate(context.Background(), p)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "http or https")
+}
+
+func TestV2_RemoteMode_BarePathRejected(t *testing.T) {
+	v := &webhook.MCPServerV1alpha2Validator{}
+	p := newProviderV2("bare-path", mcpv1alpha2.MCPServerModeRemote)
+	p.Spec.Endpoint = "/only/path"
+
+	_, err := v.ValidateCreate(context.Background(), p)
+	require.Error(t, err)
+}
+
+func TestV2_RemoteMode_HTTPAccepted(t *testing.T) {
+	v := &webhook.MCPServerV1alpha2Validator{}
+	p := newProviderV2("http-ep", mcpv1alpha2.MCPServerModeRemote)
+	p.Spec.Endpoint = "https://api.example.com/mcp"
+
+	_, err := v.ValidateCreate(context.Background(), p)
+	assert.NoError(t, err)
 }

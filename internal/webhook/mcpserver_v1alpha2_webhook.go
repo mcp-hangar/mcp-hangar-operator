@@ -3,7 +3,6 @@ package webhook
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -53,6 +52,12 @@ func (v *MCPServerV1alpha2Validator) ValidateDelete(_ context.Context, _ runtime
 // values structurally. The remaining semantic check is that a duration must not
 // be negative.
 func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
+	// A typed-nil *MCPServer satisfies the ok type assertion in the handlers,
+	// so guard here rather than dereferencing p.Spec and panicking the webhook.
+	if p == nil {
+		return nil, fmt.Errorf("MCPServer object is nil")
+	}
+
 	var errs []string
 	var warnings admission.Warnings
 
@@ -73,8 +78,8 @@ func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 			warnings = append(warnings, "spec.image is ignored when mode is \"remote\"")
 		}
 		if p.Spec.Endpoint != "" {
-			if _, err := url.ParseRequestURI(p.Spec.Endpoint); err != nil {
-				errs = append(errs, fmt.Sprintf("spec.endpoint is not a valid URL: %v", err))
+			if err := validateRemoteEndpoint(p.Spec.Endpoint); err != nil {
+				errs = append(errs, err.Error())
 			}
 		}
 	}

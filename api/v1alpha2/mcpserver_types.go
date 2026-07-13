@@ -368,8 +368,11 @@ type TracingConfig struct {
 
 // MetricsConfig defines metrics settings
 type MetricsConfig struct {
-	Enabled bool  `json:"enabled,omitempty"`
-	Port    int32 `json:"port,omitempty"`
+	Enabled bool `json:"enabled,omitempty"`
+	// Port is the TCP port the metrics endpoint listens on.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port,omitempty"`
 }
 
 // MCPServerCapabilities declares what resources an MCP server needs.

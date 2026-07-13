@@ -47,6 +47,12 @@ func (v *MCPServerValidator) ValidateDelete(_ context.Context, _ runtime.Object)
 
 // validateProvider runs all validation rules on an MCPServer.
 func validateProvider(p *mcpv1alpha1.MCPServer) (admission.Warnings, error) {
+	// A typed-nil *MCPServer satisfies the ok type assertion in the handlers,
+	// so guard here rather than dereferencing p.Spec and panicking the webhook.
+	if p == nil {
+		return nil, fmt.Errorf("MCPServer object is nil")
+	}
+
 	var errs []string
 	var warnings admission.Warnings
 
@@ -67,8 +73,8 @@ func validateProvider(p *mcpv1alpha1.MCPServer) (admission.Warnings, error) {
 			warnings = append(warnings, "spec.image is ignored when mode is \"remote\"")
 		}
 		if p.Spec.Endpoint != "" {
-			if _, err := url.ParseRequestURI(p.Spec.Endpoint); err != nil {
-				errs = append(errs, fmt.Sprintf("spec.endpoint is not a valid URL: %v", err))
+			if err := validateRemoteEndpoint(p.Spec.Endpoint); err != nil {
+				errs = append(errs, err.Error())
 			}
 		}
 	}
@@ -86,17 +92,7 @@ func validateProvider(p *mcpv1alpha1.MCPServer) (admission.Warnings, error) {
 	if p.Spec.CircuitBreaker != nil {
 		durationFields["spec.circuitBreaker.resetTimeout"] = p.Spec.CircuitBreaker.ResetTimeout
 	}
-	for field, val := range durationFields {
-		if val == "" {
-			continue
-		}
-		d, err := time.ParseDuration(val)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s %q is not a valid duration: %v", field, val, err))
-		} else if d < 0 {
-			errs = append(errs, fmt.Sprintf("%s must not be negative", field))
-		}
-	}
+	errs = append(errs, validateDurationStrings(durationFields)...)
 
 	// Tools: allowList and denyList are mutually exclusive
 	if p.Spec.Tools != nil && len(p.Spec.Tools.AllowList) > 0 && len(p.Spec.Tools.DenyList) > 0 {
@@ -114,6 +110,46 @@ func validateProvider(p *mcpv1alpha1.MCPServer) (admission.Warnings, error) {
 		return warnings, fmt.Errorf("MCPServer validation failed: %s", strings.Join(errs, "; "))
 	}
 	return warnings, nil
+}
+
+// validateDurationStrings parses each non-empty duration value and returns an
+// error message for any that is unparseable or negative. It is shared by the
+// v1alpha1 validators, whose duration fields are free-form strings; conversion
+// to v1alpha2 hard-fails on a bad value, so rejecting it at admission keeps the
+// stored object convertible. (v1alpha2 models durations as *metav1.Duration,
+// which the apiserver already validates structurally.)
+func validateDurationStrings(fields map[string]string) []string {
+	var errs []string
+	for field, val := range fields {
+		if val == "" {
+			continue
+		}
+		d, err := time.ParseDuration(val)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s %q is not a valid duration: %v", field, val, err))
+		} else if d < 0 {
+			errs = append(errs, fmt.Sprintf("%s must not be negative", field))
+		}
+	}
+	return errs
+}
+
+// validateRemoteEndpoint checks that a remote MCPServer endpoint is an absolute
+// http(s) URL with a non-empty host. url.ParseRequestURI alone accepts
+// non-HTTP schemes (e.g. "javascript:alert(1)") and bare paths ("/only/path"),
+// neither of which is a reachable remote endpoint.
+func validateRemoteEndpoint(endpoint string) error {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("spec.endpoint is not a valid URL: %v", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("spec.endpoint must be an http or https URL, got scheme %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("spec.endpoint must include a host")
+	}
+	return nil
 }
 
 // validateCapabilities validates the capabilities block. It returns hard

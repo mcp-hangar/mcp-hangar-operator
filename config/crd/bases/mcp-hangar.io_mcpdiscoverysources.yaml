@@ -1414,7 +1414,11 @@ spec:
                               enabled:
                                 type: boolean
                               port:
+                                description: Port is the TCP port the metrics endpoint
+                                  listens on.
                                 format: int32
+                                maximum: 65535
+                                minimum: 1
                                 type: integer
                             type: object
                           tracing:
@@ -3169,7 +3173,11 @@ spec:
                               enabled:
                                 type: boolean
                               port:
+                                description: Port is the TCP port the metrics endpoint
+                                  listens on.
                                 format: int32
+                                maximum: 65535
+                                minimum: 1
                                 type: integer
                             type: object
                           tracing:
