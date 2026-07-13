@@ -7,6 +7,23 @@ resources:
 - bases/mcp-hangar.io_mcpdiscoverysources.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
-# NOTE: conversion/admission webhook wiring for the CRDs is intentionally
-# omitted here. It is tracked separately in issues #11/#12 and will be added
-# in a follow-up (config/webhook + cert-manager patches).
+patches:
+# [WEBHOOK] To enable the conversion webhook, uncomment the following patches.
+# They add spec.conversion.strategy=Webhook + clientConfig so the apiserver
+# routes v1alpha1<->v1alpha2 conversion through the operator's /convert handler.
+# The CA is injected by cert-manager via the cainjection patches below.
+- path: patches/webhook_in_mcpservers.yaml
+- path: patches/webhook_in_mcpservergroups.yaml
+- path: patches/webhook_in_mcpdiscoverysources.yaml
+# +kubebuilder:scaffold:crdkustomizewebhookpatch
+
+# [CERTMANAGER] To enable cert-manager, uncomment the following patches.
+- path: patches/cainjection_in_mcpservers.yaml
+- path: patches/cainjection_in_mcpservergroups.yaml
+- path: patches/cainjection_in_mcpdiscoverysources.yaml
+# +kubebuilder:scaffold:crdkustomizecainjectionpatch
+
+# [WEBHOOK] To enable the conversion webhook, uncomment the following configuration
+# so kustomize substitutes the webhook service name/namespace nameReference.
+configurations:
+- kustomizeconfig.yaml
