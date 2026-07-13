@@ -45,6 +45,11 @@ const (
 	readyRequeueAfter   = 5 * time.Minute
 	coldRequeueAfter    = 10 * time.Minute
 
+	// maxConsecutiveFailures caps Status.ConsecutiveFailures so the counter
+	// cannot grow without bound while a provider stays unhealthy. Also used as
+	// the Pod restart-backoff ceiling in handlePodFailed.
+	maxConsecutiveFailures = int32(5)
+
 	// Event reasons
 	ReasonCreated                   = "Created"
 	ReasonUpdated                   = "Updated"
@@ -176,6 +181,10 @@ func (r *MCPServerReconciler) reconcileNormal(ctx context.Context, mcpServer *mc
 	case mcpv1alpha1.MCPServerModeRemote:
 		return r.reconcileRemoteProvider(ctx, mcpServer)
 	default:
+		// defense-in-depth: unreachable while the CRD schema enforces
+		// spec.mode via +kubebuilder:validation:Enum=container;remote, so a
+		// persisted object can never carry an unknown mode. Kept as a guard
+		// against future enum additions or direct-cache manipulation.
 		logger.Error(nil, "Unknown provider mode", "mode", mcpServer.Spec.Mode)
 		mcpServer.Status.SetCondition(ConditionReady, metav1.ConditionFalse, "InvalidMode", "Unknown provider mode")
 		if err := r.Status().Update(ctx, mcpServer); err != nil {
@@ -402,7 +411,11 @@ func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *m
 		if err != nil {
 			logger.Error(err, "Failed to get provider tools from Hangar")
 			mcpServer.Status.State = mcpv1alpha1.MCPServerStateDegraded
-			mcpServer.Status.ConsecutiveFailures++
+			// Cap the counter (mirrors handlePodFailed) so a long-unreachable
+			// Hangar cannot grow ConsecutiveFailures without bound.
+			if mcpServer.Status.ConsecutiveFailures < maxConsecutiveFailures {
+				mcpServer.Status.ConsecutiveFailures++
+			}
 			mcpServer.Status.SetCondition(ConditionDegraded, metav1.ConditionTrue, "ToolsFetchFailed", err.Error())
 			metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Degraded")
 			metrics.MCPServerHealthCheckFailures.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Inc()
@@ -460,7 +473,7 @@ func (r *MCPServerReconciler) handlePodFailed(ctx context.Context, mcpServer *mc
 	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Dead")
 
 	// Check if we should restart (with backoff)
-	maxFailures := int32(5)
+	maxFailures := maxConsecutiveFailures
 	if mcpServer.Status.ConsecutiveFailures < maxFailures {
 		logger.Info("Pod failed, deleting for restart",
 			"failures", mcpServer.Status.ConsecutiveFailures,
@@ -495,6 +508,10 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 		return ctrl.Result{}, nil
 	}
 
+	// requeueAfter defaults to the slow, steady-state cadence and is shortened
+	// below whenever the endpoint is unhealthy so recovery is detected quickly.
+	requeueAfter := readyRequeueAfter
+
 	// Health check via MCP-Hangar core (if client available)
 	if r.HangarClient != nil {
 		healthy, tools, err := r.HangarClient.HealthCheckRemote(ctx, endpoint)
@@ -505,6 +522,8 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 			mcpServer.Status.SetCondition(ConditionDegraded, metav1.ConditionTrue, "HealthCheckFailed", err.Error())
 			r.Recorder.Event(mcpServer, corev1.EventTypeWarning, ReasonUnhealthy, fmt.Sprintf("Health check failed: %v", err))
 			metrics.MCPServerHealthCheckFailures.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Inc()
+			// Re-probe soon so recovery is detected fast, not after the full readyRequeueAfter window.
+			requeueAfter = errorRequeueAfter
 		} else if healthy {
 			mcpServer.Status.State = mcpv1alpha1.MCPServerStateReady
 			mcpServer.Status.Tools = tools
@@ -520,6 +539,8 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 			mcpServer.Status.ConsecutiveFailures++
 			mcpServer.Status.SetCondition(ConditionDegraded, metav1.ConditionTrue, "EndpointUnhealthy", "Remote endpoint failed health check")
 			r.Recorder.Event(mcpServer, corev1.EventTypeWarning, ReasonUnhealthy, "Remote endpoint unhealthy")
+			// Re-probe soon so recovery is detected fast, not after the full readyRequeueAfter window.
+			requeueAfter = errorRequeueAfter
 		}
 	} else {
 		// No Hangar client - just mark as ready (assume healthy)
@@ -542,7 +563,7 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: readyRequeueAfter}, nil
+	return ctrl.Result{RequeueAfter: requeueAfter}, nil
 }
 
 // reconcileNetworkPolicy ensures the NetworkPolicy for a provider matches its capabilities.

@@ -294,6 +294,10 @@ func (r *MCPDiscoverySourceReconciler) discoverProviders(ctx context.Context, so
 	case mcpv1alpha1.DiscoveryTypeServiceDiscovery:
 		return r.discoverServices(ctx, source)
 	default:
+		// defense-in-depth: unreachable while the CRD schema enforces spec.type
+		// via +kubebuilder:validation:Enum=Namespace;ConfigMap;Annotations;ServiceDiscovery,
+		// so a persisted source can never carry an unknown type. Kept as a guard
+		// against future enum additions or direct-cache manipulation.
 		return nil, nil, fmt.Errorf("unknown discovery type: %s", source.Spec.Type)
 	}
 }
