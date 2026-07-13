@@ -3,6 +3,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 
@@ -18,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	"github.com/mcp-hangar/operator/pkg/hangar"
 	"github.com/mcp-hangar/operator/pkg/provider"
 )
 
@@ -165,6 +168,98 @@ func TestMCPServer_RemoteMode_WithEndpoint_AssumedReady(t *testing.T) {
 	result := getMCPServer(t, r, "remote-ok", "default")
 	assert.Equal(t, mcpv1alpha1.MCPServerStateReady, result.Status.State)
 	assert.Equal(t, "http://example.com:8080", result.Status.Endpoint)
+}
+
+// hangarClientPointingAt builds a hangar.Client whose HealthCheckRemote calls
+// hit the given test server URL, with retries disabled so tests stay fast.
+func hangarClientPointingAt(url string) *hangar.Client {
+	return hangar.NewClient(&hangar.Config{URL: url, MaxRetries: 1})
+}
+
+func TestMCPServer_RemoteMode_Unhealthy_RequeuesFast(t *testing.T) {
+	// Server reports the endpoint as unhealthy (healthy=false, no error).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"healthy": false}`))
+	}))
+	defer srv.Close()
+
+	p := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "remote-unhealthy", Namespace: "default", UID: "uid-fast-1",
+			Finalizers: []string{finalizerName}},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:     mcpv1alpha1.MCPServerModeRemote,
+			Endpoint: "http://example.com:8080",
+		},
+	}
+	r := newMCPServerReconciler(p)
+	r.HangarClient = hangarClientPointingAt(srv.URL)
+
+	result := reconcileMCPServer(t, r, "remote-unhealthy", "default")
+
+	// Degraded remotes must re-probe on the fast cadence so recovery is
+	// detected quickly, not after the full readyRequeueAfter (5m) window.
+	assert.Equal(t, errorRequeueAfter, result.RequeueAfter,
+		"unhealthy remote should requeue on the fast (error) cadence")
+
+	got := getMCPServer(t, r, "remote-unhealthy", "default")
+	assert.Equal(t, mcpv1alpha1.MCPServerStateDegraded, got.Status.State)
+}
+
+func TestMCPServer_RemoteMode_HealthCheckError_RequeuesFast(t *testing.T) {
+	// Server returns an error payload -> HealthCheckRemote returns an error.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"error": "connection refused"}`))
+	}))
+	defer srv.Close()
+
+	p := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "remote-err", Namespace: "default", UID: "uid-fast-2",
+			Finalizers: []string{finalizerName}},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:     mcpv1alpha1.MCPServerModeRemote,
+			Endpoint: "http://example.com:8080",
+		},
+	}
+	r := newMCPServerReconciler(p)
+	r.HangarClient = hangarClientPointingAt(srv.URL)
+
+	result := reconcileMCPServer(t, r, "remote-err", "default")
+
+	assert.Equal(t, errorRequeueAfter, result.RequeueAfter,
+		"failed remote health check should requeue on the fast (error) cadence")
+
+	got := getMCPServer(t, r, "remote-err", "default")
+	assert.Equal(t, mcpv1alpha1.MCPServerStateDegraded, got.Status.State)
+}
+
+func TestMCPServer_RemoteMode_Healthy_RequeuesSlow(t *testing.T) {
+	// Healthy remote keeps the slow, steady-state cadence.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"healthy": true, "tools": ["a", "b"]}`))
+	}))
+	defer srv.Close()
+
+	p := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "remote-healthy", Namespace: "default", UID: "uid-fast-3",
+			Finalizers: []string{finalizerName}},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:     mcpv1alpha1.MCPServerModeRemote,
+			Endpoint: "http://example.com:8080",
+		},
+	}
+	r := newMCPServerReconciler(p)
+	r.HangarClient = hangarClientPointingAt(srv.URL)
+
+	result := reconcileMCPServer(t, r, "remote-healthy", "default")
+
+	assert.Equal(t, readyRequeueAfter, result.RequeueAfter,
+		"healthy remote should keep the slow (ready) cadence")
+
+	got := getMCPServer(t, r, "remote-healthy", "default")
+	assert.Equal(t, mcpv1alpha1.MCPServerStateReady, got.Status.State)
 }
 
 func TestMCPServer_SpecDrift_RecreatesPod(t *testing.T) {
