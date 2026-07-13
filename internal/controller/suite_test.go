@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -43,9 +43,16 @@ func TestMain(m *testing.M) {
 	// For envtest we strip CEL x-kubernetes-validations because the local
 	// control-plane version used in tests rejects metadata.annotations access.
 	testEnv = &envtest.Environment{
-		BinaryAssetsDirectory: filepath.Join("..", "..", "bin", "k8s", "1.29.0-linux-amd64"),
 		CRDs:                  crds,
 		ErrorIfCRDPathMissing: true,
+	}
+
+	// Resolve envtest binaries via KUBEBUILDER_ASSETS (set by
+	// setup-envtest / `make test`), which works cross-platform. Only fall
+	// back to a locally provisioned bin/k8s/<version> directory when the env
+	// var is unset, and never hardcode a specific OS/arch.
+	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
+		testEnv.BinaryAssetsDirectory = firstFoundEnvTestBinaryDir()
 	}
 
 	cfg, err = testEnv.Start()
@@ -126,6 +133,24 @@ func TestMain(m *testing.M) {
 		panic("failed to stop envtest: " + err.Error())
 	}
 	os.Exit(code)
+}
+
+// firstFoundEnvTestBinaryDir returns the first entry under bin/k8s, which is
+// where `setup-envtest` / `make envtest` provisions the control-plane binaries
+// for the local platform. It returns an empty string if nothing is found, in
+// which case envtest falls back to its own resolution (e.g. KUBEBUILDER_ASSETS).
+func firstFoundEnvTestBinaryDir() string {
+	basePath := filepath.Join("..", "..", "bin", "k8s")
+	entries, err := os.ReadDir(basePath)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			return filepath.Join(basePath, entry.Name())
+		}
+	}
+	return ""
 }
 
 func loadTestCRDs() ([]*apiextensionsv1.CustomResourceDefinition, error) {
