@@ -20,6 +20,10 @@ type discoveryConstraints struct {
 	hasConfigMapRef bool
 	includePatterns []string
 	excludePatterns []string
+	// durations holds free-form duration strings (field path -> raw value).
+	// Populated only for v1alpha1, whose duration fields are plain strings;
+	// v1alpha2 models them as *metav1.Duration and leaves this nil.
+	durations map[string]string
 }
 
 // validateDiscoveryConstraints runs the shared MCPDiscoverySource rules.
@@ -30,6 +34,10 @@ func validateDiscoveryConstraints(c discoveryConstraints) error {
 	if c.discoveryType == "ConfigMap" && !c.hasConfigMapRef {
 		errs = append(errs, "spec.configMapRef is required when spec.type is \"ConfigMap\"")
 	}
+
+	// Duration strings must parse, else conversion to v1alpha2 hard-fails and
+	// the object becomes unconvertible after admission accepted it.
+	errs = append(errs, validateDurationStrings(c.durations)...)
 
 	// Filter patterns are regular expressions; reject ones that do not compile,
 	// otherwise the controller would fail every reconcile at runtime.
@@ -61,6 +69,7 @@ func discoveryConstraintsFromV1alpha1(d *mcpv1alpha1.MCPDiscoverySource) discove
 	c := discoveryConstraints{
 		discoveryType:   string(d.Spec.Type),
 		hasConfigMapRef: d.Spec.ConfigMapRef != nil,
+		durations:       map[string]string{"spec.refreshInterval": d.Spec.RefreshInterval},
 	}
 	if d.Spec.Filters != nil {
 		c.includePatterns = d.Spec.Filters.IncludePatterns
@@ -72,7 +81,7 @@ func discoveryConstraintsFromV1alpha1(d *mcpv1alpha1.MCPDiscoverySource) discove
 // ValidateCreate validates a v1alpha1 MCPDiscoverySource on creation.
 func (v *MCPDiscoverySourceValidator) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
 	d, ok := obj.(*mcpv1alpha1.MCPDiscoverySource)
-	if !ok {
+	if !ok || d == nil {
 		return nil, fmt.Errorf("expected v1alpha1 MCPDiscoverySource, got %T", obj)
 	}
 	return nil, validateDiscoveryConstraints(discoveryConstraintsFromV1alpha1(d))
@@ -81,7 +90,7 @@ func (v *MCPDiscoverySourceValidator) ValidateCreate(_ context.Context, obj runt
 // ValidateUpdate validates a v1alpha1 MCPDiscoverySource on update.
 func (v *MCPDiscoverySourceValidator) ValidateUpdate(_ context.Context, _ runtime.Object, newObj runtime.Object) (admission.Warnings, error) {
 	d, ok := newObj.(*mcpv1alpha1.MCPDiscoverySource)
-	if !ok {
+	if !ok || d == nil {
 		return nil, fmt.Errorf("expected v1alpha1 MCPDiscoverySource, got %T", newObj)
 	}
 	return nil, validateDiscoveryConstraints(discoveryConstraintsFromV1alpha1(d))
@@ -115,7 +124,7 @@ func discoveryConstraintsFromV1alpha2(d *mcpv1alpha2.MCPDiscoverySource) discove
 // ValidateCreate validates a v1alpha2 MCPDiscoverySource on creation.
 func (v *MCPDiscoverySourceV1alpha2Validator) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
 	d, ok := obj.(*mcpv1alpha2.MCPDiscoverySource)
-	if !ok {
+	if !ok || d == nil {
 		return nil, fmt.Errorf("expected v1alpha2 MCPDiscoverySource, got %T", obj)
 	}
 	return nil, validateDiscoveryConstraints(discoveryConstraintsFromV1alpha2(d))
@@ -124,7 +133,7 @@ func (v *MCPDiscoverySourceV1alpha2Validator) ValidateCreate(_ context.Context, 
 // ValidateUpdate validates a v1alpha2 MCPDiscoverySource on update.
 func (v *MCPDiscoverySourceV1alpha2Validator) ValidateUpdate(_ context.Context, _ runtime.Object, newObj runtime.Object) (admission.Warnings, error) {
 	d, ok := newObj.(*mcpv1alpha2.MCPDiscoverySource)
-	if !ok {
+	if !ok || d == nil {
 		return nil, fmt.Errorf("expected v1alpha2 MCPDiscoverySource, got %T", newObj)
 	}
 	return nil, validateDiscoveryConstraints(discoveryConstraintsFromV1alpha2(d))

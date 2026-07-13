@@ -253,6 +253,48 @@ func TestAdmission_Envtest_NoCapsCreated(t *testing.T) {
 	_ = k8sClient.Delete(ctx, provider)
 }
 
+// TestAdmission_Envtest_MetricsPortOutOfRangeRejected verifies the CRD schema
+// bound on spec.observability.metrics.port (Minimum=1, Maximum=65535, #22).
+func TestAdmission_Envtest_MetricsPortOutOfRangeRejected(t *testing.T) {
+	provider := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "envtest-bad-metrics-port",
+			Namespace: "default",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:  mcpv1alpha1.MCPServerModeContainer,
+			Image: "test:latest",
+			Observability: &mcpv1alpha1.ObservabilityConfig{
+				Metrics: &mcpv1alpha1.MetricsConfig{Enabled: true, Port: 70000},
+			},
+		},
+	}
+
+	err := k8sClient.Create(ctx, provider)
+	require.Error(t, err, "metrics.port 70000 should be rejected by the CRD schema")
+	_ = k8sClient.Delete(ctx, provider)
+}
+
+func TestAdmission_Envtest_MetricsPortInRangeAccepted(t *testing.T) {
+	provider := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "envtest-good-metrics-port",
+			Namespace: "default",
+		},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Mode:  mcpv1alpha1.MCPServerModeContainer,
+			Image: "test:latest",
+			Observability: &mcpv1alpha1.ObservabilityConfig{
+				Metrics: &mcpv1alpha1.MetricsConfig{Enabled: true, Port: 9090},
+			},
+		},
+	}
+
+	err := k8sClient.Create(ctx, provider)
+	require.NoError(t, err, "metrics.port 9090 should be accepted")
+	_ = k8sClient.Delete(ctx, provider)
+}
+
 // ---------------------------------------------------------------------------
 // Egress Audit Tests (unit tests using fakeEventRecorder)
 // ---------------------------------------------------------------------------

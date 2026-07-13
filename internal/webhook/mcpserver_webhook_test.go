@@ -87,7 +87,7 @@ func TestValidateCreate_RemoteMode_InvalidEndpoint(t *testing.T) {
 
 	_, err := v.ValidateCreate(context.Background(), p)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not a valid URL")
+	assert.Contains(t, err.Error(), "http or https")
 }
 
 func TestValidateCreate_RemoteMode_ImageWarning(t *testing.T) {
@@ -364,4 +364,53 @@ func TestValidateCreate_MultipleErrors(t *testing.T) {
 	assert.Contains(t, errMsg, "spec.image is required")
 	assert.Contains(t, errMsg, "spec.idleTTL")
 	assert.Contains(t, errMsg, "duplicate")
+}
+
+// ── Typed-nil guard (#22) ─────────────────────────────────────────────
+
+func TestValidateCreate_TypedNilRejected(t *testing.T) {
+	v := &webhook.MCPServerValidator{}
+	// A typed-nil *MCPServer satisfies the ok type assertion; the validator
+	// must return an error rather than panicking on p.Spec.
+	var p *mcpv1alpha1.MCPServer
+	_, err := v.ValidateCreate(context.Background(), p)
+	require.Error(t, err)
+}
+
+func TestValidateUpdate_TypedNilRejected(t *testing.T) {
+	v := &webhook.MCPServerValidator{}
+	var p *mcpv1alpha1.MCPServer
+	_, err := v.ValidateUpdate(context.Background(), nil, p)
+	require.Error(t, err)
+}
+
+// ── Remote endpoint scheme (#22) ──────────────────────────────────────
+
+func TestValidateCreate_RemoteMode_JavascriptSchemeRejected(t *testing.T) {
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("js-endpoint", mcpv1alpha1.MCPServerModeRemote)
+	p.Spec.Endpoint = "javascript:alert(1)"
+
+	_, err := v.ValidateCreate(context.Background(), p)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "http or https")
+}
+
+func TestValidateCreate_RemoteMode_BarePathRejected(t *testing.T) {
+	v := &webhook.MCPServerValidator{}
+	p := newProvider("bare-path", mcpv1alpha1.MCPServerModeRemote)
+	p.Spec.Endpoint = "/only/path"
+
+	_, err := v.ValidateCreate(context.Background(), p)
+	require.Error(t, err)
+}
+
+func TestValidateCreate_RemoteMode_HTTPAccepted(t *testing.T) {
+	v := &webhook.MCPServerValidator{}
+	for _, ep := range []string{"http://api.example.com/mcp", "https://api.example.com"} {
+		p := newProvider("http-ep", mcpv1alpha1.MCPServerModeRemote)
+		p.Spec.Endpoint = ep
+		_, err := v.ValidateCreate(context.Background(), p)
+		assert.NoError(t, err, "endpoint %q should be accepted", ep)
+	}
 }
