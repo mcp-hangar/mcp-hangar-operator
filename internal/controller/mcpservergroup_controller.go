@@ -104,7 +104,10 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 		group.Status.ObservedGeneration = group.Generation
 	}
 
-	// Convert label selector
+	// Convert label selector.
+	// defense-in-depth: unreachable while the CRD schema enforces spec.selector
+	// via +kubebuilder:validation:Required, so a persisted group always has a
+	// non-nil selector. Kept as a guard against direct-cache manipulation.
 	if group.Spec.Selector == nil {
 		group.Status.SetCondition(ConditionReady, metav1.ConditionUnknown, "NoSelector", "No label selector defined")
 		if err := r.Status().Update(ctx, group); err != nil {
