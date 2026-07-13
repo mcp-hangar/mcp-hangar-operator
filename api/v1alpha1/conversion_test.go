@@ -554,3 +554,169 @@ func TestConditionsFromStandard(t *testing.T) {
 
 	assert.Nil(t, conditionsFromStandard(nil))
 }
+
+// --- Empty-slice preservation (nil vs empty) round-trip tests (epic #15) ---
+
+// TestConversionHelpers_EmptySlicePreserved proves the slice helpers keep the
+// nil-vs-empty distinction: a nil source stays nil, an empty-but-non-nil source
+// stays empty-but-non-nil (rather than being collapsed to nil).
+func TestConversionHelpers_EmptySlicePreserved(t *testing.T) {
+	t.Run("conditionsToStandard", func(t *testing.T) {
+		assert.Nil(t, conditionsToStandard(nil))
+		got := conditionsToStandard([]Condition{})
+		require.NotNil(t, got)
+		assert.Empty(t, got)
+	})
+	t.Run("conditionsFromStandard", func(t *testing.T) {
+		assert.Nil(t, conditionsFromStandard(nil))
+		got := conditionsFromStandard([]metav1.Condition{})
+		require.NotNil(t, got)
+		assert.Empty(t, got)
+	})
+	t.Run("convertEnvVars", func(t *testing.T) {
+		assert.Nil(t, convertEnvVarsTo(nil))
+		gotTo := convertEnvVarsTo([]EnvVar{})
+		require.NotNil(t, gotTo)
+		assert.Empty(t, gotTo)
+		assert.Nil(t, convertEnvVarsFrom(nil))
+		gotFrom := convertEnvVarsFrom([]v1alpha2.EnvVar{})
+		require.NotNil(t, gotFrom)
+		assert.Empty(t, gotFrom)
+	})
+	t.Run("convertVolumes", func(t *testing.T) {
+		assert.Nil(t, convertVolumesTo(nil))
+		gotTo := convertVolumesTo([]Volume{})
+		require.NotNil(t, gotTo)
+		assert.Empty(t, gotTo)
+		assert.Nil(t, convertVolumesFrom(nil))
+		gotFrom := convertVolumesFrom([]v1alpha2.Volume{})
+		require.NotNil(t, gotFrom)
+		assert.Empty(t, gotFrom)
+	})
+	t.Run("convertTolerations", func(t *testing.T) {
+		assert.Nil(t, convertTolerationsTo(nil))
+		gotTo := convertTolerationsTo([]Toleration{})
+		require.NotNil(t, gotTo)
+		assert.Empty(t, gotTo)
+		assert.Nil(t, convertTolerationsFrom(nil))
+		gotFrom := convertTolerationsFrom([]v1alpha2.Toleration{})
+		require.NotNil(t, gotFrom)
+		assert.Empty(t, gotFrom)
+	})
+	t.Run("convertViolations", func(t *testing.T) {
+		assert.Nil(t, convertViolationsTo(nil))
+		gotTo := convertViolationsTo([]ViolationRecord{})
+		require.NotNil(t, gotTo)
+		assert.Empty(t, gotTo)
+		assert.Nil(t, convertViolationsFrom(nil))
+		gotFrom := convertViolationsFrom([]v1alpha2.ViolationRecord{})
+		require.NotNil(t, gotFrom)
+		assert.Empty(t, gotFrom)
+	})
+}
+
+// TestMCPServer_RoundTrip_EmptySlicesPreserved proves that empty-but-non-nil
+// spec/status slices survive a v1alpha1 -> v1alpha2 -> v1alpha1 round-trip as
+// empty (not nil), so empty collections do not produce spurious kubectl diffs.
+func TestMCPServer_RoundTrip_EmptySlicesPreserved(t *testing.T) {
+	original := &MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "empties", Namespace: "default"},
+		Spec: MCPServerSpec{
+			Mode:        MCPServerModeContainer,
+			Image:       "example/provider:latest",
+			Env:         []EnvVar{},
+			Volumes:     []Volume{},
+			Tolerations: []Toleration{},
+		},
+		Status: MCPServerStatus{
+			Conditions: []Condition{},
+			Violations: []ViolationRecord{},
+		},
+	}
+
+	hub := &v1alpha2.MCPServer{}
+	require.NoError(t, original.ConvertTo(hub))
+	require.NotNil(t, hub.Spec.Env)
+	assert.Empty(t, hub.Spec.Env)
+
+	roundTripped := &MCPServer{}
+	require.NoError(t, roundTripped.ConvertFrom(hub))
+
+	require.NotNil(t, roundTripped.Spec.Env)
+	assert.Empty(t, roundTripped.Spec.Env)
+	require.NotNil(t, roundTripped.Spec.Volumes)
+	assert.Empty(t, roundTripped.Spec.Volumes)
+	require.NotNil(t, roundTripped.Spec.Tolerations)
+	assert.Empty(t, roundTripped.Spec.Tolerations)
+	require.NotNil(t, roundTripped.Status.Conditions)
+	assert.Empty(t, roundTripped.Status.Conditions)
+	require.NotNil(t, roundTripped.Status.Violations)
+	assert.Empty(t, roundTripped.Status.Violations)
+
+	// nil stays nil (control): a nil source must not become an empty slice.
+	nilSrc := &MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "nils", Namespace: "default"},
+		Spec:       MCPServerSpec{Mode: MCPServerModeContainer, Image: "example/provider:latest"},
+	}
+	nilHub := &v1alpha2.MCPServer{}
+	require.NoError(t, nilSrc.ConvertTo(nilHub))
+	nilRT := &MCPServer{}
+	require.NoError(t, nilRT.ConvertFrom(nilHub))
+	assert.Nil(t, nilRT.Spec.Env)
+	assert.Nil(t, nilRT.Spec.Volumes)
+	assert.Nil(t, nilRT.Spec.Tolerations)
+	assert.Nil(t, nilRT.Status.Conditions)
+	assert.Nil(t, nilRT.Status.Violations)
+}
+
+// TestMCPDiscoverySource_RoundTrip_EmptyDiscoveredPreserved proves the
+// DiscoveredMCPServers status list keeps the nil-vs-empty distinction.
+func TestMCPDiscoverySource_RoundTrip_EmptyDiscoveredPreserved(t *testing.T) {
+	original := &MCPDiscoverySource{
+		ObjectMeta: metav1.ObjectMeta{Name: "disc", Namespace: "default"},
+		Status:     MCPDiscoverySourceStatus{DiscoveredMCPServers: []DiscoveredMCPServer{}},
+	}
+	hub := &v1alpha2.MCPDiscoverySource{}
+	require.NoError(t, original.ConvertTo(hub))
+	require.NotNil(t, hub.Status.DiscoveredMCPServers)
+	assert.Empty(t, hub.Status.DiscoveredMCPServers)
+
+	roundTripped := &MCPDiscoverySource{}
+	require.NoError(t, roundTripped.ConvertFrom(hub))
+	require.NotNil(t, roundTripped.Status.DiscoveredMCPServers)
+	assert.Empty(t, roundTripped.Status.DiscoveredMCPServers)
+
+	// nil stays nil (control).
+	nilSrc := &MCPDiscoverySource{ObjectMeta: metav1.ObjectMeta{Name: "disc-nil"}}
+	nilHub := &v1alpha2.MCPDiscoverySource{}
+	require.NoError(t, nilSrc.ConvertTo(nilHub))
+	nilRT := &MCPDiscoverySource{}
+	require.NoError(t, nilRT.ConvertFrom(nilHub))
+	assert.Nil(t, nilRT.Status.DiscoveredMCPServers)
+}
+
+// TestMCPServer_RoundTrip_CanonicalDurationsNoDrift documents the accepted
+// duration behavior (epic #15, item 2): canonical Go duration strings survive a
+// round-trip unchanged. Non-canonical literals (e.g. "5m") are canonicalized by
+// the typed hub and are a known/accepted drift; the workaround is to write
+// canonical values as verified here.
+func TestMCPServer_RoundTrip_CanonicalDurationsNoDrift(t *testing.T) {
+	original := &MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "durs", Namespace: "default"},
+		Spec: MCPServerSpec{
+			Mode:                MCPServerModeContainer,
+			Image:               "example/provider:latest",
+			IdleTTL:             "5m0s",
+			StartupTimeout:      "30s",
+			ShutdownGracePeriod: "1m30s",
+		},
+	}
+	hub := &v1alpha2.MCPServer{}
+	require.NoError(t, original.ConvertTo(hub))
+	roundTripped := &MCPServer{}
+	require.NoError(t, roundTripped.ConvertFrom(hub))
+
+	assert.Equal(t, original.Spec.IdleTTL, roundTripped.Spec.IdleTTL)
+	assert.Equal(t, original.Spec.StartupTimeout, roundTripped.Spec.StartupTimeout)
+	assert.Equal(t, original.Spec.ShutdownGracePeriod, roundTripped.Spec.ShutdownGracePeriod)
+}
