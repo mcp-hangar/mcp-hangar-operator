@@ -1,0 +1,12 @@
+apiVersion: mcp-hangar.io/v1alpha2
+kind: MCPServerGroup
+metadata:
+  labels:
+    app.kubernetes.io/name: mcp-hangar-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: mcpservergroup-sample
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mcpserver-sample
+  strategy: RoundRobin

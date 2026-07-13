@@ -1,0 +1,6 @@
+## Append samples of your project ##
+resources:
+- mcp-hangar_v1alpha2_mcpserver.yaml
+- mcp-hangar_v1alpha2_mcpservergroup.yaml
+- mcp-hangar_v1alpha2_mcpdiscoverysource.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

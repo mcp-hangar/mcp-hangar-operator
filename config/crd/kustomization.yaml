@@ -1,0 +1,12 @@
+# This kustomization.yaml is not intended to be run by itself,
+# since it depends on service name and namespace that are out of this kustomize package.
+# It should be run by config/default
+resources:
+- bases/mcp-hangar.io_mcpservers.yaml
+- bases/mcp-hangar.io_mcpservergroups.yaml
+- bases/mcp-hangar.io_mcpdiscoverysources.yaml
+# +kubebuilder:scaffold:crdkustomizeresource
+
+# NOTE: conversion/admission webhook wiring for the CRDs is intentionally
+# omitted here. It is tracked separately in issues #11/#12 and will be added
+# in a follow-up (config/webhook + cert-manager patches).

@@ -1,0 +1,11 @@
+apiVersion: mcp-hangar.io/v1alpha2
+kind: MCPServer
+metadata:
+  labels:
+    app.kubernetes.io/name: mcp-hangar-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: mcpserver-sample
+spec:
+  mode: container
+  image: ghcr.io/example/mcp-example-server:latest
+  replicas: 1

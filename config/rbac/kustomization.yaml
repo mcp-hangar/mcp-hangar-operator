@@ -1,0 +1,9 @@
+resources:
+# The service account the manager runs as.
+- service_account.yaml
+# The cluster-scoped permissions the manager needs to reconcile the CRDs.
+- role.yaml
+- role_binding.yaml
+# Leader-election permissions, scoped to the manager's namespace.
+- leader_election_role.yaml
+- leader_election_role_binding.yaml
