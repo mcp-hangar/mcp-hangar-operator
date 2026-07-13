@@ -1,0 +1,126 @@
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-mcp-hangar-io-v1alpha1-mcpdiscoverysource
+  failurePolicy: Fail
+  name: vmcpdiscoverysource-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - mcp-hangar.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - mcpdiscoverysources
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-mcp-hangar-io-v1alpha2-mcpdiscoverysource
+  failurePolicy: Fail
+  name: vmcpdiscoverysource-v1alpha2.kb.io
+  rules:
+  - apiGroups:
+    - mcp-hangar.io
+    apiVersions:
+    - v1alpha2
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - mcpdiscoverysources
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-mcp-hangar-io-v1alpha1-mcpserver
+  failurePolicy: Fail
+  name: vmcpserver-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - mcp-hangar.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - mcpservers
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-mcp-hangar-io-v1alpha2-mcpserver
+  failurePolicy: Fail
+  name: vmcpserver-v1alpha2.kb.io
+  rules:
+  - apiGroups:
+    - mcp-hangar.io
+    apiVersions:
+    - v1alpha2
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - mcpservers
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-mcp-hangar-io-v1alpha1-mcpservergroup
+  failurePolicy: Fail
+  name: vmcpservergroup-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - mcp-hangar.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - mcpservergroups
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-mcp-hangar-io-v1alpha2-mcpservergroup
+  failurePolicy: Fail
+  name: vmcpservergroup-v1alpha2.kb.io
+  rules:
+  - apiGroups:
+    - mcp-hangar.io
+    apiVersions:
+    - v1alpha2
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - mcpservergroups
+  sideEffects: None
