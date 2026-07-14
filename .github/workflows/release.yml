@@ -1,6 +1,6 @@
 # Cuts a release when a semver tag (vX.Y.Z) is pushed: builds the multi-arch
 # manager image to GHCR and attaches the rendered install manifest to a GitHub
-# Release. Manual release = push a tag. See ADR-007 (operator & Helm release
+# Release. Manual release = push a tag. See ADR-009 (independent release
 # topology, mcp-hangar/mcp-hangar#410).
 name: release
 
