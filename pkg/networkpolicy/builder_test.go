@@ -474,7 +474,7 @@ func TestBuildNetworkPolicy_PodSelector(t *testing.T) {
 	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "math-provider",
-			Namespace: "mcp-system",
+			Namespace: "mcp-hangar",
 		},
 		Spec: mcpv1alpha1.MCPServerSpec{
 			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
@@ -489,7 +489,7 @@ func TestBuildNetworkPolicy_PodSelector(t *testing.T) {
 	require.NotNil(t, np)
 
 	assert.Equal(t, "mcp-provider-math-provider-egress", np.Name)
-	assert.Equal(t, "mcp-system", np.Namespace)
+	assert.Equal(t, "mcp-hangar", np.Namespace)
 	assert.Equal(t, "math-provider", np.Spec.PodSelector.MatchLabels["mcp-hangar.io/provider"])
 	require.Len(t, np.Spec.PolicyTypes, 1)
 	assert.Equal(t, networkingv1.PolicyTypeEgress, np.Spec.PolicyTypes[0])

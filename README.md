@@ -29,7 +29,7 @@
 ```bash
 # Install via OCI registry
 helm install mcp-hangar-operator oci://ghcr.io/mcp-hangar/charts/mcp-hangar-operator \
-  --namespace mcp-system \
+  --namespace mcp-hangar \
   --create-namespace
 ```
 

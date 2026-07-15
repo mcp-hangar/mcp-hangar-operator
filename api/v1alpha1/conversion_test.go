@@ -49,7 +49,7 @@ func TestMCPServer_RoundTrip_FullSpec(t *testing.T) {
 	original := &MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "full-provider",
-			Namespace: "mcp-system",
+			Namespace: "mcp-hangar",
 			Labels:    map[string]string{"app": "mcp"},
 		},
 		Spec: MCPServerSpec{
