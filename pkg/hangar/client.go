@@ -41,7 +41,7 @@ type Config struct {
 // DefaultConfig returns default client configuration
 func DefaultConfig() *Config {
 	return &Config{
-		URL:        "http://mcp-hangar.mcp-system.svc.cluster.local:8080",
+		URL:        "http://mcp-hangar.mcp-hangar.svc.cluster.local:8080",
 		Timeout:    30 * time.Second,
 		MaxRetries: 3,
 		BaseDelay:  500 * time.Millisecond,
