@@ -142,6 +142,23 @@ var (
 		[]string{"operation"},
 	)
 
+	// GroupStatusWriteTotal counts MCPServerGroup status subresource write
+	// attempts by result: "skipped" (recomputed status matched what's
+	// stored, so no write was made -- the common case once a group has
+	// converged), "success", "conflict" (a resourceVersion race was
+	// retried in place), or "error" (retries exhausted / non-conflict
+	// error). A sustained, still-growing "conflict" rate at scale is the
+	// signature of the status-write storm described in #32.
+	GroupStatusWriteTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "mcp",
+			Subsystem: "operator",
+			Name:      "group_status_write_total",
+			Help:      "Total MCPServerGroup status subresource write attempts by result (skipped, success, conflict, error)",
+		},
+		[]string{"namespace", "name", "result"},
+	)
+
 	// CapabilityViolationsTotal tracks capability violations detected by the operator
 	CapabilityViolationsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -165,6 +182,7 @@ func init() {
 		MCPServerRestarts,
 		CRDCount,
 		GroupMCPServerCount,
+		GroupStatusWriteTotal,
 		DiscoverySourceCount,
 		DiscoverySyncDuration,
 		HangarClientErrors,
@@ -202,6 +220,10 @@ func ClearGroupMetrics(namespace, name string) {
 	states := []string{"Cold", "Initializing", "Ready", "Degraded", "Dead"}
 	for _, s := range states {
 		GroupMCPServerCount.DeleteLabelValues(namespace, name, s)
+	}
+	results := []string{"skipped", "success", "conflict", "error"}
+	for _, res := range results {
+		GroupStatusWriteTotal.DeleteLabelValues(namespace, name, res)
 	}
 }
 
