@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -13,10 +14,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
@@ -99,10 +103,29 @@ func (r *MCPServerGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *mcpv1alpha1.MCPServerGroup) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
+	// original snapshots the object exactly as read from the cache, before
+	// any of the status mutations below, and serves two purposes:
+	//
+	//  1. Comparing original.Status against the final group.Status lets
+	//     updateStatus skip the write entirely when a reconcile didn't
+	//     actually change anything. Every member's health-check/status event
+	//     maps to a Group reconcile (see findGroupsForMCPServer), so at N
+	//     members a single settle window can produce many reconciles that
+	//     all recompute the *same* aggregate; without this guard, each one
+	//     would still issue its own status write.
+	//  2. It is the patch base for a conflict-tolerant status merge-patch
+	//     (see updateStatus) instead of a full-object Update(), which
+	//     requires the resourceVersion to still match at write time.
+	//
+	// Together these are the fix for #32: full-object Update() calls that
+	// each raced the informer cache (which can briefly lag behind this
+	// controller's own prior write) and lost the optimistic-concurrency
+	// check, producing a self-sustaining "object has been modified" conflict
+	// storm proportional to member count.
+	original := group.DeepCopy()
+
 	// Update observed generation if changed
-	if group.Status.ObservedGeneration != group.Generation {
-		group.Status.ObservedGeneration = group.Generation
-	}
+	group.Status.ObservedGeneration = group.Generation
 
 	// Convert label selector.
 	// defense-in-depth: unreachable while the CRD schema enforces spec.selector
@@ -110,7 +133,7 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 	// non-nil selector. Kept as a guard against direct-cache manipulation.
 	if group.Spec.Selector == nil {
 		group.Status.SetCondition(ConditionReady, metav1.ConditionUnknown, "NoSelector", "No label selector defined")
-		if err := r.Status().Update(ctx, group); err != nil {
+		if err := r.updateStatus(ctx, group, original); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
@@ -120,7 +143,7 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 	if err != nil {
 		logger.Error(err, "Failed to parse label selector")
 		group.Status.SetCondition(ConditionReady, metav1.ConditionFalse, "InvalidSelector", fmt.Sprintf("Invalid label selector: %v", err))
-		if err := r.Status().Update(ctx, group); err != nil {
+		if err := r.updateStatus(ctx, group, original); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
@@ -178,15 +201,15 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 	// Evaluate conditions
 	r.evaluateConditions(group)
 
-	// Update metrics
+	// Update metrics (cheap gauge sets; always kept current regardless of
+	// whether the status subresource write below is skipped as a no-op)
 	metrics.GroupMCPServerCount.WithLabelValues(group.Namespace, group.Name, "Ready").Set(float64(readyCount))
 	metrics.GroupMCPServerCount.WithLabelValues(group.Namespace, group.Name, "Degraded").Set(float64(degradedCount))
 	metrics.GroupMCPServerCount.WithLabelValues(group.Namespace, group.Name, "Cold").Set(float64(coldCount))
 	metrics.GroupMCPServerCount.WithLabelValues(group.Namespace, group.Name, "Dead").Set(float64(deadCount))
 
-	// Update status subresource
-	if err := r.Status().Update(ctx, group); err != nil {
-		logger.Error(err, "Failed to update MCPServerGroup status")
+	// Update status subresource (no-op skipped, written via conflict-tolerant patch)
+	if err := r.updateStatus(ctx, group, original); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -199,6 +222,49 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 	)
 
 	return ctrl.Result{RequeueAfter: readyRequeueAfter}, nil
+}
+
+// updateStatus writes group's status subresource, but only when it actually
+// differs from original.Status, and via a JSON merge-patch computed against
+// original rather than a full-object Update().
+//
+// A full-object Update() requires the resourceVersion sent by the client to
+// still match the one on the server; under member-driven reconcile fan-in
+// (see findGroupsForMCPServer) many reconciles for the same Group can be
+// in flight in close succession, and each one's cached Get() can briefly lag
+// behind this very controller's own prior write. That combination is what
+// produced the 1000+ "object has been modified" conflict storm in #32 at
+// 30-member scale -- a single conflicting retry is normal, but the storm was
+// self-sustaining and proportional to member count.
+//
+// client.MergeFrom(original), by contrast, does not include a resourceVersion
+// precondition, so the resulting PATCH is applied to whatever the live object
+// currently is -- it does not fail with a version conflict. That's safe here
+// specifically because this controller is the sole writer of this status
+// subresource (nothing else ever calls Status().Update/Patch on a Group) and
+// fully recomputes every tracked field from canonical inputs (the member
+// list and spec) on each reconcile, so there is no partial/incremental state
+// that a stale patch could corrupt.
+func (r *MCPServerGroupReconciler) updateStatus(ctx context.Context, group *mcpv1alpha1.MCPServerGroup, original *mcpv1alpha1.MCPServerGroup) error {
+	logger := log.FromContext(ctx)
+
+	if apiequality.Semantic.DeepEqual(original.Status, group.Status) {
+		metrics.GroupStatusWriteTotal.WithLabelValues(group.Namespace, group.Name, "skipped").Inc()
+		return nil
+	}
+
+	if err := r.Status().Patch(ctx, group, client.MergeFrom(original)); err != nil {
+		if errors.IsConflict(err) {
+			metrics.GroupStatusWriteTotal.WithLabelValues(group.Namespace, group.Name, "conflict").Inc()
+		} else {
+			metrics.GroupStatusWriteTotal.WithLabelValues(group.Namespace, group.Name, "error").Inc()
+		}
+		logger.Error(err, "Failed to update MCPServerGroup status")
+		return err
+	}
+
+	metrics.GroupStatusWriteTotal.WithLabelValues(group.Namespace, group.Name, "success").Inc()
+	return nil
 }
 
 // evaluateConditions sets Ready, Degraded, and Available conditions based on
@@ -308,10 +374,39 @@ func (r *MCPServerGroupReconciler) findGroupsForMCPServer(ctx context.Context, o
 	return requests
 }
 
+// groupSelfWatchPredicate controls which updates to the Group object itself
+// re-trigger a reconcile (member-driven reconciles via the Watches() clause
+// below are unaffected by this predicate).
+//
+// It passes generation-changing updates (spec edits) and deletion-marking
+// updates (metadata.deletionTimestamp being set) through unconditionally, but
+// drops pure status-only updates. Without it, this controller's own status
+// write re-triggers its own watch (For() observes the full object, status
+// subresource included), which is a self-sustaining loop: write -> watch
+// event -> reconcile -> write. That loop is what kept the #32 conflict storm
+// growing even after member churn quieted down, and it only stopped once the
+// Group was deleted.
+//
+// GenerationChangedPredicate alone would also (incorrectly) drop the
+// deletion-marking update, since setting deletionTimestamp is a metadata
+// change that does not bump Generation -- which would break finalizer-based
+// deletion. predicate.Or keeps both cases working.
+var groupSelfWatchPredicate = predicate.Or(
+	predicate.GenerationChangedPredicate{},
+	predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return e.ObjectNew.GetDeletionTimestamp() != nil
+		},
+	},
+)
+
 // SetupWithManager sets up the controller with the Manager
 func (r *MCPServerGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&mcpv1alpha1.MCPServerGroup{}).
+		For(
+			&mcpv1alpha1.MCPServerGroup{},
+			builder.WithPredicates(groupSelfWatchPredicate),
+		).
 		Watches(
 			&mcpv1alpha1.MCPServer{},
 			handler.EnqueueRequestsFromMapFunc(r.findGroupsForMCPServer),

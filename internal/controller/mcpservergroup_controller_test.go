@@ -1,9 +1,11 @@
 package controller
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -11,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	"github.com/mcp-hangar/operator/pkg/metrics"
 )
 
 // waitForGroupCondition polls until the specified condition reaches the expected status
@@ -306,4 +309,81 @@ func TestMCPServerGroup_Deletion(t *testing.T) {
 	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: "del-ready-1", Namespace: ns.Name}, provider1))
 	provider2 := &mcpv1alpha1.MCPServer{}
 	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: "del-ready-2", Namespace: ns.Name}, provider2))
+}
+
+// groupStatusWriteCount reads the current total of MCPServerGroup status
+// subresource write attempts (success + conflict) recorded for the given
+// group, i.e. how many times the reconciler actually issued a
+// Status().Update() call. It intentionally excludes "skipped" (no-op)
+// writes and, once summed with the "error" result, gives the full attempt
+// count.
+func groupStatusWriteCount(namespace, name string) float64 {
+	return testutil.ToFloat64(metrics.GroupStatusWriteTotal.WithLabelValues(namespace, name, "success")) +
+		testutil.ToFloat64(metrics.GroupStatusWriteTotal.WithLabelValues(namespace, name, "conflict")) +
+		testutil.ToFloat64(metrics.GroupStatusWriteTotal.WithLabelValues(namespace, name, "error"))
+}
+
+// TestMCPServerGroup_StatusWriteStormBounded reproduces the scale scenario
+// from #32 (a Group with 30 members, created in a burst) and asserts the
+// conflict-storm characteristic doesn't happen:
+//   - the number of MCPServerGroup status write attempts stays bounded
+//     relative to member count instead of growing into the thousands, and
+//   - once the group has converged, writes stop -- there is no
+//     self-sustaining churn (the storm in #32 kept growing even after
+//     member creation quieted down, and only stopped when the Group was
+//     deleted).
+func TestMCPServerGroup_StatusWriteStormBounded(t *testing.T) {
+	ns := createNamespace(t, "test-group-write-storm")
+	defer k8sClient.Delete(ctx, ns)
+
+	const memberCount = 30
+	groupName := "storm-group"
+	groupLabels := map[string]string{"pool": "storm"}
+
+	group := &mcpv1alpha1.MCPServerGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      groupName,
+			Namespace: ns.Name,
+		},
+		Spec: mcpv1alpha1.MCPServerGroupSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: groupLabels,
+			},
+		},
+	}
+	require.NoError(t, k8sClient.Create(ctx, group))
+
+	// Burst-create members, mirroring the "30 MCPServer CRs in one apply"
+	// scale scenario from #32. Each create (and each status-subresource
+	// update inside createMCPServer) maps to a Group reconcile via
+	// findGroupsForMCPServer.
+	for i := 0; i < memberCount; i++ {
+		createMCPServer(t, fmt.Sprintf("storm-member-%d", i), ns.Name, mcpv1alpha1.MCPServerStateReady, groupLabels)
+	}
+
+	waitForGroupMCPServerCount(t, groupName, ns.Name, memberCount)
+
+	// Give the controller a settle window past convergence.
+	time.Sleep(3 * time.Second)
+	writesAfterSettle := groupStatusWriteCount(ns.Name, groupName)
+
+	// #32's storm was still growing 50s after creation and only stopped when
+	// the Group was deleted -- i.e. it never settles on its own. A second
+	// quiet window with no further member churn must show zero additional
+	// writes if the self-triggering loop is actually fixed.
+	time.Sleep(3 * time.Second)
+	writesAfterQuiet := groupStatusWriteCount(ns.Name, groupName)
+
+	assert.Equal(t, writesAfterSettle, writesAfterQuiet,
+		"group status writes must stop once converged; continued growth here is the #32 self-sustaining storm signature")
+
+	// Bounded relative to member count, not proportional to the (much
+	// larger) volume of reconcile triggers fanned in from member events.
+	// #32 measured 1022+ conflict errors alone for 30 members; this asserts
+	// we stay in the same order of magnitude as N, not two orders above it.
+	assert.Less(t, writesAfterQuiet, float64(memberCount*3),
+		"status write attempts should be bounded relative to member count, not the #32 storm's ~34x-per-member conflict rate")
+
+	errorCount := testutil.ToFloat64(metrics.GroupStatusWriteTotal.WithLabelValues(ns.Name, groupName, "error"))
+	assert.Zero(t, errorCount, "no reconcile errors expected from status writes at this scale with the fix applied")
 }
