@@ -60,6 +60,43 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: cosign sign --yes "ghcr.io/mcp-hangar/mcp-hangar-operator@${DIGEST}"
 
+      # `provenance: true` / `sbom: true` above make buildx attach an SPDX
+      # SBOM and an SLSA provenance in-toto statement to the pushed index,
+      # but as plain, unsigned OCI referrers -- readable via `imagetools
+      # inspect` / `cosign download attestation`, but not independently
+      # verifiable: `cosign verify-attestation` finds "no matching
+      # attestations" for them even though the image signature itself
+      # verifies fine (see #31). Pull that same buildx-generated content
+      # back out and re-attest it as a cosign DSSE envelope, keyed to the
+      # same digest the image signature above covers, so it verifies the
+      # same way.
+      - name: Sign and attest the SBOM + provenance (keyless)
+        env:
+          REF: ghcr.io/mcp-hangar/mcp-hangar-operator@${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          # Extract a buildx-attached predicate and unwrap it if buildx
+          # nested it under a top-level key (observed: "SPDX"/"SLSA");
+          # otherwise pass the document through as-is. Fails loudly rather
+          # than attesting empty/garbage content if the shape ever changes.
+          extract_predicate() {
+            field="$1"; wrapper="$2"; out="$3"
+            docker buildx imagetools inspect "$REF" --format "{{ json .${field} }}" \
+              | jq --arg w "$wrapper" 'if type == "object" and has($w) then .[$w] else . end' \
+              > "$out"
+            if [ ! -s "$out" ] || [ "$(cat "$out")" = "null" ]; then
+              echo "::error::failed to extract ${field} predicate from buildx metadata for ${REF}"
+              exit 1
+            fi
+          }
+
+          extract_predicate SBOM SPDX sbom.spdx.json
+          extract_predicate Provenance SLSA provenance.json
+
+          cosign attest --yes --predicate sbom.spdx.json --type spdxjson "$REF"
+          cosign attest --yes --predicate provenance.json --type slsaprovenance "$REF"
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
