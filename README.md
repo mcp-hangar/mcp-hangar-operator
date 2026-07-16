@@ -26,9 +26,15 @@
 
 ### Installation
 
+The chart version is owned by release-please and tracked in the
+[release compatibility matrix](https://github.com/mcp-hangar/docs/blob/main/operations/RELEASE_COMPATIBILITY.md) —
+check there for the current, verified version before installing.
+
 ```bash
-# Install via OCI registry
+# Install via OCI registry (pin --version to the current chart version from
+# the compatibility matrix above)
 helm install mcp-hangar-operator oci://ghcr.io/mcp-hangar/charts/mcp-hangar-operator \
+  --version <chart-version> \
   --namespace mcp-hangar \
   --create-namespace
 ```
@@ -90,13 +96,17 @@ kubectl get mcpproviders
 
 ## Examples
 
-See the `examples/kubernetes/` directory for complete examples:
+See [`config/samples/`](config/samples/) for complete, runnable examples:
 
-- `basic-provider.yaml` - Simple container provider
-- `provider-with-secrets.yaml` - Provider using Kubernetes Secrets
-- `remote-provider.yaml` - External endpoint provider
-- `provider-group-ha.yaml` - High availability group
-- `discovery-source.yaml` - Automatic discovery
+- [`mcp-hangar_v1alpha2_mcpserver.yaml`](config/samples/mcp-hangar_v1alpha2_mcpserver.yaml) - Basic container-mode `MCPServer`. For an external endpoint provider, set `spec.mode: remote` and `spec.endpoint` instead of `spec.image`; for Secret-backed config, add `spec.env`/`spec.volumes` referencing a `Secret` (both fields are part of the `MCPServer` spec).
+- [`mcp-hangar_v1alpha2_mcpservergroup.yaml`](config/samples/mcp-hangar_v1alpha2_mcpservergroup.yaml) - High-availability group of `MCPServer`s load-balanced with the `RoundRobin` strategy.
+- [`mcp-hangar_v1alpha2_mcpdiscoverysource.yaml`](config/samples/mcp-hangar_v1alpha2_mcpdiscoverysource.yaml) - Automatic provider discovery from a namespace.
+
+Apply all samples at once:
+
+```bash
+kubectl apply -k config/samples/
+```
 
 ## Metrics
 
@@ -137,14 +147,12 @@ make docker-push IMG=my-registry/mcp-hangar-operator:v0.1.0
 
 ### Testing
 
-**Test Coverage: 37 tests ✅ 100% passing**
+- **pkg/provider**: Pod builder
+- **pkg/hangar**: Hangar client
+- **pkg/metrics**: Prometheus metrics
+- **internal/controller**: Controller config
 
-- **pkg/provider**: 14 tests (Pod builder)
-- **pkg/hangar**: 11 tests (Hangar client)
-- **pkg/metrics**: 10 tests (Prometheus metrics)
-- **internal/controller**: 2 tests (Controller config)
-
-See [TESTING.md](TESTING.md) for detailed testing documentation.
+Run `make test` to execute the full suite with coverage (`go test ./... -coverprofile cover.out`); run `go tool cover -func cover.out` afterwards for a per-package breakdown.
 
 ## License
 
