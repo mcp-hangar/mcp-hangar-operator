@@ -8,6 +8,7 @@ package main
 import (
 	"flag"
 	"os"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -25,6 +26,7 @@ import (
 	"github.com/mcp-hangar/operator/internal/health"
 	"github.com/mcp-hangar/operator/internal/webhook"
 	"github.com/mcp-hangar/operator/pkg/hangar"
+	"github.com/mcp-hangar/operator/pkg/networkpolicy"
 	// Import metrics package for init()-based Prometheus registration.
 	_ "github.com/mcp-hangar/operator/pkg/metrics"
 )
@@ -50,6 +52,7 @@ func main() {
 		retryPeriod             time.Duration
 		leaderElectionNamespace string
 		gracefulShutdownTimeout time.Duration
+		dnsEgressCIDRs          string
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
@@ -73,6 +76,11 @@ func main() {
 			"Defaults to the namespace of the operator pod.")
 	flag.DurationVar(&gracefulShutdownTimeout, "graceful-shutdown-timeout", 10*time.Second,
 		"Maximum duration the manager will wait for running reconcilers to finish on shutdown.")
+	flag.StringVar(&dnsEgressCIDRs, "dns-egress-cidrs", "",
+		"Comma-separated CIDRs appended to the generated DNS egress rule, in addition to the "+
+			"in-cluster kube-dns pods. Set to your NodeLocal DNSCache / custom resolver address "+
+			"(e.g. \"169.254.20.10/32\") on clusters where pods do not resolve via kube-dns pods, "+
+			"otherwise DNS is blocked for egress-scoped servers.")
 
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
@@ -80,6 +88,13 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 	setupLog := ctrl.Log.WithName("setup")
+
+	if dnsEgressCIDRs != "" {
+		if err := networkpolicy.SetExtraDNSCIDRs(strings.Split(dnsEgressCIDRs, ",")); err != nil {
+			setupLog.Error(err, "invalid --dns-egress-cidrs")
+			os.Exit(1)
+		}
+	}
 
 	mgrOpts := ctrl.Options{
 		Scheme: scheme,

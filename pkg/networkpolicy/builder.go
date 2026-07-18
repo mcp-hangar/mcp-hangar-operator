@@ -3,6 +3,8 @@
 package networkpolicy
 
 import (
+	"fmt"
+	"net"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -177,9 +179,61 @@ func mapProtocol(protocol string) *corev1.Protocol {
 	}
 }
 
-// dnsEgressRule returns an egress rule allowing DNS queries (UDP + TCP port 53).
+// ExtraDNSEgressPeers are appended to the DNS egress rule's destination peers,
+// for clusters whose resolver is not the in-cluster kube-dns pods -- NodeLocal
+// DNSCache (pods query a node-local link address, typically 169.254.20.10) or a
+// custom resolver. The operator sets this once at startup from configuration;
+// the default (empty) yields the kube-dns-only rule. Without it, scoping DNS to
+// kube-dns would break resolution on NodeLocal-DNSCache clusters -- turning the
+// #56 security fix into an availability incident. See also the toFQDNs gotcha in
+// the MCPEgressPolicy epic (#53); both want the same DNS-topology config.
+var ExtraDNSEgressPeers []networkingv1.NetworkPolicyPeer
+
+// SetExtraDNSCIDRs configures ExtraDNSEgressPeers from CIDR strings (e.g. a
+// NodeLocal DNSCache address like "169.254.20.10/32"). Called once at operator
+// startup; returns an error on the first unparseable CIDR.
+func SetExtraDNSCIDRs(cidrs []string) error {
+	peers := make([]networkingv1.NetworkPolicyPeer, 0, len(cidrs))
+	for _, c := range cidrs {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(c); err != nil {
+			return fmt.Errorf("invalid DNS egress CIDR %q: %w", c, err)
+		}
+		peers = append(peers, networkingv1.NetworkPolicyPeer{
+			IPBlock: &networkingv1.IPBlock{CIDR: c},
+		})
+	}
+	ExtraDNSEgressPeers = peers
+	return nil
+}
+
+// kubeDNSPeer selects the in-cluster DNS pods (both CoreDNS and kube-dns carry
+// k8s-app=kube-dns) in kube-system.
+func kubeDNSPeer() networkingv1.NetworkPolicyPeer {
+	return networkingv1.NetworkPolicyPeer{
+		NamespaceSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{"kubernetes.io/metadata.name": "kube-system"},
+		},
+		PodSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{"k8s-app": "kube-dns"},
+		},
+	}
+}
+
+// dnsEgressRule returns an egress rule allowing DNS queries (UDP + TCP port 53)
+// to the cluster DNS pods (plus any ExtraDNSEgressPeers).
+//
+// The destination is SCOPED, not left open: a rule with ports but no peer means
+// "port 53 to ANY destination", which turns every egress-scoped pod into an open
+// :53 channel a DNS-tunnel C2 can exfiltrate through -- the egress allow-list
+// does not constrain it. See #56.
 func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
+	to := append([]networkingv1.NetworkPolicyPeer{kubeDNSPeer()}, ExtraDNSEgressPeers...)
 	return networkingv1.NetworkPolicyEgressRule{
+		To: to,
 		Ports: []networkingv1.NetworkPolicyPort{
 			{
 				Port:     portPtr(53),
