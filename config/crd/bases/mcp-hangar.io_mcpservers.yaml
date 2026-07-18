@@ -1753,14 +1753,6 @@ spec:
                 type: array
             type: object
         type: object
-        x-kubernetes-validations:
-        - message: 'wildcard egress (host: ''*'') requires annotation hangar.io/allow-unrestricted-egress:
-            "true"'
-          rule: '!has(self.spec.capabilities) || !has(self.spec.capabilities.network)
-            || !has(self.spec.capabilities.network.egress) || !self.spec.capabilities.network.egress.exists(e,
-            e.host == ''*'') || (has(self.metadata.annotations) && (''hangar.io/allow-unrestricted-egress''
-            in self.metadata.annotations) && self.metadata.annotations[''hangar.io/allow-unrestricted-egress'']
-            == ''true'')'
     served: true
     storage: false
     subresources:
@@ -3532,14 +3524,6 @@ spec:
                 type: array
             type: object
         type: object
-        x-kubernetes-validations:
-        - message: 'wildcard egress (host: ''*'') requires annotation hangar.io/allow-unrestricted-egress:
-            "true"'
-          rule: '!has(self.spec.capabilities) || !has(self.spec.capabilities.network)
-            || !has(self.spec.capabilities.network.egress) || !self.spec.capabilities.network.egress.exists(e,
-            e.host == ''*'') || (has(self.metadata.annotations) && (''hangar.io/allow-unrestricted-egress''
-            in self.metadata.annotations) && self.metadata.annotations[''hangar.io/allow-unrestricted-egress'']
-            == ''true'')'
     served: true
     storage: true
     subresources:
