@@ -39,6 +39,7 @@ rules:
   - mcp-hangar.io
   resources:
   - mcpdiscoverysources
+  - mcpegresspolicies
   - mcpservergroups
   - mcpservers
   verbs:
@@ -53,6 +54,7 @@ rules:
   - mcp-hangar.io
   resources:
   - mcpdiscoverysources/finalizers
+  - mcpegresspolicies/finalizers
   - mcpservergroups/finalizers
   - mcpservers/finalizers
   verbs:
@@ -61,6 +63,7 @@ rules:
   - mcp-hangar.io
   resources:
   - mcpdiscoverysources/status
+  - mcpegresspolicies/status
   - mcpservergroups/status
   - mcpservers/status
   verbs:
