@@ -57,8 +57,9 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          # Pin to the last v1 release: matches the v1 config format in
-          # .golangci.yml and supports the go.mod toolchain.
-          version: v1.64.8
+          # golangci-lint v2: v1.64.8 could not typecheck the go 1.26 toolchain
+          # the k8s v0.36 / controller-runtime v0.24 bump requires. Action v8 is
+          # the v2-compatible major (v6 is v1-only); .golangci.yml is v2 format.
+          version: v2.12.2

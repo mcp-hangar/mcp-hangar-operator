@@ -194,8 +194,7 @@ func main() {
 			{"MCPDiscoverySource/v1alpha2", &mcpv1alpha2.MCPDiscoverySource{}, &webhook.MCPDiscoverySourceV1alpha2Validator{}},
 		}
 		for _, r := range regs {
-			if err := ctrl.NewWebhookManagedBy(mgr).
-				For(r.obj).
+			if err := ctrl.NewWebhookManagedBy(mgr, r.obj).
 				WithValidator(r.validator).
 				Complete(); err != nil {
 				setupLog.Error(err, "unable to create webhook", "webhook", r.name)
