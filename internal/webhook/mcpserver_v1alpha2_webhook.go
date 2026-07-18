@@ -67,6 +67,11 @@ func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 		if p.Spec.Image == "" {
 			errs = append(errs, "spec.image is required when mode is \"container\"")
 		}
+		if e, w := checkImageDigest(p.Spec.Image, p.Annotations); e != "" {
+			errs = append(errs, e)
+		} else if w != "" {
+			warnings = append(warnings, w)
+		}
 		if p.Spec.Endpoint != "" {
 			warnings = append(warnings, "spec.endpoint is ignored when mode is \"container\"")
 		}
