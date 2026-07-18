@@ -517,6 +517,68 @@ func assertDNSPorts(t *testing.T, ports []networkingv1.NetworkPolicyPort) {
 	assert.True(t, hasTCP, "DNS rule should include TCP 53")
 }
 
+// TestBuildNetworkPolicy_DNSScopedToKubeDNS guards #56: the DNS egress rule must
+// target the cluster DNS pods, not be left open to 0.0.0.0/0 (which would let any
+// egress-scoped pod reach :53 on any host -- a DNS-tunnel exfiltration channel the
+// allow-list does not constrain).
+func TestBuildNetworkPolicy_DNSScopedToKubeDNS(t *testing.T) {
+	provider := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "dns-scope", Namespace: "demo"},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
+				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{DNSAllowed: boolPtr(true)},
+			},
+		},
+	}
+
+	np := BuildNetworkPolicy(provider)
+	require.NotNil(t, np)
+	require.NotEmpty(t, np.Spec.Egress)
+
+	dns := np.Spec.Egress[0]
+	assertDNSPorts(t, dns.Ports)
+	require.Len(t, dns.To, 1, "DNS rule must be scoped to a peer, not open to every destination (#56)")
+
+	peer := dns.To[0]
+	assert.Nil(t, peer.IPBlock, "DNS peer must not be an open IPBlock")
+	require.NotNil(t, peer.NamespaceSelector, "DNS peer must select the kube-system namespace")
+	assert.Equal(t, "kube-system", peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"])
+	require.NotNil(t, peer.PodSelector, "DNS peer must select the kube-dns pods")
+	assert.Equal(t, "kube-dns", peer.PodSelector.MatchLabels["k8s-app"])
+}
+
+// TestBuildNetworkPolicy_DNSExtraPeers verifies the NodeLocal-DNSCache escape
+// hatch (#56): configured extra CIDRs are appended to the DNS rule alongside the
+// kube-dns peer, so clusters resolving via a node-local address keep DNS.
+func TestBuildNetworkPolicy_DNSExtraPeers(t *testing.T) {
+	require.NoError(t, SetExtraDNSCIDRs([]string{"169.254.20.10/32"}))
+	defer func() { ExtraDNSEgressPeers = nil }()
+
+	provider := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "dns-extra", Namespace: "demo"},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
+				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{DNSAllowed: boolPtr(true)},
+			},
+		},
+	}
+
+	np := BuildNetworkPolicy(provider)
+	require.NotNil(t, np)
+	require.NotEmpty(t, np.Spec.Egress)
+
+	dns := np.Spec.Egress[0]
+	require.Len(t, dns.To, 2, "DNS rule should carry the kube-dns peer plus the configured extra peer")
+	assert.NotNil(t, dns.To[0].PodSelector, "first DNS peer is kube-dns")
+	require.NotNil(t, dns.To[1].IPBlock, "second DNS peer is the configured CIDR")
+	assert.Equal(t, "169.254.20.10/32", dns.To[1].IPBlock.CIDR)
+}
+
+func TestSetExtraDNSCIDRs_InvalidReturnsError(t *testing.T) {
+	defer func() { ExtraDNSEgressPeers = nil }()
+	require.Error(t, SetExtraDNSCIDRs([]string{"not-a-cidr"}))
+}
+
 // assertNoPermissivePortOnlyRule fails if any egress rule specifies ports but no
 // To peer. Kubernetes interprets such a rule as "allow this port to ANY
 // destination", which is exactly the SSRF/egress-bypass this fix guards against.
