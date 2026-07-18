@@ -94,8 +94,13 @@ jobs:
           extract_predicate SBOM SPDX sbom.spdx.json
           extract_predicate Provenance SLSA provenance.json
 
+          # buildx emits SLSA provenance v1 (predicateType
+          # https://slsa.dev/provenance/v1), where the builder lives under
+          # runDetails.builder. cosign's `slsaprovenance` type is SLSA v0.2 and
+          # requires a top-level builder, so it rejects the v1 predicate with
+          # "required field builder missing" -- use `slsaprovenance1` to match.
           cosign attest --yes --predicate sbom.spdx.json --type spdxjson "$REF"
-          cosign attest --yes --predicate provenance.json --type slsaprovenance "$REF"
+          cosign attest --yes --predicate provenance.json --type slsaprovenance1 "$REF"
 
       - uses: actions/setup-go@v7
         with:
