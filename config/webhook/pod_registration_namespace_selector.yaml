@@ -1,0 +1,14 @@
+# Scope the pod-registration webhook (#50) to namespaces opted into egress
+# enforcement (mcp-hangar.io/enforce-egress=true). The webhook is
+# failurePolicy: Fail; without this selector the apiserver would call it for
+# every pod create cluster-wide, so an unavailable webhook would block pod
+# creation everywhere. Scoped here, a failure only affects opted-in namespaces.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validating-webhook-configuration
+webhooks:
+  - name: vpod-registration.kb.io
+    namespaceSelector:
+      matchLabels:
+        mcp-hangar.io/enforce-egress: "true"
