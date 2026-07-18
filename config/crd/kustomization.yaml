@@ -5,6 +5,7 @@ resources:
 - bases/mcp-hangar.io_mcpservers.yaml
 - bases/mcp-hangar.io_mcpservergroups.yaml
 - bases/mcp-hangar.io_mcpdiscoverysources.yaml
+- bases/mcp-hangar.io_mcpegresspolicies.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
