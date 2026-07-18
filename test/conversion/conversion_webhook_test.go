@@ -79,7 +79,10 @@ func TestConversionWebhookRoundTrip(t *testing.T) {
 	// Serve the conversion webhook. This is the same "/convert" handler that
 	// controller-runtime installs when the operator registers a webhook builder
 	// for a convertible type in cmd/operator/main.go.
-	mgr.GetWebhookServer().Register("/convert", conversion.NewWebhookHandler(scheme))
+	// controller-runtime v0.19+ takes an explicit conversion Registry; an empty
+	// one falls back to scheme-based Hub/Convertible conversion (the path the
+	// operator uses), so this exercises the same "/convert" behavior as before.
+	mgr.GetWebhookServer().Register("/convert", conversion.NewWebhookHandler(scheme, conversion.NewRegistry()))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
