@@ -106,6 +106,19 @@ func validateProvider(p *mcpv1alpha1.MCPServer) (admission.Warnings, error) {
 		warnings = append(warnings, capWarnings...)
 	}
 
+	// Wildcard egress (host: "*") is unrestricted egress and requires an
+	// explicit opt-in annotation. This rule previously lived as a CRD
+	// x-kubernetes-validations CEL expression, but CEL in a CRD cannot read
+	// self.metadata.annotations (only name/generateName), so the apiserver
+	// rejected the whole CRD at install on recent Kubernetes. Enforced here
+	// instead, where annotations are available; this webhook is
+	// failurePolicy: Fail, so it does not fail open. See #54.
+	if hasWildcardEgress(p) && p.Annotations[unrestrictedEgressAnnotation] != "true" {
+		errs = append(errs, fmt.Sprintf(
+			"spec.capabilities.network.egress with host \"*\" (unrestricted egress) requires annotation %s: \"true\"",
+			unrestrictedEgressAnnotation))
+	}
+
 	if len(errs) > 0 {
 		return warnings, fmt.Errorf("MCPServer validation failed: %s", strings.Join(errs, "; "))
 	}
@@ -195,4 +208,20 @@ func validateCapabilities(caps *mcpv1alpha1.MCPServerCapabilities) ([]string, ad
 	}
 
 	return errs, warnings
+}
+
+// unrestrictedEgressAnnotation opts a provider into wildcard (host: "*") egress.
+const unrestrictedEgressAnnotation = "hangar.io/allow-unrestricted-egress"
+
+// hasWildcardEgress reports whether any egress rule targets host "*".
+func hasWildcardEgress(p *mcpv1alpha1.MCPServer) bool {
+	if p.Spec.Capabilities == nil || p.Spec.Capabilities.Network == nil {
+		return false
+	}
+	for _, rule := range p.Spec.Capabilities.Network.Egress {
+		if rule.Host == "*" {
+			return true
+		}
+	}
+	return false
 }
