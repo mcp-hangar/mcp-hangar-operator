@@ -615,7 +615,6 @@ type ViolationRecord struct {
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:resource:shortName=mcpp;provider,categories=mcp
-// +kubebuilder:validation:XValidation:rule="!has(self.spec.capabilities) || !has(self.spec.capabilities.network) || !has(self.spec.capabilities.network.egress) || !self.spec.capabilities.network.egress.exists(e, e.host == '*') || (has(self.metadata.annotations) && ('hangar.io/allow-unrestricted-egress' in self.metadata.annotations) && self.metadata.annotations['hangar.io/allow-unrestricted-egress'] == 'true')",message="wildcard egress (host: '*') requires annotation hangar.io/allow-unrestricted-egress: \"true\""
 
 // MCPServer is the Schema for the mcpservers API
 type MCPServer struct {
