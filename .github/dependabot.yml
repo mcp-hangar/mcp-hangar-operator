@@ -13,7 +13,21 @@ updates:
       prefix: "chore"
       include: "scope"
     groups:
+      # Kubernetes libraries move in lockstep, and their "minor" (0.x) bumps carry
+      # breaking API changes (e.g. the controller-runtime v0.24 migration -- see
+      # #43/#58). Keep them in a dedicated group so they arrive as one deliberate,
+      # reviewed PR rather than folded into the routine minor-patch batch.
+      kubernetes:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+        update-types:
+          - "minor"
+          - "patch"
       go-minor-patch:
+        exclude-patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
         update-types:
           - "minor"
           - "patch"
