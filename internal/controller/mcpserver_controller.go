@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	"github.com/mcp-hangar/operator/internal/webhook"
 	"github.com/mcp-hangar/operator/pkg/hangar"
 	"github.com/mcp-hangar/operator/pkg/metrics"
 	"github.com/mcp-hangar/operator/pkg/networkpolicy"
@@ -107,6 +108,7 @@ func DefaultReconcilerConfig() *ReconcilerConfig {
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 
@@ -571,6 +573,35 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
 	logger := log.FromContext(ctx)
 
+	// Pin-coupling (#51/#52): in a namespace opted into egress enforcement, a
+	// registered container-mode server's per-server egress allow-policy is opened
+	// only if its image is digest-pinned (or opted out via allow-mutable-image).
+	// An unpinned server stays under the namespace default-deny (DNS only) --
+	// registered, but not trusted to reach upstreams until the image is pinned.
+	// Only applies in governed namespaces; elsewhere there is no default-deny
+	// backstop, so withholding the allow-policy would not restrict anything.
+	if mcpServer.IsContainerMode() &&
+		!webhook.IsImageDigestPinned(mcpServer.Spec.Image, mcpServer.Annotations) {
+		governed, err := r.namespaceEnforcesEgress(ctx, mcpServer.Namespace)
+		if err != nil {
+			return err
+		}
+		if governed {
+			if err := r.deleteNetworkPolicyIfExists(ctx, mcpServer); err != nil {
+				return err
+			}
+			logger.Info("Withholding egress: image not digest-pinned in enforce-egress namespace",
+				"provider", mcpServer.Name, "image", mcpServer.Spec.Image)
+			r.Recorder.Event(mcpServer, corev1.EventTypeWarning, "EgressWithheld",
+				"egress not opened: spec.image is not digest-pinned in an enforce-egress namespace; "+
+					"pin the image (image@sha256:...) or set annotation hangar.io/allow-mutable-image=\"true\" (#51/#52)")
+			mcpServer.Status.SetCondition(ConditionNetworkPolicyApplied, metav1.ConditionFalse,
+				"EgressWithheldUnpinnedImage",
+				"Egress withheld: image not digest-pinned in an enforce-egress namespace")
+			return nil
+		}
+	}
+
 	desired := networkpolicy.BuildNetworkPolicy(mcpServer)
 
 	if desired == nil {
@@ -732,6 +763,22 @@ func (r *MCPServerReconciler) reconcileEgressAudit(_ context.Context, mcpServer 
 			return
 		}
 	}
+}
+
+// namespaceEnforcesEgress reports whether a namespace has opted into egress
+// enforcement via the enforce-egress label (the namespace default-deny is only
+// applied where this label is set -- see NamespaceEgressReconciler).
+func (r *MCPServerReconciler) namespaceEnforcesEgress(ctx context.Context, name string) (bool, error) {
+	var ns corev1.Namespace
+	if err := r.Get(ctx, types.NamespacedName{Name: name}, &ns); err != nil {
+		if errors.IsNotFound(err) {
+			// Namespace not visible -> cannot confirm governance, and no
+			// default-deny would exist either, so treat as not-governed.
+			return false, nil
+		}
+		return false, fmt.Errorf("get namespace %q: %w", name, err)
+	}
+	return ns.Labels[networkpolicy.EnforceEgressLabel] == "true", nil
 }
 
 // deleteNetworkPolicyIfExists deletes the NetworkPolicy for a provider if it exists.
