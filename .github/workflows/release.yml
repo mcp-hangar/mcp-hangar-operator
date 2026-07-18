@@ -60,51 +60,59 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: cosign sign --yes "ghcr.io/mcp-hangar/mcp-hangar-operator@${DIGEST}"
 
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install crane
+        run: go install github.com/google/go-containerregistry/cmd/crane@v0.20.2
+
       # `provenance: true` / `sbom: true` above make buildx attach an SPDX
-      # SBOM and an SLSA provenance in-toto statement to the pushed index,
-      # but as plain, unsigned OCI referrers -- readable via `imagetools
-      # inspect` / `cosign download attestation`, but not independently
-      # verifiable: `cosign verify-attestation` finds "no matching
-      # attestations" for them even though the image signature itself
-      # verifies fine (see #31). Pull that same buildx-generated content
-      # back out and re-attest it as a cosign DSSE envelope, keyed to the
-      # same digest the image signature above covers, so it verifies the
-      # same way.
+      # SBOM and an SLSA provenance (v1) in-toto statement to the pushed index,
+      # but as plain, unsigned OCI referrers -- readable but not independently
+      # verifiable: `cosign verify-attestation` finds "no matching attestations"
+      # for them even though the image signature verifies fine (see #31). Pull
+      # those predicate bodies straight from the registry and re-attest them as
+      # cosign DSSE envelopes keyed to the same digest the image signature
+      # covers, so they verify the same way.
+      #
+      # We read the predicates from the attestation manifests directly (crane)
+      # rather than `docker buildx imagetools inspect --format`: for a
+      # multi-arch image `.Provenance` is a *platform-keyed map*, so the old
+      # `has("SLSA")` unwrap fell through and attested a map with neither a
+      # v0.2 `builder` nor a v1 `buildDefinition` -- the v0.13.0 release
+      # failures. Crane extraction is deterministic across buildx versions.
       - name: Sign and attest the SBOM + provenance (keyless)
         env:
           REF: ghcr.io/mcp-hangar/mcp-hangar-operator@${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
+          CRANE="$(go env GOPATH)/bin/crane"
+          base="${REF%@*}"
 
-          # Extract a buildx-attached predicate and unwrap it if buildx
-          # nested it under a top-level key (observed: "SPDX"/"SLSA");
-          # otherwise pass the document through as-is. Fails loudly rather
-          # than attesting empty/garbage content if the shape ever changes.
-          extract_predicate() {
-            field="$1"; wrapper="$2"; out="$3"
-            docker buildx imagetools inspect "$REF" --format "{{ json .${field} }}" \
-              | jq --arg w "$wrapper" 'if type == "object" and has($w) then .[$w] else . end' \
-              > "$out"
-            if [ ! -s "$out" ] || [ "$(cat "$out")" = "null" ]; then
-              echo "::error::failed to extract ${field} predicate from buildx metadata for ${REF}"
-              exit 1
-            fi
+          # Extract the .predicate of the in-toto statement whose layer carries
+          # the given predicate-type, from any of the image's attestation
+          # manifests. Fails loudly rather than attesting empty content.
+          extract() {
+            ptype="$1"; out="$2"
+            for att in $("$CRANE" manifest "$REF" \
+              | jq -r '.manifests[] | select(.annotations["vnd.docker.reference.type"]=="attestation-manifest") | .digest'); do
+              blob=$("$CRANE" manifest "${base}@${att}" \
+                | jq -r --arg t "$ptype" '.layers[] | select(.annotations["in-toto.io/predicate-type"]==$t) | .digest' | head -1)
+              if [ -n "$blob" ]; then
+                "$CRANE" blob "${base}@${blob}" | jq '.predicate' > "$out"
+                if [ -s "$out" ] && [ "$(cat "$out")" != "null" ]; then return 0; fi
+              fi
+            done
+            echo "::error::no ${ptype} predicate found for ${REF}"
+            exit 1
           }
 
-          extract_predicate SBOM SPDX sbom.spdx.json
-          extract_predicate Provenance SLSA provenance.json
+          extract "https://spdx.dev/Document"        sbom.spdx.json
+          extract "https://slsa.dev/provenance/v1"   provenance.json
 
-          # buildx emits SLSA provenance v1 (predicateType
-          # https://slsa.dev/provenance/v1), where the builder lives under
-          # runDetails.builder. cosign's `slsaprovenance` type is SLSA v0.2 and
-          # requires a top-level builder, so it rejects the v1 predicate with
-          # "required field builder missing" -- use `slsaprovenance1` to match.
-          cosign attest --yes --predicate sbom.spdx.json --type spdxjson "$REF"
+          cosign attest --yes --predicate sbom.spdx.json --type spdxjson       "$REF"
           cosign attest --yes --predicate provenance.json --type slsaprovenance1 "$REF"
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
 
       - name: Render install manifest
         run: |
