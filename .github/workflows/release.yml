@@ -97,7 +97,7 @@ jobs:
           cosign attest --yes --predicate sbom.spdx.json --type spdxjson "$REF"
           cosign attest --yes --predicate provenance.json --type slsaprovenance "$REF"
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
