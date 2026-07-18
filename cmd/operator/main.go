@@ -220,6 +220,16 @@ func main() {
 				os.Exit(1)
 			}
 		}
+		// Pod registration webhook (#50): reject provider-labelled pods with no
+		// registered MCPServer. Scoped by namespaceSelector (config/webhook) to
+		// enforce-egress namespaces. Raw handler because it reads MCPServers.
+		mgr.GetWebhookServer().Register("/validate-pod-registration", &admission.Webhook{
+			Handler: &webhook.PodRegistrationValidator{
+				Client:  mgr.GetClient(),
+				Decoder: admission.NewDecoder(mgr.GetScheme()),
+			},
+		})
+
 		setupLog.Info("validating + conversion webhooks registered",
 			"validatedKinds", len(regs))
 	}

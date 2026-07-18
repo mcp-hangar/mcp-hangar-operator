@@ -2,5 +2,8 @@ resources:
 - manifests.yaml
 - service.yaml
 
+patches:
+- path: pod_registration_namespace_selector.yaml
+
 configurations:
 - kustomizeconfig.yaml
