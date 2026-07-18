@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
 
 const (
@@ -42,6 +43,10 @@ const (
 
 	// DefaultDenyEgressName is the name of the namespace default-deny policy.
 	DefaultDenyEgressName = "mcp-default-deny-egress"
+
+	// LabelEgressPolicy identifies the owning MCPEgressPolicy on a generated
+	// backstop NetworkPolicy.
+	LabelEgressPolicy = "mcp-hangar.io/egress-policy"
 )
 
 // NetworkPolicyName returns the canonical name for a provider's egress NetworkPolicy.
@@ -115,6 +120,70 @@ func BuildNamespaceDefaultDenyEgress(namespace string) *networkingv1.NetworkPoli
 			Egress: []networkingv1.NetworkPolicyEgressRule{dnsEgressRule()},
 		},
 	}
+}
+
+// EgressPolicyBackstopName returns the canonical name for the L3/L4 backstop
+// NetworkPolicy generated for an MCPEgressPolicy.
+func EgressPolicyBackstopName(policyName string) string {
+	return "mcp-egresspolicy-" + policyName
+}
+
+// BuildEgressPolicyBackstop builds the Vanilla L3/L4 network backstop for an
+// MCPEgressPolicy: a default-deny egress NetworkPolicy scoped to the target's
+// pods that allows DNS plus any upstream whose host is a literal IP or CIDR.
+//
+// Vanilla NetworkPolicy cannot match on DNS/FQDN, so upstreams given as a
+// hostname are FAILED CLOSED (no rule emitted -- they are denied, not opened to
+// any destination) and returned in unenforceableHosts so the caller can surface
+// the gap. Enforcing FQDN allow-lists is the Cilium flavor's job (toFQDNs),
+// which lands in a follow-up.
+func BuildEgressPolicyBackstop(policy *mcpv1alpha2.MCPEgressPolicy, target metav1.LabelSelector) (np *networkingv1.NetworkPolicy, unenforceableHosts []string) {
+	egress := []networkingv1.NetworkPolicyEgressRule{dnsEgressRule()}
+
+	for _, u := range policy.Spec.Upstreams {
+		if cidr, ok := asCIDR(u.Match.Host); ok {
+			egress = append(egress, networkingv1.NetworkPolicyEgressRule{
+				To: []networkingv1.NetworkPolicyPeer{
+					{IPBlock: &networkingv1.IPBlock{CIDR: cidr}},
+				},
+			})
+		} else {
+			unenforceableHosts = append(unenforceableHosts, u.Match.Host)
+		}
+	}
+
+	np = &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      EgressPolicyBackstopName(policy.Name),
+			Namespace: policy.Namespace,
+			Labels: map[string]string{
+				LabelManagedBy:    DefaultManagerName,
+				LabelComponent:    componentNetworkPolicy,
+				LabelEgressPolicy: policy.Name,
+			},
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: target,
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+			Egress:      egress,
+		},
+	}
+	return np, unenforceableHosts
+}
+
+// asCIDR normalizes a host that is a literal IP or CIDR into a CIDR string. A
+// hostname (FQDN) returns ok=false.
+func asCIDR(host string) (cidr string, ok bool) {
+	if _, _, err := net.ParseCIDR(host); err == nil {
+		return host, true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.To4() != nil {
+			return host + "/32", true
+		}
+		return host + "/128", true
+	}
+	return "", false
 }
 
 // buildLabels returns standard labels for the NetworkPolicy resource.

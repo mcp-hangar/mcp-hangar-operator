@@ -186,6 +186,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Register MCPEgressPolicy controller.
+	if err := (&controller.MCPEgressPolicyReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("mcpegresspolicy-controller"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "MCPEgressPolicy")
+		os.Exit(1)
+	}
+
 	// Register validating admission webhooks and the conversion webhook.
 	//
 	// A validator is registered for every served version of every kind that has
