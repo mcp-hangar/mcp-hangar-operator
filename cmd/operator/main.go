@@ -53,6 +53,7 @@ func main() {
 		leaderElectionNamespace string
 		gracefulShutdownTimeout time.Duration
 		dnsEgressCIDRs          string
+		imageDigestPolicy       string
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
@@ -81,6 +82,11 @@ func main() {
 			"in-cluster kube-dns pods. Set to your NodeLocal DNSCache / custom resolver address "+
 			"(e.g. \"169.254.20.10/32\") on clusters where pods do not resolve via kube-dns pods, "+
 			"otherwise DNS is blocked for egress-scoped servers.")
+	flag.StringVar(&imageDigestPolicy, "image-digest-policy", "warn",
+		"How admission handles container images that are not digest-pinned "+
+			"(image@sha256:...): \"block\" rejects, \"warn\" emits an admission warning, "+
+			"\"off\" ignores. A single MCPServer can opt out with the annotation "+
+			"hangar.io/allow-mutable-image: \"true\".")
 
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
@@ -94,6 +100,11 @@ func main() {
 			setupLog.Error(err, "invalid --dns-egress-cidrs")
 			os.Exit(1)
 		}
+	}
+
+	if err := webhook.SetImageDigestPolicy(imageDigestPolicy); err != nil {
+		setupLog.Error(err, "invalid --image-digest-policy")
+		os.Exit(1)
 	}
 
 	mgrOpts := ctrl.Options{
