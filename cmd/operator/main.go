@@ -156,6 +156,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := (&controller.NamespaceEgressReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "NamespaceEgress")
+		os.Exit(1)
+	}
+
 	// Register MCPServerGroup controller.
 	if err := (&controller.MCPServerGroupReconciler{
 		Client:       mgr.GetClient(),

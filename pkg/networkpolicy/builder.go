@@ -34,6 +34,14 @@ const (
 
 	// componentNetworkPolicy is the component label value.
 	componentNetworkPolicy = "network-policy"
+
+	// EnforceEgressLabel opts a namespace into default-deny egress (#51): the
+	// operator creates a namespace-wide deny-all-egress (DNS-only) policy so pods
+	// not covered by a per-server allow policy get no egress to upstreams.
+	EnforceEgressLabel = "mcp-hangar.io/enforce-egress"
+
+	// DefaultDenyEgressName is the name of the namespace default-deny policy.
+	DefaultDenyEgressName = "mcp-default-deny-egress"
 )
 
 // NetworkPolicyName returns the canonical name for a provider's egress NetworkPolicy.
@@ -78,6 +86,33 @@ func BuildNetworkPolicy(provider *mcpv1alpha1.MCPServer) *networkingv1.NetworkPo
 				networkingv1.PolicyTypeEgress,
 			},
 			Egress: buildEgressRules(caps),
+		},
+	}
+}
+
+// BuildNamespaceDefaultDenyEgress returns a namespace-wide NetworkPolicy that
+// denies all egress except DNS (scoped to kube-dns). It selects every pod in
+// the namespace; per-server allow policies are additive, so a registered server
+// keeps its declared egress while any pod not covered by one -- an unregistered
+// or shadow workload -- is limited to DNS and reaches no upstream. Applied only
+// to namespaces opted in via EnforceEgressLabel (#51).
+func BuildNamespaceDefaultDenyEgress(namespace string) *networkingv1.NetworkPolicy {
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      DefaultDenyEgressName,
+			Namespace: namespace,
+			Labels: map[string]string{
+				LabelManagedBy: DefaultManagerName,
+				LabelComponent: componentNetworkPolicy,
+			},
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			// Empty selector = all pods in the namespace.
+			PodSelector: metav1.LabelSelector{},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+			// Only DNS is allowed; everything else is denied unless another
+			// (per-server) policy additively opens it.
+			Egress: []networkingv1.NetworkPolicyEgressRule{dnsEgressRule()},
 		},
 	}
 }
