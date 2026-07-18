@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -312,4 +313,140 @@ func TestReconcileNetworkPolicy_DefaultDenyDNSOnly(t *testing.T) {
 	cond := provider.Status.GetCondition(ConditionNetworkPolicyApplied)
 	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionTrue, cond.Status)
+}
+
+// governedNamespace returns a Namespace opted into egress enforcement.
+func governedNamespace(name string) *corev1.Namespace {
+	return &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   name,
+			Labels: map[string]string{networkpolicy.EnforceEgressLabel: "true"},
+		},
+	}
+}
+
+// egressCaps returns a minimal capability set that would otherwise produce an
+// egress allow-policy.
+func egressCaps() *mcpv1alpha1.MCPServerCapabilities {
+	return &mcpv1alpha1.MCPServerCapabilities{
+		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
+			Egress: []mcpv1alpha1.EgressRuleSpec{
+				{Host: "api.example.com", Port: 443, Protocol: "https", CIDR: "10.0.0.0/8"},
+			},
+		},
+	}
+}
+
+// Pin-coupling (#51/#52): in a governed namespace, egress is opened only for a
+// digest-pinned image; an unpinned image is withheld under the default-deny.
+func TestReconcileNetworkPolicy_GovernedUnpinned_WithholdsEgress(t *testing.T) {
+	provider := newTestProvider("unpinned-provider", "governed", egressCaps())
+	provider.Spec.Image = "ghcr.io/org/app:latest" // mutable tag, not digest-pinned
+
+	r := newTestReconciler(governedNamespace("governed"), provider)
+	ctx := context.Background()
+
+	err := r.reconcileNetworkPolicy(ctx, provider)
+	require.NoError(t, err)
+
+	np := &networkingv1.NetworkPolicy{}
+	npKey := types.NamespacedName{
+		Name:      networkpolicy.NetworkPolicyName("unpinned-provider"),
+		Namespace: "governed",
+	}
+	err = r.Get(ctx, npKey, np)
+	assert.True(t, err != nil, "egress allow-policy should be withheld for an unpinned image")
+
+	cond := provider.Status.GetCondition(ConditionNetworkPolicyApplied)
+	require.NotNil(t, cond)
+	assert.Equal(t, metav1.ConditionFalse, cond.Status)
+	assert.Equal(t, "EgressWithheldUnpinnedImage", cond.Reason)
+}
+
+func TestReconcileNetworkPolicy_GovernedPinned_OpensEgress(t *testing.T) {
+	provider := newTestProvider("pinned-provider", "governed", egressCaps())
+	provider.Spec.Image = "ghcr.io/org/app@sha256:deadbeef"
+
+	r := newTestReconciler(governedNamespace("governed"), provider)
+	ctx := context.Background()
+
+	err := r.reconcileNetworkPolicy(ctx, provider)
+	require.NoError(t, err)
+
+	np := &networkingv1.NetworkPolicy{}
+	npKey := types.NamespacedName{
+		Name:      networkpolicy.NetworkPolicyName("pinned-provider"),
+		Namespace: "governed",
+	}
+	require.NoError(t, r.Get(ctx, npKey, np), "egress allow-policy should be created for a pinned image")
+
+	cond := provider.Status.GetCondition(ConditionNetworkPolicyApplied)
+	require.NotNil(t, cond)
+	assert.Equal(t, metav1.ConditionTrue, cond.Status)
+}
+
+func TestReconcileNetworkPolicy_GovernedMutableOptOut_OpensEgress(t *testing.T) {
+	provider := newTestProvider("optout-provider", "governed", egressCaps())
+	provider.Spec.Image = "ghcr.io/org/app:latest"
+	provider.Annotations = map[string]string{"hangar.io/allow-mutable-image": "true"}
+
+	r := newTestReconciler(governedNamespace("governed"), provider)
+	ctx := context.Background()
+
+	require.NoError(t, r.reconcileNetworkPolicy(ctx, provider))
+
+	np := &networkingv1.NetworkPolicy{}
+	npKey := types.NamespacedName{
+		Name:      networkpolicy.NetworkPolicyName("optout-provider"),
+		Namespace: "governed",
+	}
+	require.NoError(t, r.Get(ctx, npKey, np), "opt-out annotation should allow egress despite a mutable tag")
+}
+
+// In a non-governed namespace there is no default-deny backstop, so an unpinned
+// image must NOT be withheld -- withholding would restrict nothing and only
+// break the workload.
+func TestReconcileNetworkPolicy_NonGovernedUnpinned_OpensEgress(t *testing.T) {
+	provider := newTestProvider("plain-provider", "plain", egressCaps())
+	provider.Spec.Image = "ghcr.io/org/app:latest"
+
+	// Namespace exists but is not opted into enforcement.
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "plain"}}
+	r := newTestReconciler(ns, provider)
+	ctx := context.Background()
+
+	require.NoError(t, r.reconcileNetworkPolicy(ctx, provider))
+
+	np := &networkingv1.NetworkPolicy{}
+	npKey := types.NamespacedName{
+		Name:      networkpolicy.NetworkPolicyName("plain-provider"),
+		Namespace: "plain",
+	}
+	require.NoError(t, r.Get(ctx, npKey, np), "non-governed namespace must not withhold egress")
+}
+
+// Flipping a governed server from pinned to unpinned deletes its existing
+// allow-policy.
+func TestReconcileNetworkPolicy_GovernedUnpinned_DeletesExistingPolicy(t *testing.T) {
+	provider := newTestProvider("flip-provider", "governed", egressCaps())
+	provider.Spec.Image = "ghcr.io/org/app:latest"
+
+	existing := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      networkpolicy.NetworkPolicyName("flip-provider"),
+			Namespace: "governed",
+		},
+	}
+	r := newTestReconciler(governedNamespace("governed"), provider, existing)
+	ctx := context.Background()
+
+	require.NoError(t, r.reconcileNetworkPolicy(ctx, provider))
+
+	np := &networkingv1.NetworkPolicy{}
+	npKey := types.NamespacedName{
+		Name:      networkpolicy.NetworkPolicyName("flip-provider"),
+		Namespace: "governed",
+	}
+	err := r.Get(ctx, npKey, np)
+	assert.True(t, err != nil, "existing allow-policy should be deleted when egress is withheld")
 }

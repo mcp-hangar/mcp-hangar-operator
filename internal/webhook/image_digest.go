@@ -34,10 +34,7 @@ func SetImageDigestPolicy(p string) error {
 // ghcr.io/org/app@sha256:... or ghcr.io/org/app:tag@sha256:... -- a mutable tag
 // alone can be re-pointed after admission, defeating reproducible/verifiable deploys.
 func checkImageDigest(image string, annotations map[string]string) (errMsg, warnMsg string) {
-	if image == "" || strings.Contains(image, "@sha256:") {
-		return "", ""
-	}
-	if annotations[allowMutableImageAnnotation] == "true" {
+	if IsImageDigestPinned(image, annotations) {
 		return "", ""
 	}
 	switch imageDigestPolicy {
@@ -51,4 +48,16 @@ func checkImageDigest(image string, annotations map[string]string) (errMsg, warn
 			image)
 	}
 	return "", ""
+}
+
+// IsImageDigestPinned reports whether a container image is pinned by digest
+// (image@sha256:...) or the workload opts out of pinning via the
+// allow-mutable-image annotation. An empty image is treated as pinned (no
+// mutable tag to enforce). Used by both the admission check above and the
+// egress pin-coupling in the controller (#52/#51).
+func IsImageDigestPinned(image string, annotations map[string]string) bool {
+	if image == "" || strings.Contains(image, "@sha256:") {
+		return true
+	}
+	return annotations[allowMutableImageAnnotation] == "true"
 }
