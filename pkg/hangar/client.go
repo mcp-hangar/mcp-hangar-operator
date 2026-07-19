@@ -9,7 +9,27 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/mcp-hangar/operator/pkg/metrics"
 )
+
+// observe returns a deferred recorder for a Hangar client call: it records the
+// call latency and, if the pointed-to error is non-nil, increments the error
+// counter. Usage (the method must have a named error return):
+//
+//	func (c *Client) Foo(...) (err error) {
+//	    defer c.observe("foo")(&err)
+//	    ...
+//	}
+func (c *Client) observe(operation string) func(*error) {
+	start := time.Now()
+	return func(errp *error) {
+		metrics.HangarClientLatency.WithLabelValues(operation).Observe(time.Since(start).Seconds())
+		if errp != nil && *errp != nil {
+			metrics.HangarClientErrors.WithLabelValues(operation).Inc()
+		}
+	}
+}
 
 // Client communicates with MCP-Hangar core
 type Client struct {
@@ -149,7 +169,8 @@ type ToolInfo struct {
 }
 
 // GetMCPServerTools fetches the list of tools from a provider
-func (c *Client) GetMCPServerTools(ctx context.Context, name, namespace string) ([]string, error) {
+func (c *Client) GetMCPServerTools(ctx context.Context, name, namespace string) (tools []string, err error) {
+	defer c.observe("get_tools")(&err)
 	url := fmt.Sprintf("%s/api/v1/providers/%s/%s/tools", c.baseURL, namespace, name)
 
 	resp, err := c.doWithRetry(ctx, http.MethodGet, url, nil)
@@ -178,7 +199,8 @@ func (c *Client) GetMCPServerTools(ctx context.Context, name, namespace string) 
 }
 
 // GetProvider fetches provider information
-func (c *Client) GetMCPServer(ctx context.Context, name, namespace string) (*MCPServerInfo, error) {
+func (c *Client) GetMCPServer(ctx context.Context, name, namespace string) (_ *MCPServerInfo, err error) {
+	defer c.observe("get_server")(&err)
 	url := fmt.Sprintf("%s/api/v1/providers/%s/%s", c.baseURL, namespace, name)
 
 	resp, err := c.doWithRetry(ctx, http.MethodGet, url, nil)
@@ -205,7 +227,8 @@ func (c *Client) GetMCPServer(ctx context.Context, name, namespace string) (*MCP
 }
 
 // HealthCheckRemote checks if a remote endpoint is healthy
-func (c *Client) HealthCheckRemote(ctx context.Context, endpoint string) (bool, []string, error) {
+func (c *Client) HealthCheckRemote(ctx context.Context, endpoint string) (healthy bool, tools []string, err error) {
+	defer c.observe("health_check")(&err)
 	url := fmt.Sprintf("%s/api/v1/health/remote", c.baseURL)
 
 	payload := struct {
@@ -251,7 +274,8 @@ type RegisterMCPServerRequest struct {
 	Labels    map[string]string `json:"labels,omitempty"`
 }
 
-func (c *Client) RegisterMCPServer(ctx context.Context, req *RegisterMCPServerRequest) error {
+func (c *Client) RegisterMCPServer(ctx context.Context, req *RegisterMCPServerRequest) (err error) {
+	defer c.observe("register")(&err)
 	url := fmt.Sprintf("%s/api/v1/providers", c.baseURL)
 
 	body, err := json.Marshal(req)
@@ -303,7 +327,8 @@ type L7PolicyPayload struct {
 }
 
 // SetL7Policy pushes a compiled L7 egress policy for an mcp_server to core.
-func (c *Client) SetL7Policy(ctx context.Context, mcpServerID string, policy *L7PolicyPayload) error {
+func (c *Client) SetL7Policy(ctx context.Context, mcpServerID string, policy *L7PolicyPayload) (err error) {
+	defer c.observe("set_l7_policy")(&err)
 	url := fmt.Sprintf("%s/api/mcp_servers/%s/l7_policy", c.baseURL, mcpServerID)
 
 	body, err := json.Marshal(policy)
@@ -326,7 +351,8 @@ func (c *Client) SetL7Policy(ctx context.Context, mcpServerID string, policy *L7
 
 // ClearL7Policy removes the L7 egress policy for an mcp_server. A 404 is treated
 // as success (the server is already gone).
-func (c *Client) ClearL7Policy(ctx context.Context, mcpServerID string) error {
+func (c *Client) ClearL7Policy(ctx context.Context, mcpServerID string) (err error) {
+	defer c.observe("clear_l7_policy")(&err)
 	url := fmt.Sprintf("%s/api/mcp_servers/%s/l7_policy", c.baseURL, mcpServerID)
 
 	resp, err := c.doWithRetry(ctx, http.MethodDelete, url, nil)
@@ -343,7 +369,8 @@ func (c *Client) ClearL7Policy(ctx context.Context, mcpServerID string) error {
 }
 
 // DeregisterProvider removes a provider from Hangar core
-func (c *Client) DeregisterMCPServer(ctx context.Context, name, namespace string) error {
+func (c *Client) DeregisterMCPServer(ctx context.Context, name, namespace string) (err error) {
+	defer c.observe("deregister")(&err)
 	url := fmt.Sprintf("%s/api/v1/providers/%s/%s", c.baseURL, namespace, name)
 
 	resp, err := c.doWithRetry(ctx, http.MethodDelete, url, nil)
@@ -362,7 +389,8 @@ func (c *Client) DeregisterMCPServer(ctx context.Context, name, namespace string
 }
 
 // StartProvider starts a cold provider
-func (c *Client) StartMCPServer(ctx context.Context, name, namespace string) error {
+func (c *Client) StartMCPServer(ctx context.Context, name, namespace string) (err error) {
+	defer c.observe("start")(&err)
 	url := fmt.Sprintf("%s/api/v1/providers/%s/%s/start", c.baseURL, namespace, name)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
@@ -387,7 +415,8 @@ func (c *Client) StartMCPServer(ctx context.Context, name, namespace string) err
 }
 
 // StopProvider stops a provider
-func (c *Client) StopMCPServer(ctx context.Context, name, namespace string) error {
+func (c *Client) StopMCPServer(ctx context.Context, name, namespace string) (err error) {
+	defer c.observe("stop")(&err)
 	url := fmt.Sprintf("%s/api/v1/providers/%s/%s/stop", c.baseURL, namespace, name)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
@@ -412,7 +441,8 @@ func (c *Client) StopMCPServer(ctx context.Context, name, namespace string) erro
 }
 
 // Ping checks connectivity to Hangar core
-func (c *Client) Ping(ctx context.Context) error {
+func (c *Client) Ping(ctx context.Context) (err error) {
+	defer c.observe("ping")(&err)
 	url := fmt.Sprintf("%s/health", c.baseURL)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
