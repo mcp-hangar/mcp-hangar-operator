@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -51,6 +54,7 @@ type MCPEgressPolicyReconciler struct {
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpegresspolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpegresspolicies/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpegresspolicies/finalizers,verbs=update
+// +kubebuilder:rbac:groups=cilium.io,resources=ciliumnetworkpolicies,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile ensures the network backstop for a policy matches its spec, then
 // records the outcome in status.
@@ -119,40 +123,78 @@ func (r *MCPEgressPolicyReconciler) reconcile(ctx context.Context, policy *mcpv1
 		return ctrl.Result{}, err
 	}
 
-	selector := metav1.LabelSelector{MatchLabels: map[string]string{networkpolicy.LabelProvider: target.Name}}
-	desired, unenforceable := networkpolicy.BuildEgressPolicyBackstop(policy, selector)
-	if err := controllerutil.SetControllerReference(policy, desired, r.Scheme); err != nil {
-		return ctrl.Result{}, fmt.Errorf("set owner reference on backstop: %w", err)
-	}
-
-	if err := r.applyBackstop(ctx, policy, desired); err != nil {
+	if err := r.applyFlavoredBackstop(ctx, logger, policy, target.Name); err != nil {
 		return ctrl.Result{}, err
 	}
+	return ctrl.Result{}, nil
+}
+
+// applyFlavoredBackstop resolves the effective backstop flavor and applies it,
+// cleaning up the other flavor's object, then records status conditions.
+//
+// Flavor resolution: Vanilla and Cilium are honored explicitly; Auto (and an
+// omitted networkBackstop) uses Cilium when its CRD is installed, else Vanilla.
+// Cilium requested on a cluster without the CRD falls back to the Vanilla floor
+// and reports Degraded, rather than failing open.
+func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, logger logr.Logger, policy *mcpv1alpha2.MCPEgressPolicy, provider string) error {
+	requested := mcpv1alpha2.BackstopFlavorAuto
+	if policy.Spec.NetworkBackstop != nil && policy.Spec.NetworkBackstop.Flavor != "" {
+		requested = policy.Spec.NetworkBackstop.Flavor
+	}
+	ciliumAvailable := r.ciliumAvailable()
+	useCilium := (requested == mcpv1alpha2.BackstopFlavorCilium || requested == mcpv1alpha2.BackstopFlavorAuto) && ciliumAvailable
 
 	r.setCondition(policy, EgressPolicyConditionCompiled, metav1.ConditionTrue, "Compiled", "Policy compiled")
+
+	if useCilium {
+		cnp := networkpolicy.BuildEgressPolicyCiliumNetworkPolicy(policy, provider)
+		if err := controllerutil.SetControllerReference(policy, cnp, r.Scheme); err != nil {
+			return fmt.Errorf("set owner reference on cilium backstop: %w", err)
+		}
+		if err := r.applyCiliumBackstop(ctx, policy, cnp); err != nil {
+			return err
+		}
+		if err := r.deleteBackstopIfExists(ctx, policy); err != nil { // remove the Vanilla NP if switching
+			return err
+		}
+		r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionTrue,
+			"BackstopApplied", fmt.Sprintf("Cilium backstop %q applied (FQDN + CIDR enforced)", cnp.GetName()))
+		r.clearDegraded(policy)
+		logger.Info("Reconciled MCPEgressPolicy backstop", "policy", policy.Name, "flavor", "Cilium")
+		return nil
+	}
+
+	// Vanilla path.
+	selector := metav1.LabelSelector{MatchLabels: map[string]string{networkpolicy.LabelProvider: provider}}
+	desired, unenforceable := networkpolicy.BuildEgressPolicyBackstop(policy, selector)
+	if err := controllerutil.SetControllerReference(policy, desired, r.Scheme); err != nil {
+		return fmt.Errorf("set owner reference on backstop: %w", err)
+	}
+	if err := r.applyBackstop(ctx, policy, desired); err != nil {
+		return err
+	}
+	if err := r.deleteCiliumBackstopIfExists(ctx, policy, ciliumAvailable); err != nil { // remove the CNP if switching
+		return err
+	}
 	r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionTrue,
 		"BackstopApplied", fmt.Sprintf("Vanilla backstop %q applied", desired.Name))
 
-	// FQDN upstreams cannot be enforced by a Vanilla NetworkPolicy: they are
-	// denied (fail closed), so the policy does not open them. Surface the gap --
-	// enforcing them needs the Cilium flavor (follow-up).
-	wantsCilium := policy.Spec.NetworkBackstop != nil && policy.Spec.NetworkBackstop.Flavor == mcpv1alpha2.BackstopFlavorCilium
+	// A Vanilla NetworkPolicy cannot match FQDNs: hostname upstreams are denied
+	// (fail closed), not opened. Surface the gap.
 	switch {
+	case requested == mcpv1alpha2.BackstopFlavorCilium && !ciliumAvailable:
+		r.setCondition(policy, EgressPolicyConditionDegraded, metav1.ConditionTrue, "CiliumUnavailable",
+			"spec.networkBackstop.flavor=Cilium but the CiliumNetworkPolicy CRD is not installed; applied the Vanilla floor (FQDN upstreams not enforced)")
 	case len(unenforceable) > 0:
 		r.setCondition(policy, EgressPolicyConditionDegraded, metav1.ConditionTrue, "FQDNUpstreamsUnenforceable",
 			fmt.Sprintf("FQDN upstreams denied under the Vanilla backstop (need the Cilium flavor): %s",
 				strings.Join(unenforceable, ", ")))
-	case wantsCilium:
-		r.setCondition(policy, EgressPolicyConditionDegraded, metav1.ConditionTrue, "CiliumFlavorNotImplemented",
-			"spec.networkBackstop.flavor=Cilium requested; the Vanilla backstop was applied (Cilium is a follow-up)")
 	default:
 		r.clearDegraded(policy)
 	}
-
 	logger.Info("Reconciled MCPEgressPolicy backstop",
-		"policy", policy.Name, "target", target.Name,
-		"backstop", desired.Name, "unenforceableUpstreams", len(unenforceable))
-	return ctrl.Result{}, nil
+		"policy", policy.Name, "flavor", "Vanilla", "unenforceableUpstreams", len(unenforceable))
+	return nil
 }
 
 // applyBackstop creates or updates the desired backstop NetworkPolicy.
@@ -191,6 +233,73 @@ func (r *MCPEgressPolicyReconciler) deleteBackstopIfExists(ctx context.Context, 
 		return client.IgnoreNotFound(err)
 	}
 	if err := r.Delete(ctx, np); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	return nil
+}
+
+// ciliumAvailable reports whether the CiliumNetworkPolicy CRD is installed, so
+// the operator can pick the Cilium flavor on Auto and enforce FQDN upstreams.
+func (r *MCPEgressPolicyReconciler) ciliumAvailable() bool {
+	_, err := r.RESTMapper().RESTMapping(
+		schema.GroupKind{Group: networkpolicy.CiliumGroup, Kind: networkpolicy.CiliumNetworkPolicyKind},
+		networkpolicy.CiliumVersion)
+	return err == nil
+}
+
+// newCiliumBackstopStub returns an empty unstructured CiliumNetworkPolicy with
+// its GVK and key set, for Get/Delete.
+func newCiliumBackstopStub(policy *mcpv1alpha2.MCPEgressPolicy) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: networkpolicy.CiliumGroup, Version: networkpolicy.CiliumVersion, Kind: networkpolicy.CiliumNetworkPolicyKind,
+	})
+	u.SetName(networkpolicy.EgressPolicyBackstopName(policy.Name))
+	u.SetNamespace(policy.Namespace)
+	return u
+}
+
+// applyCiliumBackstop creates or updates the desired CiliumNetworkPolicy.
+func (r *MCPEgressPolicyReconciler) applyCiliumBackstop(ctx context.Context, policy *mcpv1alpha2.MCPEgressPolicy, desired *unstructured.Unstructured) error {
+	existing := newCiliumBackstopStub(policy)
+	err := r.Get(ctx, types.NamespacedName{Name: desired.GetName(), Namespace: desired.GetNamespace()}, existing)
+	if apierrors.IsNotFound(err) {
+		if err := r.Create(ctx, desired); err != nil {
+			return fmt.Errorf("create cilium backstop: %w", err)
+		}
+		r.Recorder.Event(policy, corev1.EventTypeNormal, "BackstopCreated",
+			fmt.Sprintf("Created Cilium network backstop %s", desired.GetName()))
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	desiredSpec, _, _ := unstructured.NestedMap(desired.Object, "spec")
+	existingSpec, _, _ := unstructured.NestedMap(existing.Object, "spec")
+	if !equality.Semantic.DeepEqual(existingSpec, desiredSpec) {
+		_ = unstructured.SetNestedMap(existing.Object, desiredSpec, "spec")
+		existing.SetLabels(desired.GetLabels())
+		if err := r.Update(ctx, existing); err != nil {
+			return fmt.Errorf("update cilium backstop: %w", err)
+		}
+		r.Recorder.Event(policy, corev1.EventTypeNormal, "BackstopUpdated",
+			fmt.Sprintf("Updated Cilium network backstop %s", desired.GetName()))
+	}
+	return nil
+}
+
+// deleteCiliumBackstopIfExists removes the CiliumNetworkPolicy backstop if
+// present. It is a no-op when the Cilium CRD is absent (nothing could exist,
+// and the API call would fail with no-kind-match).
+func (r *MCPEgressPolicyReconciler) deleteCiliumBackstopIfExists(ctx context.Context, policy *mcpv1alpha2.MCPEgressPolicy, ciliumAvailable bool) error {
+	if !ciliumAvailable {
+		return nil
+	}
+	cnp := newCiliumBackstopStub(policy)
+	if err := r.Get(ctx, types.NamespacedName{Name: cnp.GetName(), Namespace: cnp.GetNamespace()}, cnp); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if err := r.Delete(ctx, cnp); err != nil {
 		return client.IgnoreNotFound(err)
 	}
 	return nil

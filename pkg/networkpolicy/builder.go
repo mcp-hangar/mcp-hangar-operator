@@ -10,6 +10,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
@@ -169,6 +171,90 @@ func BuildEgressPolicyBackstop(policy *mcpv1alpha2.MCPEgressPolicy, target metav
 		},
 	}
 	return np, unenforceableHosts
+}
+
+// Cilium GroupVersion/Kind for the CiliumNetworkPolicy backstop. We do not
+// vendor Cilium's Go types; the backstop is built as an unstructured object.
+const (
+	CiliumGroup             = "cilium.io"
+	CiliumVersion           = "v2"
+	CiliumNetworkPolicyKind = "CiliumNetworkPolicy"
+)
+
+// BuildEgressPolicyCiliumNetworkPolicy builds the Cilium L3/L4 backstop for an
+// MCPEgressPolicy as an unstructured CiliumNetworkPolicy. Unlike the Vanilla
+// NetworkPolicy, this enforces FQDN upstreams via toFQDNs: the DNS egress rule
+// carries an L7 DNS rule (matchPattern "*") so Cilium's DNS proxy learns the
+// resolved IPs and admits only traffic to the allow-listed names. CIDR
+// upstreams become toCIDR rules.
+//
+// The returned object carries its GVK and owner-friendly labels; the caller
+// sets the controller reference.
+func BuildEgressPolicyCiliumNetworkPolicy(policy *mcpv1alpha2.MCPEgressPolicy, targetProvider string) *unstructured.Unstructured {
+	// DNS egress to kube-dns with the L7 DNS proxy enabled (required for toFQDNs).
+	egress := []interface{}{
+		map[string]interface{}{
+			"toEndpoints": []interface{}{
+				map[string]interface{}{
+					"matchLabels": map[string]interface{}{
+						"k8s:io.kubernetes.pod.namespace": "kube-system",
+						"k8s-app":                         "kube-dns",
+					},
+				},
+			},
+			"toPorts": []interface{}{
+				map[string]interface{}{
+					"ports": []interface{}{
+						map[string]interface{}{"port": "53", "protocol": "ANY"},
+					},
+					"rules": map[string]interface{}{
+						"dns": []interface{}{
+							map[string]interface{}{"matchPattern": "*"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	var fqdns, cidrs []interface{}
+	for _, u := range policy.Spec.Upstreams {
+		if cidr, ok := asCIDR(u.Match.Host); ok {
+			cidrs = append(cidrs, cidr)
+		} else {
+			fqdns = append(fqdns, map[string]interface{}{"matchName": u.Match.Host})
+		}
+	}
+	if len(fqdns) > 0 {
+		egress = append(egress, map[string]interface{}{"toFQDNs": fqdns})
+	}
+	if len(cidrs) > 0 {
+		egress = append(egress, map[string]interface{}{"toCIDR": cidrs})
+	}
+
+	cnp := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"name":      EgressPolicyBackstopName(policy.Name),
+				"namespace": policy.Namespace,
+				"labels": map[string]interface{}{
+					LabelManagedBy:    DefaultManagerName,
+					LabelComponent:    componentNetworkPolicy,
+					LabelEgressPolicy: policy.Name,
+				},
+			},
+			"spec": map[string]interface{}{
+				"endpointSelector": map[string]interface{}{
+					"matchLabels": map[string]interface{}{
+						LabelProvider: targetProvider,
+					},
+				},
+				"egress": egress,
+			},
+		},
+	}
+	cnp.SetGroupVersionKind(schema.GroupVersionKind{Group: CiliumGroup, Version: CiliumVersion, Kind: CiliumNetworkPolicyKind})
+	return cnp
 }
 
 // asCIDR normalizes a host that is a literal IP or CIDR into a CIDR string. A
