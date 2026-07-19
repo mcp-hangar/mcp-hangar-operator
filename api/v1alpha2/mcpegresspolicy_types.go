@@ -172,7 +172,7 @@ type NetworkBackstop struct {
 }
 
 // MCPEgressPolicySpec is the desired egress policy.
-// +kubebuilder:validation:XValidation:rule="self.upstreams.all(u1, self.upstreams.exists_one(u2, u2.name == u1.name))",message="upstream names must be unique"
+// +kubebuilder:validation:XValidation:rule="!has(self.upstreams) || self.upstreams.all(u1, self.upstreams.exists_one(u2, u2.name == u1.name))",message="upstream names must be unique"
 type MCPEgressPolicySpec struct {
 	// Mode controls whether violations are only observed (Audit) or blocked
 	// (Enforce).

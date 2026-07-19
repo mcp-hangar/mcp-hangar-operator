@@ -220,8 +220,8 @@ spec:
             type: object
             x-kubernetes-validations:
             - message: upstream names must be unique
-              rule: self.upstreams.all(u1, self.upstreams.exists_one(u2, u2.name ==
-                u1.name))
+              rule: '!has(self.upstreams) || self.upstreams.all(u1, self.upstreams.exists_one(u2,
+                u2.name == u1.name))'
           status:
             description: MCPEgressPolicyStatus is the observed state.
             properties:
