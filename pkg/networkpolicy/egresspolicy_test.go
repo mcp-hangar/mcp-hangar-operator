@@ -53,7 +53,9 @@ func TestBuildEgressPolicyBackstop_CIDRAndFQDN(t *testing.T) {
 
 func TestBuildEgressPolicyCiliumNetworkPolicy_Shape(t *testing.T) {
 	p := egressPolicy("api.github.com", "slack.com", "10.1.0.0/16")
-	cnp := BuildEgressPolicyCiliumNetworkPolicy(p, "srv")
+	cnp := BuildEgressPolicyCiliumNetworkPolicy(p, metav1.LabelSelector{
+		MatchLabels: map[string]string{LabelProvider: "srv"},
+	})
 
 	assert.Equal(t, CiliumGroup+"/"+CiliumVersion, cnp.GetAPIVersion())
 	assert.Equal(t, CiliumNetworkPolicyKind, cnp.GetKind())
@@ -95,4 +97,24 @@ func TestBuildEgressPolicyCiliumNetworkPolicy_Shape(t *testing.T) {
 	assert.True(t, hasFQDNs, "FQDN upstreams must produce toFQDNs")
 	assert.True(t, hasCIDR, "CIDR upstream must produce toCIDR")
 	assert.ElementsMatch(t, []string{"api.github.com", "slack.com"}, fqdnNames)
+}
+
+func TestBuildEgressPolicyCiliumNetworkPolicy_GroupSelector(t *testing.T) {
+	p := egressPolicy("api.github.com")
+	cnp := BuildEgressPolicyCiliumNetworkPolicy(p, metav1.LabelSelector{
+		MatchExpressions: []metav1.LabelSelectorRequirement{{
+			Key:      LabelProvider,
+			Operator: metav1.LabelSelectorOpIn,
+			Values:   []string{"srv-a", "srv-b"},
+		}},
+	})
+
+	exprs, found, err := unstructured.NestedSlice(cnp.Object, "spec", "endpointSelector", "matchExpressions")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Len(t, exprs, 1)
+	m := exprs[0].(map[string]interface{})
+	assert.Equal(t, LabelProvider, m["key"])
+	assert.Equal(t, "In", m["operator"])
+	assert.ElementsMatch(t, []interface{}{"srv-a", "srv-b"}, m["values"].([]interface{}))
 }
