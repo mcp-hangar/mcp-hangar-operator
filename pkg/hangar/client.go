@@ -281,6 +281,67 @@ func (c *Client) RegisterMCPServer(ctx context.Context, req *RegisterMCPServerRe
 	return nil
 }
 
+// L7ToolRules mirrors the L7 tool-glob rules the core parses.
+type L7ToolRules struct {
+	Allow           []string `json:"allow,omitempty"`
+	Deny            []string `json:"deny,omitempty"`
+	RequireApproval []string `json:"requireApproval,omitempty"`
+}
+
+// L7ArgumentRules mirrors the L7 deterministic argument constraints.
+type L7ArgumentRules struct {
+	SecretPatterns  []string `json:"secretPatterns,omitempty"`
+	MaxPayloadBytes *int64   `json:"maxPayloadBytes,omitempty"`
+}
+
+// L7PolicyPayload is the compiled L7 egress policy the operator pushes to core.
+// It matches the wire form core's L7Policy.from_dict parses.
+type L7PolicyPayload struct {
+	Tools         L7ToolRules     `json:"tools"`
+	Arguments     L7ArgumentRules `json:"arguments"`
+	DefaultAction string          `json:"defaultAction"`
+}
+
+// SetL7Policy pushes a compiled L7 egress policy for an mcp_server to core.
+func (c *Client) SetL7Policy(ctx context.Context, mcpServerID string, policy *L7PolicyPayload) error {
+	url := fmt.Sprintf("%s/api/mcp_servers/%s/l7_policy", c.baseURL, mcpServerID)
+
+	body, err := json.Marshal(policy)
+	if err != nil {
+		return fmt.Errorf("failed to marshal L7 policy: %w", err)
+	}
+
+	resp, err := c.doWithRetry(ctx, http.MethodPost, url, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("set L7 policy failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// ClearL7Policy removes the L7 egress policy for an mcp_server. A 404 is treated
+// as success (the server is already gone).
+func (c *Client) ClearL7Policy(ctx context.Context, mcpServerID string) error {
+	url := fmt.Sprintf("%s/api/mcp_servers/%s/l7_policy", c.baseURL, mcpServerID)
+
+	resp, err := c.doWithRetry(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("clear L7 policy failed with status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
 // DeregisterProvider removes a provider from Hangar core
 func (c *Client) DeregisterMCPServer(ctx context.Context, name, namespace string) error {
 	url := fmt.Sprintf("%s/api/v1/providers/%s/%s", c.baseURL, namespace, name)
