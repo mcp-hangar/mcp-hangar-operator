@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
+	"github.com/mcp-hangar/operator/pkg/hangar"
 	"github.com/mcp-hangar/operator/pkg/networkpolicy"
 )
 
@@ -42,14 +43,22 @@ const (
 // whose target does not (yet) exist.
 const targetNotFoundRequeueAfter = 30 // seconds
 
+// l7PolicyFinalizer guards deletion so the compiled L7 policy is cleared from
+// core before the MCPEgressPolicy object goes away. Only added when core
+// integration is enabled (HangarClient set).
+const l7PolicyFinalizer = "mcp-hangar.io/l7-policy-cleanup"
+
 // MCPEgressPolicyReconciler reconciles an MCPEgressPolicy into its L3/L4 network
-// backstop. This slice implements the Vanilla backstop (default-deny egress +
-// DNS + CIDR upstreams). FQDN upstream enforcement (Cilium toFQDNs) and the
-// L7 data-plane document land in follow-ups (epic #53, per ADR-013).
+// backstop (a NetworkPolicy or CiliumNetworkPolicy) and, when core integration
+// is enabled, pushes the compiled L7 policy (tool + argument rules) to the core
+// so it is enforced at the tool-invocation chokepoint.
 type MCPEgressPolicyReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+	// HangarClient talks to the core REST API to deliver the L7 policy. Nil when
+	// core integration is disabled (no --hangar-url); L7 push is then skipped.
+	HangarClient *hangar.Client
 }
 
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpegresspolicies,verbs=get;list;watch;create;update;patch;delete
@@ -64,6 +73,21 @@ func (r *MCPEgressPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	policy := &mcpv1alpha2.MCPEgressPolicy{}
 	if err := r.Get(ctx, req.NamespacedName, policy); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// Deletion: clear the L7 policy from core, then drop the finalizer.
+	if !policy.DeletionTimestamp.IsZero() {
+		return r.handleDeletion(ctx, policy)
+	}
+
+	// Ensure the cleanup finalizer once core integration is on, so whatever we
+	// push to core is cleared on delete.
+	if r.HangarClient != nil && !controllerutil.ContainsFinalizer(policy, l7PolicyFinalizer) {
+		controllerutil.AddFinalizer(policy, l7PolicyFinalizer)
+		if err := r.Update(ctx, policy); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	result, reconcileErr := r.reconcile(ctx, policy)
@@ -110,7 +134,124 @@ func (r *MCPEgressPolicyReconciler) reconcile(ctx context.Context, policy *mcpv1
 	if err := r.applyFlavoredBackstop(ctx, logger, policy, selector, targetName); err != nil {
 		return ctrl.Result{}, err
 	}
+
+	// Deliver the compiled L7 policy to core so it is enforced at the
+	// tool-invocation chokepoint (skipped when core integration is off).
+	if err := r.pushL7Policy(ctx, logger, policy, selector); err != nil {
+		return ctrl.Result{}, err
+	}
 	return ctrl.Result{}, nil
+}
+
+// handleDeletion clears the L7 policy from core for the policy's targets and
+// removes the finalizer.
+func (r *MCPEgressPolicyReconciler) handleDeletion(ctx context.Context, policy *mcpv1alpha2.MCPEgressPolicy) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(policy, l7PolicyFinalizer) {
+		return ctrl.Result{}, nil
+	}
+	if r.HangarClient != nil {
+		// Best-effort resolve the targets; if they are already gone core will
+		// have dropped their policy with the server, so an empty set is fine.
+		selector, _, done, err := r.resolveTargetSelector(ctx, policy)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if done == nil {
+			for _, name := range providerNamesFromSelector(selector) {
+				if err := r.HangarClient.ClearL7Policy(ctx, name); err != nil {
+					return ctrl.Result{}, fmt.Errorf("clear L7 policy for %q: %w", name, err)
+				}
+			}
+		}
+	}
+	controllerutil.RemoveFinalizer(policy, l7PolicyFinalizer)
+	if err := r.Update(ctx, policy); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, nil
+}
+
+// pushL7Policy compiles the policy's L7 rules and delivers them to core for each
+// target server. A push failure requeues (so a transient core outage retries).
+func (r *MCPEgressPolicyReconciler) pushL7Policy(ctx context.Context, logger logr.Logger, policy *mcpv1alpha2.MCPEgressPolicy, selector metav1.LabelSelector) error {
+	if r.HangarClient == nil {
+		return nil
+	}
+	payload := compileL7Policy(policy)
+	for _, name := range providerNamesFromSelector(selector) {
+		if err := r.HangarClient.SetL7Policy(ctx, name, payload); err != nil {
+			r.Recorder.Event(policy, corev1.EventTypeWarning, "L7PushFailed",
+				fmt.Sprintf("Failed to deliver L7 policy to core for %q: %v", name, err))
+			return fmt.Errorf("push L7 policy for %q: %w", name, err)
+		}
+		logger.Info("Delivered L7 policy to core", "policy", policy.Name, "server", name)
+	}
+	return nil
+}
+
+// providerNamesFromSelector extracts the concrete provider (server) names a
+// backstop selector targets -- a single MatchLabels value or the In-set of a
+// MatchExpressions requirement on the provider label.
+func providerNamesFromSelector(sel metav1.LabelSelector) []string {
+	if v, ok := sel.MatchLabels[networkpolicy.LabelProvider]; ok {
+		return []string{v}
+	}
+	for _, e := range sel.MatchExpressions {
+		if e.Key == networkpolicy.LabelProvider && e.Operator == metav1.LabelSelectorOpIn {
+			return e.Values
+		}
+	}
+	return nil
+}
+
+// compileL7Policy flattens an MCPEgressPolicy's per-upstream tool/argument rules
+// into the single L7 policy the core enforces per server: the union of the
+// upstreams' allow/deny/require-approval globs and secret-pattern groups, the
+// most restrictive (smallest) payload limit, and the spec's default action.
+func compileL7Policy(policy *mcpv1alpha2.MCPEgressPolicy) *hangar.L7PolicyPayload {
+	var allow, deny, approval, secrets []string
+	var maxBytes *int64
+	for i := range policy.Spec.Upstreams {
+		u := policy.Spec.Upstreams[i]
+		if u.Tools != nil {
+			allow = appendUnique(allow, u.Tools.Allow...)
+			deny = appendUnique(deny, u.Tools.Deny...)
+			approval = appendUnique(approval, u.Tools.RequireApproval...)
+		}
+		if u.Arguments != nil && u.Arguments.Deny != nil {
+			secrets = appendUnique(secrets, u.Arguments.Deny.SecretPatterns...)
+			if b := u.Arguments.Deny.MaxPayloadBytes; b > 0 && (maxBytes == nil || b < *maxBytes) {
+				v := b
+				maxBytes = &v
+			}
+		}
+	}
+	defaultAction := string(policy.Spec.DefaultAction)
+	if defaultAction == "" {
+		defaultAction = string(mcpv1alpha2.EgressActionDeny)
+	}
+	return &hangar.L7PolicyPayload{
+		Tools:         hangar.L7ToolRules{Allow: allow, Deny: deny, RequireApproval: approval},
+		Arguments:     hangar.L7ArgumentRules{SecretPatterns: secrets, MaxPayloadBytes: maxBytes},
+		DefaultAction: defaultAction,
+	}
+}
+
+// appendUnique appends values not already present, preserving order.
+func appendUnique(dst []string, values ...string) []string {
+	for _, v := range values {
+		found := false
+		for _, existing := range dst {
+			if existing == v {
+				found = true
+				break
+			}
+		}
+		if !found {
+			dst = append(dst, v)
+		}
+	}
+	return dst
 }
 
 // resolveTargetSelector resolves the policy's targetRef to a pod selector for
