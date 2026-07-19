@@ -3,4 +3,5 @@ resources:
 - mcp-hangar_v1alpha2_mcpserver.yaml
 - mcp-hangar_v1alpha2_mcpservergroup.yaml
 - mcp-hangar_v1alpha2_mcpdiscoverysource.yaml
+- mcp-hangar_v1alpha2_mcpegresspolicy.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

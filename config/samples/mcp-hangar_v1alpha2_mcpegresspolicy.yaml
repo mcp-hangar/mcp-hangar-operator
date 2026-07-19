@@ -1,0 +1,36 @@
+apiVersion: mcp-hangar.io/v1alpha2
+kind: MCPEgressPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: mcp-hangar-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: mcpegresspolicy-sample
+spec:
+  # Audit observes violations; Enforce blocks. Start in Audit, promote to Enforce.
+  mode: Enforce
+  # Attach to a single MCPServer, or an MCPServerGroup (applies to every member).
+  targetRef:
+    kind: MCPServer
+    name: mcpserver-sample
+  # Traffic and tool calls not matched by an upstream rule are denied.
+  defaultAction: Deny
+  upstreams:
+    - name: github
+      match:
+        # An FQDN (enforced under the Cilium flavor) or a literal IP/CIDR.
+        host: api.github.com
+      tools:
+        # Glob on tool name. Precedence: deny > requireApproval > allow > defaultAction.
+        allow: ["get_*", "list_*"]
+        requireApproval: ["create_*", "update_*"]
+        deny: ["delete_*"]
+      arguments:
+        deny:
+          # Deterministic secret-pattern groups; see the docs for the full list.
+          secretPatterns: [aws-keys, jwt, pem-blocks]
+          # Reject tool-call argument payloads larger than 256 KiB.
+          maxPayloadBytes: 262144
+  # The L3/L4 backstop that keeps the data plane from being bypassed.
+  networkBackstop:
+    generate: true
+    flavor: Auto   # Cilium if its CRD is installed (enforces FQDNs), else Vanilla.
