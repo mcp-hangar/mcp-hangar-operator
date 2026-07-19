@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/go-logr/logr"
@@ -54,6 +55,7 @@ type MCPEgressPolicyReconciler struct {
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpegresspolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpegresspolicies/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpegresspolicies/finalizers,verbs=update
+// +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservergroups,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cilium.io,resources=ciliumnetworkpolicies,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile ensures the network backstop for a policy matches its spec, then
@@ -92,41 +94,114 @@ func (r *MCPEgressPolicyReconciler) reconcile(ctx context.Context, policy *mcpv1
 		return ctrl.Result{}, nil
 	}
 
-	// Only MCPServer targets get a backstop in this slice; MCPServerGroup
-	// (a selector over many servers) is a follow-up.
-	if policy.Spec.TargetRef.Kind != "MCPServer" {
+	// Resolve the target (MCPServer or MCPServerGroup) to a pod selector.
+	selector, targetName, done, err := r.resolveTargetSelector(ctx, policy)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if done != nil {
+		// A terminal condition was set (kind unsupported / target missing).
 		if err := r.deleteBackstopIfExists(ctx, policy); err != nil {
 			return ctrl.Result{}, err
 		}
-		r.setCondition(policy, EgressPolicyConditionCompiled, metav1.ConditionFalse,
-			"UnsupportedTargetKind",
-			fmt.Sprintf("targetRef.kind %q is not yet supported by the backstop (only MCPServer)", policy.Spec.TargetRef.Kind))
-		r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionFalse,
-			"UnsupportedTargetKind", "no backstop applied")
-		r.clearDegraded(policy)
-		return ctrl.Result{}, nil
+		return *done, nil
 	}
 
-	// Resolve the target server -- its pods carry LabelProvider=<name>.
-	target := &mcpv1alpha2.MCPServer{}
-	targetKey := types.NamespacedName{Name: policy.Spec.TargetRef.Name, Namespace: policy.Namespace}
-	if err := r.Get(ctx, targetKey, target); err != nil {
-		if apierrors.IsNotFound(err) {
-			r.setCondition(policy, EgressPolicyConditionCompiled, metav1.ConditionFalse,
-				"TargetNotFound", fmt.Sprintf("MCPServer %q not found", policy.Spec.TargetRef.Name))
-			r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionFalse,
-				"TargetNotFound", "no backstop applied")
-			r.setCondition(policy, EgressPolicyConditionDegraded, metav1.ConditionTrue,
-				"TargetNotFound", "policy target does not exist; backstop withheld")
-			return ctrl.Result{RequeueAfter: targetNotFoundRequeueAfter * 1e9}, nil
-		}
-		return ctrl.Result{}, err
-	}
-
-	if err := r.applyFlavoredBackstop(ctx, logger, policy, target.Name); err != nil {
+	if err := r.applyFlavoredBackstop(ctx, logger, policy, selector, targetName); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
+}
+
+// resolveTargetSelector resolves the policy's targetRef to a pod selector for
+// the backstop. An MCPServer resolves to its single provider label; an
+// MCPServerGroup resolves to a set of member providers (provider In [...]).
+//
+// When it returns a non-nil *ctrl.Result, the target could not be resolved (a
+// terminal status condition has already been set) and the caller should return
+// that result without applying a backstop.
+func (r *MCPEgressPolicyReconciler) resolveTargetSelector(
+	ctx context.Context, policy *mcpv1alpha2.MCPEgressPolicy,
+) (metav1.LabelSelector, string, *ctrl.Result, error) {
+	name := policy.Spec.TargetRef.Name
+	switch policy.Spec.TargetRef.Kind {
+	case "MCPServer":
+		target := &mcpv1alpha2.MCPServer{}
+		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: policy.Namespace}, target); err != nil {
+			if apierrors.IsNotFound(err) {
+				return metav1.LabelSelector{}, "", r.targetNotFound(policy, fmt.Sprintf("MCPServer %q not found", name)), nil
+			}
+			return metav1.LabelSelector{}, "", nil, err
+		}
+		sel := metav1.LabelSelector{MatchLabels: map[string]string{networkpolicy.LabelProvider: target.Name}}
+		return sel, target.Name, nil, nil
+
+	case "MCPServerGroup":
+		group := &mcpv1alpha2.MCPServerGroup{}
+		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: policy.Namespace}, group); err != nil {
+			if apierrors.IsNotFound(err) {
+				return metav1.LabelSelector{}, "", r.targetNotFound(policy, fmt.Sprintf("MCPServerGroup %q not found", name)), nil
+			}
+			return metav1.LabelSelector{}, "", nil, err
+		}
+		members, err := r.groupMemberNames(ctx, group)
+		if err != nil {
+			return metav1.LabelSelector{}, "", nil, err
+		}
+		if len(members) == 0 {
+			return metav1.LabelSelector{}, "", r.targetNotFound(policy,
+				fmt.Sprintf("MCPServerGroup %q has no member servers", name)), nil
+		}
+		sel := metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
+			Key:      networkpolicy.LabelProvider,
+			Operator: metav1.LabelSelectorOpIn,
+			Values:   members,
+		}}}
+		return sel, name, nil, nil
+
+	default:
+		// The CRD enum restricts kind to MCPServer|MCPServerGroup; this guards
+		// an object that slipped past validation.
+		r.setCondition(policy, EgressPolicyConditionCompiled, metav1.ConditionFalse,
+			"UnsupportedTargetKind", fmt.Sprintf("targetRef.kind %q is not supported", policy.Spec.TargetRef.Kind))
+		r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionFalse,
+			"UnsupportedTargetKind", "no backstop applied")
+		r.clearDegraded(policy)
+		return metav1.LabelSelector{}, "", &ctrl.Result{}, nil
+	}
+}
+
+// groupMemberNames returns the sorted names of the MCPServers matching a
+// group's selector in the group's namespace.
+func (r *MCPEgressPolicyReconciler) groupMemberNames(ctx context.Context, group *mcpv1alpha2.MCPServerGroup) ([]string, error) {
+	if group.Spec.Selector == nil {
+		return nil, nil
+	}
+	sel, err := metav1.LabelSelectorAsSelector(group.Spec.Selector)
+	if err != nil {
+		return nil, fmt.Errorf("group %q selector: %w", group.Name, err)
+	}
+	var list mcpv1alpha2.MCPServerList
+	if err := r.List(ctx, &list,
+		client.InNamespace(group.Namespace),
+		client.MatchingLabelsSelector{Selector: sel}); err != nil {
+		return nil, fmt.Errorf("list group members: %w", err)
+	}
+	names := make([]string, 0, len(list.Items))
+	for i := range list.Items {
+		names = append(names, list.Items[i].Name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// targetNotFound sets the withheld-backstop conditions and returns a requeue
+// result for a policy whose target does not (yet) exist or has no members.
+func (r *MCPEgressPolicyReconciler) targetNotFound(policy *mcpv1alpha2.MCPEgressPolicy, msg string) *ctrl.Result {
+	r.setCondition(policy, EgressPolicyConditionCompiled, metav1.ConditionFalse, "TargetNotFound", msg)
+	r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionFalse, "TargetNotFound", "no backstop applied")
+	r.setCondition(policy, EgressPolicyConditionDegraded, metav1.ConditionTrue, "TargetNotFound", msg)
+	return &ctrl.Result{RequeueAfter: targetNotFoundRequeueAfter * 1e9}
 }
 
 // applyFlavoredBackstop resolves the effective backstop flavor and applies it,
@@ -136,7 +211,7 @@ func (r *MCPEgressPolicyReconciler) reconcile(ctx context.Context, policy *mcpv1
 // omitted networkBackstop) uses Cilium when its CRD is installed, else Vanilla.
 // Cilium requested on a cluster without the CRD falls back to the Vanilla floor
 // and reports Degraded, rather than failing open.
-func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, logger logr.Logger, policy *mcpv1alpha2.MCPEgressPolicy, provider string) error {
+func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, logger logr.Logger, policy *mcpv1alpha2.MCPEgressPolicy, selector metav1.LabelSelector, targetName string) error {
 	requested := mcpv1alpha2.BackstopFlavorAuto
 	if policy.Spec.NetworkBackstop != nil && policy.Spec.NetworkBackstop.Flavor != "" {
 		requested = policy.Spec.NetworkBackstop.Flavor
@@ -147,7 +222,7 @@ func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, l
 	r.setCondition(policy, EgressPolicyConditionCompiled, metav1.ConditionTrue, "Compiled", "Policy compiled")
 
 	if useCilium {
-		cnp := networkpolicy.BuildEgressPolicyCiliumNetworkPolicy(policy, provider)
+		cnp := networkpolicy.BuildEgressPolicyCiliumNetworkPolicy(policy, selector)
 		if err := controllerutil.SetControllerReference(policy, cnp, r.Scheme); err != nil {
 			return fmt.Errorf("set owner reference on cilium backstop: %w", err)
 		}
@@ -158,14 +233,13 @@ func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, l
 			return err
 		}
 		r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionTrue,
-			"BackstopApplied", fmt.Sprintf("Cilium backstop %q applied (FQDN + CIDR enforced)", cnp.GetName()))
+			"BackstopApplied", fmt.Sprintf("Cilium backstop %q applied for %q (FQDN + CIDR enforced)", cnp.GetName(), targetName))
 		r.clearDegraded(policy)
-		logger.Info("Reconciled MCPEgressPolicy backstop", "policy", policy.Name, "flavor", "Cilium")
+		logger.Info("Reconciled MCPEgressPolicy backstop", "policy", policy.Name, "target", targetName, "flavor", "Cilium")
 		return nil
 	}
 
 	// Vanilla path.
-	selector := metav1.LabelSelector{MatchLabels: map[string]string{networkpolicy.LabelProvider: provider}}
 	desired, unenforceable := networkpolicy.BuildEgressPolicyBackstop(policy, selector)
 	if err := controllerutil.SetControllerReference(policy, desired, r.Scheme); err != nil {
 		return fmt.Errorf("set owner reference on backstop: %w", err)

@@ -189,8 +189,10 @@ const (
 // upstreams become toCIDR rules.
 //
 // The returned object carries its GVK and owner-friendly labels; the caller
-// sets the controller reference.
-func BuildEgressPolicyCiliumNetworkPolicy(policy *mcpv1alpha2.MCPEgressPolicy, targetProvider string) *unstructured.Unstructured {
+// sets the controller reference. target is the pod selector for the policy's
+// endpoints (a single provider for an MCPServer target, or a provider set for
+// an MCPServerGroup).
+func BuildEgressPolicyCiliumNetworkPolicy(policy *mcpv1alpha2.MCPEgressPolicy, target metav1.LabelSelector) *unstructured.Unstructured {
 	// DNS egress to kube-dns with the L7 DNS proxy enabled (required for toFQDNs).
 	egress := []interface{}{
 		map[string]interface{}{
@@ -244,17 +246,43 @@ func BuildEgressPolicyCiliumNetworkPolicy(policy *mcpv1alpha2.MCPEgressPolicy, t
 				},
 			},
 			"spec": map[string]interface{}{
-				"endpointSelector": map[string]interface{}{
-					"matchLabels": map[string]interface{}{
-						LabelProvider: targetProvider,
-					},
-				},
-				"egress": egress,
+				"endpointSelector": labelSelectorToUnstructured(target),
+				"egress":           egress,
 			},
 		},
 	}
 	cnp.SetGroupVersionKind(schema.GroupVersionKind{Group: CiliumGroup, Version: CiliumVersion, Kind: CiliumNetworkPolicyKind})
 	return cnp
+}
+
+// labelSelectorToUnstructured renders a metav1.LabelSelector as the map shape a
+// Cilium endpointSelector expects (a k8s LabelSelector: matchLabels +
+// matchExpressions). Empty parts are omitted.
+func labelSelectorToUnstructured(sel metav1.LabelSelector) map[string]interface{} {
+	out := map[string]interface{}{}
+	if len(sel.MatchLabels) > 0 {
+		labels := make(map[string]interface{}, len(sel.MatchLabels))
+		for k, v := range sel.MatchLabels {
+			labels[k] = v
+		}
+		out["matchLabels"] = labels
+	}
+	if len(sel.MatchExpressions) > 0 {
+		exprs := make([]interface{}, 0, len(sel.MatchExpressions))
+		for _, e := range sel.MatchExpressions {
+			values := make([]interface{}, 0, len(e.Values))
+			for _, v := range e.Values {
+				values = append(values, v)
+			}
+			exprs = append(exprs, map[string]interface{}{
+				"key":      e.Key,
+				"operator": string(e.Operator),
+				"values":   values,
+			})
+		}
+		out["matchExpressions"] = exprs
+	}
+	return out
 }
 
 // asCIDR normalizes a host that is a literal IP or CIDR into a CIDR string. A

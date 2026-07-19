@@ -147,18 +147,66 @@ func TestEgressPolicy_GenerateFalse_NoBackstop(t *testing.T) {
 	assert.Equal(t, "BackstopGenerationDisabled", ba.Reason)
 }
 
-func TestEgressPolicy_UnsupportedTargetKind(t *testing.T) {
+func TestEgressPolicy_GroupTarget_NotFound(t *testing.T) {
 	p := testPolicy("pol", "default")
 	p.Spec.TargetRef = mcpv1alpha2.EgressTargetRef{Kind: "MCPServerGroup", Name: "grp"}
-	r := newEgressReconciler(p)
+	r := newEgressReconciler(p) // no group
 
 	out := reconcilePolicy(t, r, p)
 
 	_, err := getBackstop(t, r, "pol", "default")
 	assert.True(t, err != nil)
-	c := condStatus(out, EgressPolicyConditionCompiled)
-	assert.Equal(t, metav1.ConditionFalse, c.Status)
-	assert.Equal(t, "UnsupportedTargetKind", c.Reason)
+	assert.Equal(t, "TargetNotFound", condStatus(out, EgressPolicyConditionCompiled).Reason)
+}
+
+func testGroup(name, ns string, matchLabels map[string]string) *mcpv1alpha2.MCPServerGroup {
+	return &mcpv1alpha2.MCPServerGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Spec:       mcpv1alpha2.MCPServerGroupSpec{Selector: &metav1.LabelSelector{MatchLabels: matchLabels}},
+	}
+}
+
+func labeledServer(name, ns string, labels map[string]string) *mcpv1alpha2.MCPServer {
+	s := testServer(name, ns)
+	s.Labels = labels
+	return s
+}
+
+func TestEgressPolicy_GroupTarget_AppliesBackstopForMembers(t *testing.T) {
+	p := testPolicy("pol", "default")
+	p.Spec.TargetRef = mcpv1alpha2.EgressTargetRef{Kind: "MCPServerGroup", Name: "grp"}
+	p.Spec.Upstreams = []mcpv1alpha2.UpstreamRule{{Name: "u", Match: mcpv1alpha2.UpstreamMatch{Host: "10.0.0.0/8"}}}
+
+	group := testGroup("grp", "default", map[string]string{"team": "x"})
+	member1 := labeledServer("srv-b", "default", map[string]string{"team": "x"})
+	member2 := labeledServer("srv-a", "default", map[string]string{"team": "x"})
+	outsider := labeledServer("srv-c", "default", map[string]string{"team": "y"})
+
+	r := newEgressReconciler(group, member1, member2, outsider, p)
+	out := reconcilePolicy(t, r, p)
+
+	np, err := getBackstop(t, r, "pol", "default")
+	require.NoError(t, err)
+	// PodSelector targets the group's members via provider In [sorted names].
+	require.Len(t, np.Spec.PodSelector.MatchExpressions, 1)
+	expr := np.Spec.PodSelector.MatchExpressions[0]
+	assert.Equal(t, networkpolicy.LabelProvider, expr.Key)
+	assert.Equal(t, metav1.LabelSelectorOpIn, expr.Operator)
+	assert.Equal(t, []string{"srv-a", "srv-b"}, expr.Values) // sorted, excludes the outsider
+	assert.Equal(t, metav1.ConditionTrue, condStatus(out, EgressPolicyConditionBackstopApplied).Status)
+}
+
+func TestEgressPolicy_GroupTarget_NoMembers(t *testing.T) {
+	p := testPolicy("pol", "default")
+	p.Spec.TargetRef = mcpv1alpha2.EgressTargetRef{Kind: "MCPServerGroup", Name: "grp"}
+	group := testGroup("grp", "default", map[string]string{"team": "empty"})
+
+	r := newEgressReconciler(group, p)
+	out := reconcilePolicy(t, r, p)
+
+	_, err := getBackstop(t, r, "pol", "default")
+	assert.True(t, err != nil, "no backstop when the group has no members")
+	assert.Equal(t, "TargetNotFound", condStatus(out, EgressPolicyConditionBackstopApplied).Reason)
 }
 
 // Flipping an upstream host from FQDN to CIDR clears the degraded condition and
