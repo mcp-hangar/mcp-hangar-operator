@@ -15,6 +15,7 @@
 - **Health Checks**: Configurable health monitoring with circuit breaker
 - **Metrics**: Prometheus metrics for monitoring
 - **Secure by Default**: Pod security contexts, non-root, read-only filesystem
+- **Policy Enforcement**: Opt-in namespaces get default-deny egress, admission-time registration, and image-pin coupling (see [Enforcement](#enforcement))
 
 ## Quick Start
 
@@ -93,6 +94,30 @@ kubectl get mcpproviders
 | `spec.type` | Discovery type: Namespace, ConfigMap, Annotations | Required |
 | `spec.mode` | Discovery mode: Additive, Authoritative | `Additive` |
 | `spec.refreshInterval` | Rescan interval | `1m` |
+
+## Enforcement
+
+The operator can make *the governed path the default path*: in an opted-in
+namespace an MCP server only reaches the network once it is **registered** and
+its image is **pinned**. Enforcement is **opt-in per namespace** — label the
+namespace to turn it on, so it never gates workloads elsewhere:
+
+```bash
+kubectl label namespace my-mcp mcp-hangar.io/enforce-egress=true
+```
+
+Inside an enforced namespace three controls apply:
+
+| Control | Behaviour | Where |
+|---------|-----------|-------|
+| **Default-deny egress** | A server with no egress policy gets DNS only — not "all egress". Egress opens only when a policy is generated for it. | `pkg/networkpolicy/builder.go` |
+| **Admission registration** | A Pod labelled `mcp-hangar.io/provider=<name>` is **denied at admission** unless an `MCPServer` named `<name>` exists in the namespace. Shadow/unregistered provider pods fail to deploy. | `internal/webhook/pod_registration_webhook.go` (OWASP MCP09) |
+| **Pin coupling** | A registered container-mode server's egress allow-policy is opened **only if its image is digest-pinned** (`image@sha256:...`). An unpinned server stays under default-deny (DNS only) and gets an `EgressWithheldUnpinnedImage` event. Opt out per server with the `hangar.io/allow-mutable-image="true"` annotation. | `internal/controller/mcpserver_controller.go` |
+
+FQDN/host egress rules **fail closed** — a rule that a Kubernetes
+`NetworkPolicy` cannot express (host/FQDN with no CIDR) emits no permissive rule.
+Declarative L7/FQDN egress is handled by the `MCPEgressPolicy` API and its
+Cilium/Tetragon backstop (ADR-006).
 
 ## Examples
 
