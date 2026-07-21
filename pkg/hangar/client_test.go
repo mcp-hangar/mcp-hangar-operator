@@ -15,7 +15,7 @@ import (
 func TestClient_GetMCPServerTools_Success(t *testing.T) {
 	// Setup mock server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/providers/default/test-provider/tools", r.URL.Path)
+		assert.Equal(t, "/api/mcp_servers/test-provider/tools", r.URL.Path)
 		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "test-api-key", r.Header.Get("X-API-Key"))
 
@@ -174,7 +174,7 @@ func TestClient_RegisterProvider_Success(t *testing.T) {
 
 func TestClient_DeregisterProvider_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/providers/default/test-provider", r.URL.Path)
+		assert.Equal(t, "/api/mcp_servers/test-provider", r.URL.Path)
 		assert.Equal(t, "DELETE", r.Method)
 		assert.Equal(t, "test-api-key", r.Header.Get("X-API-Key"))
 

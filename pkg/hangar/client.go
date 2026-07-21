@@ -169,9 +169,32 @@ type ToolInfo struct {
 }
 
 // GetMCPServerTools fetches the list of tools from a provider
+// toolRef parses one element of core's tools list. core returns tool-info
+// objects ({"name": ...}); a bare tool-name string is also tolerated for
+// forward/backward compatibility.
+type toolRef struct{ Name string }
+
+func (t *toolRef) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		t.Name = s
+		return nil
+	}
+	var o struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(b, &o); err != nil {
+		return err
+	}
+	t.Name = o.Name
+	return nil
+}
+
 func (c *Client) GetMCPServerTools(ctx context.Context, name, namespace string) (tools []string, err error) {
 	defer c.observe("get_tools")(&err)
-	url := fmt.Sprintf("%s/api/v1/providers/%s/%s/tools", c.baseURL, namespace, name)
+	// core keys mcp_servers by name (the k8s MCPServer name); the namespace is not
+	// part of the id -- it is retained only for the not-found diagnostic below.
+	url := fmt.Sprintf("%s/api/mcp_servers/%s/tools", c.baseURL, name)
 
 	resp, err := c.doWithRetry(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -189,13 +212,17 @@ func (c *Client) GetMCPServerTools(ctx context.Context, name, namespace string) 
 	}
 
 	var result struct {
-		Tools []string `json:"tools"`
+		Tools []toolRef `json:"tools"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	return result.Tools, nil
+	names := make([]string, 0, len(result.Tools))
+	for _, t := range result.Tools {
+		names = append(names, t.Name)
+	}
+	return names, nil
 }
 
 // GetProvider fetches provider information
@@ -371,7 +398,8 @@ func (c *Client) ClearL7Policy(ctx context.Context, mcpServerID string) (err err
 // DeregisterProvider removes a provider from Hangar core
 func (c *Client) DeregisterMCPServer(ctx context.Context, name, namespace string) (err error) {
 	defer c.observe("deregister")(&err)
-	url := fmt.Sprintf("%s/api/v1/providers/%s/%s", c.baseURL, namespace, name)
+	_ = namespace // core keys mcp_servers by name; namespace is not part of the id.
+	url := fmt.Sprintf("%s/api/mcp_servers/%s", c.baseURL, name)
 
 	resp, err := c.doWithRetry(ctx, http.MethodDelete, url, nil)
 	if err != nil {
