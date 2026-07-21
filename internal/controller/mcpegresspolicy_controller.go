@@ -157,9 +157,18 @@ func (r *MCPEgressPolicyReconciler) handleDeletion(ctx context.Context, policy *
 			return ctrl.Result{}, err
 		}
 		if done == nil {
+			logger := log.FromContext(ctx)
 			for _, name := range providerNamesFromSelector(selector) {
 				if err := r.HangarClient.ClearL7Policy(ctx, name); err != nil {
-					return ctrl.Result{}, fmt.Errorf("clear L7 policy for %q: %w", name, err)
+					// Best-effort: a persistent clear failure (core unreachable or an auth
+					// error) must NOT wedge deletion -- returning an error here requeues
+					// forever and the MCPEgressPolicy is stuck Terminating until someone
+					// hand-edits the finalizer. core drops a server's L7 policy when the
+					// server itself is removed, and an orphaned policy on a live server is
+					// overwritten by the next push, so releasing the finalizer is safe.
+					r.Recorder.Event(policy, corev1.EventTypeWarning, "L7ClearFailed",
+						fmt.Sprintf("Best-effort clear of L7 policy for %q failed; removing finalizer anyway: %v", name, err))
+					logger.Error(err, "L7 policy clear failed; releasing finalizer to avoid blocking deletion", "server", name)
 				}
 			}
 		}
