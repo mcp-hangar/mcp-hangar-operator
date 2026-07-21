@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -132,4 +133,32 @@ func TestEgressPolicy_ClearsL7OnDelete(t *testing.T) {
 
 	assert.Equal(t, http.MethodDelete, gotMethod)
 	assert.Equal(t, "/api/mcp_servers/srv/l7_policy", gotPath)
+}
+
+// A persistent clear failure (core unreachable / auth error) must NOT wedge
+// deletion: the finalizer is released best-effort so the policy is not stuck
+// Terminating until someone hand-edits the finalizer.
+func TestEgressPolicy_DeleteNotWedgedByClearFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError) // clear always fails
+	}))
+	defer srv.Close()
+
+	p := testPolicy("pol", "default")
+	now := metav1.Now()
+	p.DeletionTimestamp = &now
+	p.Finalizers = []string{l7PolicyFinalizer}
+	r := newEgressReconciler(testServer("srv", "default"), p)
+	r.HangarClient = hangar.NewClient(&hangar.Config{URL: srv.URL, MaxRetries: 0})
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "pol", Namespace: "default"},
+	})
+	require.NoError(t, err) // clear failed, but deletion must still complete
+
+	// The finalizer is released, so the fake client completes deletion.
+	var got mcpv1alpha2.MCPEgressPolicy
+	getErr := r.Get(context.Background(), types.NamespacedName{Name: "pol", Namespace: "default"}, &got)
+	assert.True(t, apierrors.IsNotFound(getErr),
+		"policy should be deleted once the finalizer is released; getErr=%v finalizers=%v", getErr, got.Finalizers)
 }
