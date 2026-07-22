@@ -60,6 +60,19 @@ func TestCompileL7Policy_DefaultsToDeny(t *testing.T) {
 	assert.Nil(t, out.Arguments.MaxPayloadBytes)
 }
 
+func TestCompileL7Policy_ModeDefaultsToAudit(t *testing.T) {
+	p := testPolicy("pol", "default") // no Mode set
+	out := compileL7Policy(p)
+	assert.Equal(t, "Audit", out.Mode)
+}
+
+func TestCompileL7Policy_ModePassesThroughEnforce(t *testing.T) {
+	p := testPolicy("pol", "default")
+	p.Spec.Mode = mcpv1alpha2.EgressPolicyModeEnforce
+	out := compileL7Policy(p)
+	assert.Equal(t, "Enforce", out.Mode)
+}
+
 func TestProviderNamesFromSelector(t *testing.T) {
 	single := metav1.LabelSelector{MatchLabels: map[string]string{networkpolicy.LabelProvider: "srv"}}
 	assert.Equal(t, []string{"srv"}, providerNamesFromSelector(single))

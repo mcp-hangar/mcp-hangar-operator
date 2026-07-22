@@ -239,10 +239,15 @@ func compileL7Policy(policy *mcpv1alpha2.MCPEgressPolicy) *hangar.L7PolicyPayloa
 	if defaultAction == "" {
 		defaultAction = string(mcpv1alpha2.EgressActionDeny)
 	}
+	mode := string(policy.Spec.Mode)
+	if mode == "" {
+		mode = string(mcpv1alpha2.EgressPolicyModeAudit)
+	}
 	return &hangar.L7PolicyPayload{
 		Tools:         hangar.L7ToolRules{Allow: allow, Deny: deny, RequireApproval: approval},
 		Arguments:     hangar.L7ArgumentRules{SecretPatterns: secrets, MaxPayloadBytes: maxBytes},
 		DefaultAction: defaultAction,
+		Mode:          mode,
 	}
 }
 
