@@ -351,6 +351,7 @@ type L7PolicyPayload struct {
 	Tools         L7ToolRules     `json:"tools"`
 	Arguments     L7ArgumentRules `json:"arguments"`
 	DefaultAction string          `json:"defaultAction"`
+	Mode          string          `json:"mode,omitempty"`
 }
 
 // SetL7Policy pushes a compiled L7 egress policy for an mcp_server to core.
