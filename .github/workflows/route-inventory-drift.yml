@@ -1,0 +1,93 @@
+# Drift detection for the vendored copy of core's REST route inventory.
+#
+# `pkg/hangar/testdata/api-routes.json` is a copy of the file core generates from
+# its own routing table (core#664). The contract test in that package checks the
+# client's URLs against it -- which is only worth anything while the copy is
+# current. A stale copy validates the client against yesterday's core, which is
+# precisely how the /api/v1 paths survived months of green builds (#91).
+#
+# Deliberately informational, in the shape of core's interceptor-pin-drift: it
+# opens an issue and never edits code. A route appearing in core is not
+# automatically something this operator should follow, and a route disappearing
+# is a decision someone should read before a bot reacts to it.
+name: route-inventory-drift
+
+on:
+  schedule:
+    - cron: "0 7 * * 1" # weekly, Monday 07:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  UPSTREAM: mcp-hangar/mcp-hangar
+  # The branch core publishes the inventory from. The v2 line is where the API
+  # is moving; point this at the release line when 2.0 is final.
+  UPSTREAM_REF: mcp2
+  VENDORED: pkg/hangar/testdata/api-routes.json
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compare the vendored inventory to core
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          gh api "repos/${UPSTREAM}/contents/api-routes.json?ref=${UPSTREAM_REF}" \
+            --jq '.content' | base64 -d > /tmp/upstream-routes.json
+
+          # Compare the route list only. `note` is prose and `count` is derived,
+          # so neither should open an issue on its own.
+          jq -S '.routes' "${VENDORED}" > /tmp/ours.json
+          jq -S '.routes' /tmp/upstream-routes.json > /tmp/theirs.json
+
+          if diff -q /tmp/ours.json /tmp/theirs.json >/dev/null; then
+            echo "No drift; the vendored route inventory matches ${UPSTREAM}@${UPSTREAM_REF}."
+            exit 0
+          fi
+
+          echo "::warning::The vendored route inventory has drifted from core."
+          delta="$(diff /tmp/ours.json /tmp/theirs.json | head -40 || true)"
+
+          title="route inventory drift: core's REST surface has moved"
+          body=$(cat <<EOF
+          \`${VENDORED}\` no longer matches \`api-routes.json\` on \`${UPSTREAM}@${UPSTREAM_REF}\`.
+
+          The contract test in \`pkg/hangar\` validates this client's URLs against the vendored copy, so while it is stale the check is measuring against yesterday's core. That is how the \`/api/v1\` paths survived months of green builds (#91).
+
+          Refresh the copy and let the tests speak:
+
+          \`\`\`
+          gh api repos/${UPSTREAM}/contents/api-routes.json?ref=${UPSTREAM_REF} --jq .content | base64 -d > ${VENDORED}
+          go test ./pkg/hangar/
+          \`\`\`
+
+          A failure after refreshing means core moved a route this operator calls -- follow it. A clean run means core changed something we do not use, and the refresh is bookkeeping.
+
+          <details><summary>First lines of the diff</summary>
+
+          \`\`\`diff
+          ${delta}
+          \`\`\`
+
+          </details>
+          EOF
+          )
+
+          existing="$(gh issue list -R "${GITHUB_REPOSITORY}" --state open \
+            --search "in:title route inventory drift" --json number --jq '.[0].number // ""')"
+          if [ -n "${existing}" ]; then
+            gh issue comment "${existing}" -R "${GITHUB_REPOSITORY}" \
+              --body "Still drifted as of $(date -u +%Y-%m-%d)."
+          else
+            gh issue create -R "${GITHUB_REPOSITORY}" --title "${title}" --body "${body}" --label "type/chore" \
+              || gh issue create -R "${GITHUB_REPOSITORY}" --title "${title}" --body "${body}"
+          fi

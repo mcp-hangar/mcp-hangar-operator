@@ -274,7 +274,6 @@ func (c *Client) GetMCPServerHealth(ctx context.Context, name, namespace string)
 	return &health, nil
 }
 
-
 type L7ToolRules struct {
 	Allow           []string `json:"allow,omitempty"`
 	Deny            []string `json:"deny,omitempty"`
@@ -361,7 +360,11 @@ func (c *Client) DeregisterMCPServer(ctx context.Context, name, namespace string
 
 func (c *Client) Ping(ctx context.Context) (err error) {
 	defer c.observe("ping")(&err)
-	url := fmt.Sprintf("%s/health", c.baseURL)
+	// /health/live, not /health: core serves live/ready/startup and has no bare
+	// /health. This method had no callers, so nothing broke -- but it was dead in
+	// exactly the way the /api/v1 paths were, and was kept in #92 on the strength
+	// of an assumption rather than a check.
+	url := fmt.Sprintf("%s/health/live", c.baseURL)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
