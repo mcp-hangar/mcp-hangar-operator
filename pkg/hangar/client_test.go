@@ -83,43 +83,6 @@ func TestClient_GetMCPServerTools_Timeout(t *testing.T) {
 	assert.Nil(t, tools)
 }
 
-func TestClient_RegisterProvider_Success(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/providers", r.URL.Path)
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
-
-		var body RegisterMCPServerRequest
-		err := json.NewDecoder(r.Body).Decode(&body)
-		require.NoError(t, err)
-
-		assert.Equal(t, "test-provider", body.Name)
-		assert.Equal(t, "default", body.Namespace)
-
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"status": "registered",
-		})
-	}))
-	defer server.Close()
-
-	client := NewClient(&Config{
-		URL:    server.URL,
-		APIKey: "test-api-key",
-	})
-
-	req := &RegisterMCPServerRequest{
-		Name:      "test-provider",
-		Namespace: "default",
-		Mode:      "container",
-		Image:     "test:latest",
-	}
-
-	err := client.RegisterMCPServer(context.Background(), req)
-
-	assert.NoError(t, err)
-}
-
 func TestClient_DeregisterProvider_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/mcp_servers/test-provider", r.URL.Path)

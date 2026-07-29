@@ -274,76 +274,7 @@ func (c *Client) GetMCPServerHealth(ctx context.Context, name, namespace string)
 	return &health, nil
 }
 
-// GetProvider fetches provider information
-func (c *Client) GetMCPServer(ctx context.Context, name, namespace string) (_ *MCPServerInfo, err error) {
-	defer c.observe("get_server")(&err)
-	url := fmt.Sprintf("%s/api/v1/providers/%s/%s", c.baseURL, namespace, name)
 
-	resp, err := c.doWithRetry(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil // Provider doesn't exist
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var info MCPServerInfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return &info, nil
-}
-
-// RegisterProvider registers a provider with Hangar core
-type RegisterMCPServerRequest struct {
-	Name      string            `json:"name"`
-	Namespace string            `json:"namespace"`
-	Mode      string            `json:"mode"`
-	Endpoint  string            `json:"endpoint,omitempty"`
-	Image     string            `json:"image,omitempty"`
-	Labels    map[string]string `json:"labels,omitempty"`
-}
-
-func (c *Client) RegisterMCPServer(ctx context.Context, req *RegisterMCPServerRequest) (err error) {
-	defer c.observe("register")(&err)
-	url := fmt.Sprintf("%s/api/v1/providers", c.baseURL)
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	c.setHeaders(httpReq)
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("registration failed with status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	return nil
-}
-
-// L7ToolRules mirrors the L7 tool-glob rules the core parses.
 type L7ToolRules struct {
 	Allow           []string `json:"allow,omitempty"`
 	Deny            []string `json:"deny,omitempty"`
@@ -428,59 +359,6 @@ func (c *Client) DeregisterMCPServer(ctx context.Context, name, namespace string
 	return nil
 }
 
-// StartProvider starts a cold provider
-func (c *Client) StartMCPServer(ctx context.Context, name, namespace string) (err error) {
-	defer c.observe("start")(&err)
-	url := fmt.Sprintf("%s/api/v1/providers/%s/%s/start", c.baseURL, namespace, name)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	c.setHeaders(req)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("start failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
-}
-
-// StopProvider stops a provider
-func (c *Client) StopMCPServer(ctx context.Context, name, namespace string) (err error) {
-	defer c.observe("stop")(&err)
-	url := fmt.Sprintf("%s/api/v1/providers/%s/%s/stop", c.baseURL, namespace, name)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	c.setHeaders(req)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("stop failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
-}
-
-// Ping checks connectivity to Hangar core
 func (c *Client) Ping(ctx context.Context) (err error) {
 	defer c.observe("ping")(&err)
 	url := fmt.Sprintf("%s/health", c.baseURL)
