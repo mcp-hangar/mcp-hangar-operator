@@ -225,6 +225,55 @@ func (c *Client) GetMCPServerTools(ctx context.Context, name, namespace string) 
 	return names, nil
 }
 
+// MCPServerHealth is core's own view of a registered server's health, as
+// maintained by its health-check worker and by real tool invocations.
+type MCPServerHealth struct {
+	ConsecutiveFailures int     `json:"consecutive_failures"`
+	TotalInvocations    int     `json:"total_invocations"`
+	TotalFailures       int     `json:"total_failures"`
+	SuccessRate         float64 `json:"success_rate"`
+	CanRetry            bool    `json:"can_retry"`
+}
+
+// GetMCPServerHealth asks core how a registered server is doing.
+//
+// This replaces HealthCheckRemote, which posted an endpoint to
+// /api/v1/health/remote -- a route core does not serve, and has not for as long
+// as the rename has been in place (#91). Every remote MCPServer therefore sat
+// Degraded forever while working fine.
+//
+// Deliberately NOT GetMCPServerTools, which was the obvious substitute: that
+// endpoint answers from the read model, so a cached tool list would come back
+// for an upstream that is long gone. Trading a false Degraded for a false Ready
+// is the worse direction. This endpoint reports the health tracker core
+// actually maintains.
+func (c *Client) GetMCPServerHealth(ctx context.Context, name, namespace string) (_ *MCPServerHealth, err error) {
+	defer c.observe("get_health")(&err)
+	// Same keying as GetMCPServerTools: core keys by name, not namespace.
+	url := fmt.Sprintf("%s/api/mcp_servers/%s/health", c.baseURL, name)
+
+	resp, err := c.doWithRetry(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("mcp server not registered with core: %s/%s", namespace, name)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var health MCPServerHealth
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &health, nil
+}
+
 // GetProvider fetches provider information
 func (c *Client) GetMCPServer(ctx context.Context, name, namespace string) (_ *MCPServerInfo, err error) {
 	defer c.observe("get_server")(&err)
@@ -251,44 +300,6 @@ func (c *Client) GetMCPServer(ctx context.Context, name, namespace string) (_ *M
 	}
 
 	return &info, nil
-}
-
-// HealthCheckRemote checks if a remote endpoint is healthy
-func (c *Client) HealthCheckRemote(ctx context.Context, endpoint string) (healthy bool, tools []string, err error) {
-	defer c.observe("health_check")(&err)
-	url := fmt.Sprintf("%s/api/v1/health/remote", c.baseURL)
-
-	payload := struct {
-		Endpoint string `json:"endpoint"`
-	}{
-		Endpoint: endpoint,
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	resp, err := c.doWithRetry(ctx, http.MethodPost, url, body)
-	if err != nil {
-		return false, nil, err
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Healthy bool     `json:"healthy"`
-		Tools   []string `json:"tools"`
-		Error   string   `json:"error,omitempty"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return false, nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if result.Error != "" {
-		return false, nil, fmt.Errorf("health check error: %s", result.Error)
-	}
-
-	return result.Healthy, result.Tools, nil
 }
 
 // RegisterProvider registers a provider with Hangar core

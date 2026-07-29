@@ -516,9 +516,12 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 
 	// Health check via MCP-Hangar core (if client available)
 	if r.HangarClient != nil {
-		healthy, tools, err := r.HangarClient.HealthCheckRemote(ctx, endpoint)
+		// Two distinct failures, kept distinct: we could not ask core, or core
+		// says the upstream is failing. The first is our problem, the second is
+		// the upstream's, and conflating them made both unreadable.
+		health, err := r.HangarClient.GetMCPServerHealth(ctx, mcpServer.Name, mcpServer.Namespace)
 		if err != nil {
-			logger.Error(err, "Remote health check failed")
+			logger.Error(err, "Could not read health from Hangar core")
 			mcpServer.Status.State = mcpv1alpha1.MCPServerStateDegraded
 			mcpServer.Status.ConsecutiveFailures++
 			mcpServer.Status.SetCondition(ConditionDegraded, metav1.ConditionTrue, "HealthCheckFailed", err.Error())
@@ -526,20 +529,32 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 			metrics.MCPServerHealthCheckFailures.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Inc()
 			// Re-probe soon so recovery is detected fast, not after the full readyRequeueAfter window.
 			requeueAfter = errorRequeueAfter
-		} else if healthy {
+		} else if health.ConsecutiveFailures == 0 {
 			mcpServer.Status.State = mcpv1alpha1.MCPServerStateReady
-			mcpServer.Status.Tools = tools
-			mcpServer.Status.ToolsCount = int32(len(tools))
 			mcpServer.Status.ConsecutiveFailures = 0
 			now := metav1.Now()
 			mcpServer.Status.LastHealthCheck = &now
 			mcpServer.Status.SetCondition(ConditionReady, metav1.ConditionTrue, "EndpointHealthy", "Remote endpoint is healthy")
 			r.Recorder.Event(mcpServer, corev1.EventTypeNormal, ReasonHealthy, "Remote endpoint is healthy")
-			metrics.MCPServerToolsCount.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Set(float64(len(tools)))
+
+			// Tools come from the read model, which is the right source for a
+			// catalogue and the wrong one for liveness -- hence the separate
+			// call above. A failure here degrades the tool list, not the state.
+			if tools, toolErr := r.HangarClient.GetMCPServerTools(ctx, mcpServer.Name, mcpServer.Namespace); toolErr != nil {
+				logger.Error(toolErr, "Healthy, but could not read the tool list")
+			} else {
+				mcpServer.Status.Tools = tools
+				mcpServer.Status.ToolsCount = int32(len(tools))
+				metrics.MCPServerToolsCount.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Set(float64(len(tools)))
+			}
 		} else {
+			// Mirror core's counter rather than keeping our own. Ours counted
+			// probe attempts; this counts what core actually observed against
+			// the upstream, which is the number an operator wants to see.
 			mcpServer.Status.State = mcpv1alpha1.MCPServerStateDegraded
-			mcpServer.Status.ConsecutiveFailures++
-			mcpServer.Status.SetCondition(ConditionDegraded, metav1.ConditionTrue, "EndpointUnhealthy", "Remote endpoint failed health check")
+			mcpServer.Status.ConsecutiveFailures = int32(health.ConsecutiveFailures)
+			mcpServer.Status.SetCondition(ConditionDegraded, metav1.ConditionTrue, "EndpointUnhealthy",
+				fmt.Sprintf("Core reports %d consecutive failures (success rate %.2f)", health.ConsecutiveFailures, health.SuccessRate))
 			r.Recorder.Event(mcpServer, corev1.EventTypeWarning, ReasonUnhealthy, "Remote endpoint unhealthy")
 			// Re-probe soon so recovery is detected fast, not after the full readyRequeueAfter window.
 			requeueAfter = errorRequeueAfter

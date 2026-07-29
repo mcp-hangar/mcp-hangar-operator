@@ -170,17 +170,18 @@ func TestMCPServer_RemoteMode_WithEndpoint_AssumedReady(t *testing.T) {
 	assert.Equal(t, "http://example.com:8080", result.Status.Endpoint)
 }
 
-// hangarClientPointingAt builds a hangar.Client whose HealthCheckRemote calls
-// hit the given test server URL, with retries disabled so tests stay fast.
+// hangarClientPointingAt builds a hangar.Client whose health calls hit the
+// given test server URL, with retries disabled so tests stay fast.
 func hangarClientPointingAt(url string) *hangar.Client {
 	return hangar.NewClient(&hangar.Config{URL: url, MaxRetries: 1})
 }
 
 func TestMCPServer_RemoteMode_Unhealthy_RequeuesFast(t *testing.T) {
-	// Server reports the endpoint as unhealthy (healthy=false, no error).
+	// Core answers, and reports the upstream as failing. Not an error: the
+	// question was asked and answered -- the answer is bad news.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"healthy": false}`))
+		_, _ = w.Write([]byte(`{"consecutive_failures":3,"total_invocations":10,"total_failures":3,"success_rate":0.7,"can_retry":true}`))
 	}))
 	defer srv.Close()
 
@@ -207,9 +208,10 @@ func TestMCPServer_RemoteMode_Unhealthy_RequeuesFast(t *testing.T) {
 }
 
 func TestMCPServer_RemoteMode_HealthCheckError_RequeuesFast(t *testing.T) {
-	// Server returns an error payload -> HealthCheckRemote returns an error.
+	// Core itself cannot be reached -- a different failure from "the upstream
+	// is unwell", and the controller keeps the two apart.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error": "connection refused"}`))
 	}))
 	defer srv.Close()

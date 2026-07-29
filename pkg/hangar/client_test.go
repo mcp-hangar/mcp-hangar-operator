@@ -83,58 +83,6 @@ func TestClient_GetMCPServerTools_Timeout(t *testing.T) {
 	assert.Nil(t, tools)
 }
 
-func TestClient_HealthCheckRemote_Healthy(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/health/remote", r.URL.Path)
-		assert.Equal(t, "POST", r.Method)
-
-		response := map[string]interface{}{
-			"healthy": true,
-			"tools":   []string{"remote-tool1", "remote-tool2"},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	client := NewClient(&Config{
-		URL:    server.URL,
-		APIKey: "test-api-key",
-	})
-
-	healthy, tools, err := client.HealthCheckRemote(context.Background(), "https://api.example.com")
-
-	require.NoError(t, err)
-	assert.True(t, healthy)
-	assert.Len(t, tools, 2)
-	assert.Contains(t, tools, "remote-tool1")
-}
-
-func TestClient_HealthCheckRemote_Unhealthy(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := map[string]interface{}{
-			"healthy": false,
-			"tools":   []string{},
-			"error":   "connection refused",
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	client := NewClient(&Config{
-		URL:    server.URL,
-		APIKey: "test-api-key",
-	})
-
-	healthy, tools, err := client.HealthCheckRemote(context.Background(), "https://broken.example.com")
-
-	assert.Error(t, err)
-	assert.False(t, healthy)
-	assert.Empty(t, tools)
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
 func TestClient_RegisterProvider_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/providers", r.URL.Path)
@@ -376,4 +324,54 @@ func TestClient_Retry_No4xxRetry(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, tools)
 	assert.Equal(t, 1, attempts, "should NOT retry on 4xx errors")
+}
+
+func TestClient_GetMCPServerHealth_Healthy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The route core actually serves. The old code posted to
+		// /api/v1/health/remote, which 404s -- see #91.
+		assert.Equal(t, "/api/mcp_servers/grafana/health", r.URL.Path)
+		assert.Equal(t, http.MethodGet, r.Method)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"consecutive_failures":0,"total_invocations":42,"total_failures":0,"success_rate":1.0,"can_retry":true}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(&Config{URL: server.URL})
+	health, err := client.GetMCPServerHealth(context.Background(), "grafana", "default")
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, health.ConsecutiveFailures)
+	assert.Equal(t, 42, health.TotalInvocations)
+	assert.InDelta(t, 1.0, health.SuccessRate, 0.001)
+}
+
+func TestClient_GetMCPServerHealth_Failing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"consecutive_failures":7,"total_invocations":10,"total_failures":7,"success_rate":0.3,"can_retry":false}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(&Config{URL: server.URL})
+	health, err := client.GetMCPServerHealth(context.Background(), "grafana", "default")
+
+	// A failing upstream is not a failing call: core answered, and it said the
+	// upstream is unwell. The controller decides what to do with that.
+	require.NoError(t, err)
+	assert.Equal(t, 7, health.ConsecutiveFailures)
+	assert.False(t, health.CanRetry)
+}
+
+func TestClient_GetMCPServerHealth_NotRegistered(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client := NewClient(&Config{URL: server.URL})
+	_, err := client.GetMCPServerHealth(context.Background(), "ghost", "default")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not registered")
 }
