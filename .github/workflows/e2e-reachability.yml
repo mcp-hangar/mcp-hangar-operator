@@ -1,0 +1,70 @@
+name: e2e reachability
+
+# Does the NetworkPolicy this operator builds actually block traffic?
+#
+# `make test` cannot answer that. The unit tests in pkg/networkpolicy assert on
+# API objects -- 104 assertions, none of which observe a packet -- and envtest is
+# an apiserver plus etcd with no controller-manager and no CNI, so a
+# NetworkPolicy there is a stored document and nothing more.
+#
+# Nightly rather than per-PR: it builds a cluster and installs a CNI, which is
+# minutes and depends on pulling images from two registries. Making that a
+# required check would trade a real signal for a flaky one. A failure here means
+# the operator's L3/L4 enforcement stopped working, which is worth a morning's
+# attention rather than a blocked merge.
+
+on:
+  schedule:
+    # 03:20 UTC, before the working day and off the top of the hour to avoid the
+    # cron stampede that delays scheduled jobs on shared runners.
+    - cron: "20 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    # Run on PRs that touch the policy builders or the harness itself, so a
+    # change to what is generated is checked against what is enforced before it
+    # lands -- not the next morning.
+    paths:
+      - "pkg/networkpolicy/**"
+      - "internal/controller/**"
+      - "api/**"
+      - "test/e2e/**"
+      - ".github/workflows/e2e-reachability.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-reachability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reachability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Create kind cluster with Calico
+        # kind's default CNI (kindnet) does NOT enforce NetworkPolicy. Running
+        # these tests on it would pass every deny assertion for the wrong
+        # reason, which is worse than not running them.
+        run: make e2e-cluster
+
+      - name: Reachability tests
+        run: make e2e
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods -A -o wide || true
+          kubectl get networkpolicies -A -o yaml || true
+          kubectl -n kube-system logs -l k8s-app=calico-node --tail=100 || true
+
+      - name: Tear down
+        if: always()
+        run: make e2e-clean
