@@ -26,6 +26,26 @@ const (
 	AnnotationGeneration = "mcp-hangar.io/generation"
 	AnnotationConfigHash = "mcp-hangar.io/config-hash"
 
+	// Discovery annotations. These are how a pod becomes a server in the
+	// gateway: core's kubernetes discovery source skips any pod without
+	// `enabled: "true"`, and the operator's client has no registration call, so
+	// without these an MCPServer created through the CRD produced a Running pod
+	// that the gateway never heard of -- while the CR reported Ready (#100).
+	AnnotationDiscoveryEnabled = "mcp-hangar.io/enabled"
+	AnnotationDiscoveryName    = "mcp-hangar.io/name"
+	AnnotationDiscoveryMode    = "mcp-hangar.io/mode"
+	AnnotationDiscoveryPort    = "mcp-hangar.io/port"
+
+	// DiscoveryModeHTTP is what a container-mode MCPServer looks like from the
+	// gateway's side: a pod serving HTTP at its own address. Core maps this to
+	// a remote server pointed at the pod IP.
+	DiscoveryModeHTTP = "http"
+
+	// DefaultDiscoveryPort matches core's own default for the port annotation.
+	// The MCPServer spec has no port field, so both sides have to agree on one
+	// number; when the spec grows one, this is where it stops being a constant.
+	DefaultDiscoveryPort = 8080
+
 	// Container names
 	ContainerProvider = "provider"
 
@@ -51,12 +71,10 @@ func BuildPodForMCPServer(provider *mcpv1alpha1.MCPServer) (*corev1.Pod, error) 
 	// Build Pod
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      podName,
-			Namespace: provider.Namespace,
-			Labels:    buildLabels(provider),
-			Annotations: map[string]string{
-				AnnotationGeneration: strconv.FormatInt(provider.Generation, 10),
-			},
+			Name:        podName,
+			Namespace:   provider.Namespace,
+			Labels:      buildLabels(provider),
+			Annotations: buildAnnotations(provider),
 		},
 		Spec: corev1.PodSpec{
 			Containers:                    []corev1.Container{container},
@@ -128,6 +146,35 @@ func buildContainer(provider *mcpv1alpha1.MCPServer) corev1.Container {
 	}
 
 	return container
+}
+
+// buildAnnotations creates the pod annotations, including the ones core's
+// kubernetes discovery source reads.
+//
+// Stamping these is what connects the two halves. The operator creates the pod
+// and never registers anything with the gateway -- its client has read, policy
+// and delete calls, and no create -- so the gateway learns about a pod through
+// discovery or not at all. `name` carries the MCPServer's own name rather than
+// the pod's, because that is the identity the user wrote and the one they will
+// look for in the gateway.
+//
+// Deliberately not stamped: `mcp-hangar.io/ttl`. Core reads that as the
+// discovery TTL -- how long an entry survives without being seen again -- and
+// the spec's `idleTTL` means how long an idle server stays running. Mapping one
+// onto the other because the names rhyme would quietly deregister busy servers.
+func buildAnnotations(provider *mcpv1alpha1.MCPServer) map[string]string {
+	annotations := map[string]string{
+		AnnotationGeneration: strconv.FormatInt(provider.Generation, 10),
+	}
+
+	if provider.Spec.Mode == mcpv1alpha1.MCPServerModeContainer {
+		annotations[AnnotationDiscoveryEnabled] = "true"
+		annotations[AnnotationDiscoveryName] = provider.Name
+		annotations[AnnotationDiscoveryMode] = DiscoveryModeHTTP
+		annotations[AnnotationDiscoveryPort] = strconv.Itoa(DefaultDiscoveryPort)
+	}
+
+	return annotations
 }
 
 // buildLabels creates standard labels for provider resources
