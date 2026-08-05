@@ -113,15 +113,24 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 	//     members a single settle window can produce many reconciles that
 	//     all recompute the *same* aggregate; without this guard, each one
 	//     would still issue its own status write.
-	//  2. It is the patch base for a conflict-tolerant status merge-patch
-	//     (see updateStatus) instead of a full-object Update(), which
-	//     requires the resourceVersion to still match at write time.
+	//  2. It is the patch base for the status merge-patch in updateStatus,
+	//     which sends only the fields this reconcile actually changed instead
+	//     of a full-object Update() -- so a reconcile that changes one counter
+	//     does not rewrite the whole status.
 	//
-	// Together these are the fix for #32: full-object Update() calls that
-	// each raced the informer cache (which can briefly lag behind this
-	// controller's own prior write) and lost the optimistic-concurrency
-	// check, producing a self-sustaining "object has been modified" conflict
-	// storm proportional to member count.
+	// (1) is the fix for #32: full-object Update() calls each raced the
+	// informer cache -- which can briefly lag behind this controller's own
+	// prior write -- and produced a self-sustaining "object has been modified"
+	// conflict storm proportional to member count. Skipping the write when
+	// nothing changed is what ended that storm, and it still does.
+	//
+	// The patch itself carries a resourceVersion precondition (see
+	// updateStatus). It has to: a diff taken against a stale base is only
+	// correct if the live object still matches that base. Without the
+	// precondition, any field where base and new agree is left out of the
+	// patch and keeps whatever the *live* object has -- so a status could end
+	// up a mixture of two reconciles, with per-state counters summing to more
+	// than the member count and the member list from neither.
 	original := group.DeepCopy()
 
 	// Update observed generation if changed
@@ -237,14 +246,23 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 // 30-member scale -- a single conflicting retry is normal, but the storm was
 // self-sustaining and proportional to member count.
 //
-// client.MergeFrom(original), by contrast, does not include a resourceVersion
-// precondition, so the resulting PATCH is applied to whatever the live object
-// currently is -- it does not fail with a version conflict. That's safe here
-// specifically because this controller is the sole writer of this status
-// subresource (nothing else ever calls Status().Update/Patch on a Group) and
-// fully recomputes every tracked field from canonical inputs (the member
-// list and spec) on each reconcile, so there is no partial/incremental state
-// that a stale patch could corrupt.
+// The precondition is not optional, and being the sole writer does not remove
+// the need for it. A merge patch carries only the fields that differ between
+// the base and the new object, so every field where they agree is left to
+// whatever the live object holds. When the base is a cached read that lags this
+// controller's own previous write, "agrees with the base" and "agrees with
+// reality" are different questions, and the patch answers the wrong one.
+//
+// The result is a status assembled from two reconciles: per-state counters
+// summing to more than providerCount, and a member list belonging to neither.
+// It was reproducible under `go test -race`, which slows the reconciler enough
+// to widen the window, and it is why the aggregation tests flaked.
+//
+// MergeFromWithOptimisticLock adds metadata.resourceVersion to the patch, so a
+// stale base is rejected with 409 instead of silently merging. The conflict is
+// counted below and the reconcile requeues with a fresh read. The write-skip in
+// updateStatus is what keeps those conflicts rare -- it is the part that fixed
+// the #32 storm, and it is untouched.
 func (r *MCPServerGroupReconciler) updateStatus(ctx context.Context, group *mcpv1alpha1.MCPServerGroup, original *mcpv1alpha1.MCPServerGroup) error {
 	logger := log.FromContext(ctx)
 
@@ -253,7 +271,7 @@ func (r *MCPServerGroupReconciler) updateStatus(ctx context.Context, group *mcpv
 		return nil
 	}
 
-	if err := r.Status().Patch(ctx, group, client.MergeFrom(original)); err != nil {
+	if err := r.Status().Patch(ctx, group, client.MergeFromWithOptions(original, client.MergeFromWithOptimisticLock{})); err != nil {
 		if errors.IsConflict(err) {
 			metrics.GroupStatusWriteTotal.WithLabelValues(group.Namespace, group.Name, "conflict").Inc()
 		} else {
