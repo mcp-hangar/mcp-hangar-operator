@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/rand"
 
 	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
 	"github.com/mcp-hangar/operator/pkg/metrics"
@@ -33,7 +34,17 @@ func waitForGroupCondition(t *testing.T, name, namespace, condType string, statu
 	}, 10*time.Second, 250*time.Millisecond, "condition %s=%s not met for group %s/%s", condType, status, namespace, name)
 }
 
-// waitForGroupMCPServerCount polls until the group status shows the expected provider count
+// waitForGroupMCPServerCount polls until the group status shows the expected provider count.
+//
+// Waiting on the total is only safe when the total is all you then assert. A
+// member joins the group in two writes -- Create, then a status update carrying
+// its state -- and the group reconciles on both. So the first reconcile that
+// sees the last member counts it with an empty state: the total is already
+// right while the per-state counters are not. A test that waits here and then
+// asserts ReadyCount passes or fails on which write the reconcile happened to
+// observe, which is what made TestMCPServerGroup_StatusAggregation flake.
+//
+// Use waitForGroupCounts when the per-state counters matter.
 func waitForGroupMCPServerCount(t *testing.T, name, namespace string, count int32) {
 	t.Helper()
 	require.Eventually(t, func() bool {
@@ -45,10 +56,70 @@ func waitForGroupMCPServerCount(t *testing.T, name, namespace string, count int3
 	}, 10*time.Second, 250*time.Millisecond, "expected provider count %d for group %s/%s", count, namespace, name)
 }
 
+// groupCounts is the aggregate a group test actually cares about.
+type groupCounts struct {
+	Provider int32
+	Ready    int32
+	Degraded int32
+	Dead     int32
+	Cold     int32
+}
+
+func countsOf(group *mcpv1alpha1.MCPServerGroup) groupCounts {
+	return groupCounts{
+		Provider: group.Status.ProviderCount,
+		Ready:    group.Status.ReadyCount,
+		Degraded: group.Status.DegradedCount,
+		Dead:     group.Status.DeadCount,
+		Cold:     group.Status.ColdCount,
+	}
+}
+
+// waitForGroupCounts polls until the whole aggregate matches, and returns the
+// group it settled on.
+//
+// The difference from waitForGroupMCPServerCount is the point: the condition
+// and the assertion are the same thing here, so there is no window between them
+// for another reconcile to change the answer.
+//
+// The fresh object per poll is not tidiness, it is correctness, and it cost an
+// afternoon to learn: every counter is `omitempty`, so a zero is absent from the
+// response body, and decoding into a reused struct leaves the previous poll's
+// value sitting there. A helper that reused one object reported counters that
+// could only ever rise -- which reads exactly like a controller bug, and is not.
+func waitForGroupCounts(t *testing.T, name, namespace string, want groupCounts) *mcpv1alpha1.MCPServerGroup {
+	t.Helper()
+	var settled *mcpv1alpha1.MCPServerGroup
+	var last groupCounts
+	var lastMembers []mcpv1alpha1.MCPServerMemberStatus
+	require.Eventually(t, func() bool {
+		group := &mcpv1alpha1.MCPServerGroup{}
+		if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, group); err != nil {
+			return false
+		}
+		last = countsOf(group)
+		lastMembers = group.Status.Providers
+		if last != want {
+			return false
+		}
+		settled = group
+		return true
+	}, 10*time.Second, 250*time.Millisecond,
+		"group %s/%s never reached %+v; last seen %+v; members %+v", namespace, name, want, &last, lastMembers)
+	return settled
+}
+
 // createMCPServer creates an MCPServer and sets its status state via the status subresource.
-// Note: MCPServer reconciler runs concurrently and may temporarily override the state.
-// The group reconciler reads the state at reconcile time, so we retry setting state
-// and give the group reconciler time to pick up the desired state.
+//
+// This takes two writes, and that is the thing to keep in mind when using it:
+// between the Create and the status update the member exists with an empty
+// state, and the group reconciles on both events. Wait on what you assert.
+//
+// The MCPServer reconciler does NOT run in this suite -- `enableMCPServerReconciler`
+// is false precisely so group tests can own these states. The note that used to
+// be here said the opposite, and cost an investigation before the real race was
+// found; the retry below is for ordinary optimistic-lock conflicts, not for a
+// second controller fighting over the field.
 func createMCPServer(t *testing.T, name, namespace string, state mcpv1alpha1.MCPServerState, labels map[string]string) *mcpv1alpha1.MCPServer {
 	t.Helper()
 	provider := &mcpv1alpha1.MCPServer{
@@ -76,14 +147,58 @@ func createMCPServer(t *testing.T, name, namespace string, state mcpv1alpha1.MCP
 	return provider
 }
 
-// createNamespace creates a namespace for test isolation
+// createNamespace makes a namespace for test isolation, with a unique suffix.
+//
+// The suffix is what makes `-count=N` possible. envtest runs no namespace
+// controller, so a deleted namespace stays Terminating forever and a fixed name
+// fails the second run with "object is being deleted ... already exists". That
+// turned the one tool for confirming a flake fix -- run it a hundred times --
+// into a guaranteed failure, so nobody could tell a real fix from a lucky one.
 func createNamespace(t *testing.T, name string) *corev1.Namespace {
 	t.Helper()
 	ns := &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
+		ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-%s", name, rand.String(5))},
 	}
 	require.NoError(t, k8sClient.Create(ctx, ns))
 	return ns
+}
+
+// A counter has to be able to come back down, and nothing pinned that.
+//
+// Every member starts with no state, which the aggregation counts as cold, so
+// every group passes through a non-zero coldCount on its way to steady state.
+// The existing tests only ever asserted counters going up, which leaves the
+// falling direction untested for a status written as a diff patch -- and the
+// falling direction is the one that decides whether a recovered group ever
+// stops reporting degraded members.
+//
+// The controller gets this right today. This is here so a change to how the
+// status is written cannot quietly lose it.
+func TestMCPServerGroup_CountersReturnToZero(t *testing.T) {
+	ns := createNamespace(t, "test-group-counter-zero")
+	defer k8sClient.Delete(ctx, ns)
+
+	labels := map[string]string{"tier": "zeroing"}
+	require.NoError(t, k8sClient.Create(ctx, &mcpv1alpha1.MCPServerGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: "zero-group", Namespace: ns.Name},
+		Spec:       mcpv1alpha1.MCPServerGroupSpec{Selector: &metav1.LabelSelector{MatchLabels: labels}},
+	}))
+
+	// Cold first, so the counter is genuinely non-zero before we ask it to fall.
+	member := createMCPServer(t, "settles", ns.Name, mcpv1alpha1.MCPServerStateCold, labels)
+	waitForGroupCounts(t, "zero-group", ns.Name, groupCounts{Provider: 1, Cold: 1})
+
+	require.Eventually(t, func() bool {
+		p := &mcpv1alpha1.MCPServer{}
+		if err := k8sClient.Get(ctx, types.NamespacedName{Name: member.Name, Namespace: ns.Name}, p); err != nil {
+			return false
+		}
+		p.Status.State = mcpv1alpha1.MCPServerStateReady
+		return k8sClient.Status().Update(ctx, p) == nil
+	}, 10*time.Second, 100*time.Millisecond, "failed to move the member to Ready")
+
+	// The assertion: coldCount is 0 again, not stuck at 1.
+	waitForGroupCounts(t, "zero-group", ns.Name, groupCounts{Provider: 1, Ready: 1, Cold: 0})
 }
 
 func TestMCPServerGroup_LabelSelection(t *testing.T) {
@@ -111,14 +226,11 @@ func TestMCPServerGroup_LabelSelection(t *testing.T) {
 	createMCPServer(t, "api-ready", ns.Name, mcpv1alpha1.MCPServerStateReady, map[string]string{"app": "api"})
 
 	// Wait for group to reconcile with 2 providers
-	waitForGroupMCPServerCount(t, "label-group", ns.Name, 2)
-
-	// Verify counts
-	result := &mcpv1alpha1.MCPServerGroup{}
-	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: "label-group", Namespace: ns.Name}, result))
-	assert.Equal(t, int32(2), result.Status.ProviderCount)
-	assert.Equal(t, int32(1), result.Status.ReadyCount)
-	assert.Equal(t, int32(1), result.Status.DegradedCount)
+	// Same latent race as the aggregation test: the selector test asserts
+	// per-state counters, so it has to wait on them rather than on the total.
+	result := waitForGroupCounts(t, "label-group", ns.Name, groupCounts{
+		Provider: 2, Ready: 1, Degraded: 1,
+	})
 
 	// Verify unmatched provider is not in the list
 	for _, p := range result.Status.Providers {
@@ -152,16 +264,10 @@ func TestMCPServerGroup_StatusAggregation(t *testing.T) {
 	createMCPServer(t, "dead-1", ns.Name, mcpv1alpha1.MCPServerStateDead, groupLabels)
 	createMCPServer(t, "cold-1", ns.Name, mcpv1alpha1.MCPServerStateCold, groupLabels)
 
-	waitForGroupMCPServerCount(t, "agg-group", ns.Name, 5)
+	result := waitForGroupCounts(t, "agg-group", ns.Name, groupCounts{
+		Provider: 5, Ready: 2, Degraded: 1, Dead: 1, Cold: 1,
+	})
 
-	result := &mcpv1alpha1.MCPServerGroup{}
-	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: "agg-group", Namespace: ns.Name}, result))
-
-	assert.Equal(t, int32(5), result.Status.ProviderCount)
-	assert.Equal(t, int32(2), result.Status.ReadyCount)
-	assert.Equal(t, int32(1), result.Status.DegradedCount)
-	assert.Equal(t, int32(1), result.Status.DeadCount)
-	assert.Equal(t, int32(1), result.Status.ColdCount)
 	assert.Len(t, result.Status.Providers, 5)
 }
 
