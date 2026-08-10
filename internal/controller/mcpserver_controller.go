@@ -16,9 +16,11 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
 	"github.com/mcp-hangar/operator/internal/webhook"
@@ -523,7 +525,18 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 		if err != nil {
 			logger.Error(err, "Could not read health from Hangar core")
 			mcpServer.Status.State = mcpv1alpha1.MCPServerStateDegraded
-			mcpServer.Status.ConsecutiveFailures++
+			// ConsecutiveFailures is deliberately NOT touched here. It mirrors
+			// what core observed against the upstream -- the branch below says
+			// so -- and this branch is the one where core could not be asked at
+			// all, so there is nothing new to mirror.
+			//
+			// Incrementing it here also made the status differ on every single
+			// reconcile, and this controller watches its own resource: each
+			// status write produced an update event, which produced another
+			// reconcile, immediately. Measured on a live cluster against a
+			// server core did not know: 168 failures per second and 1.8 million
+			// on the counter. `errorRequeueAfter` is 10s and was never reached,
+			// because the watch event always arrived first.
 			mcpServer.Status.SetCondition(ConditionDegraded, metav1.ConditionTrue, "HealthCheckFailed", err.Error())
 			r.Recorder.Event(mcpServer, corev1.EventTypeWarning, ReasonUnhealthy, fmt.Sprintf("Health check failed: %v", err))
 			metrics.MCPServerHealthCheckFailures.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Inc()
@@ -873,7 +886,21 @@ func (r *MCPServerReconciler) reconcileDelete(ctx context.Context, mcpServer *mc
 // SetupWithManager sets up the controller with the Manager
 func (r *MCPServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&mcpv1alpha1.MCPServer{}).
+		// A controller that writes status to the resource it watches will
+		// re-trigger itself on its own writes unless something says otherwise,
+		// and nothing did: an unhealthy remote server spun at 168 reconciles a
+		// second, bounded only by API round-trip latency.
+		//
+		// Not a bare GenerationChangedPredicate, which would drop metadata
+		// changes too -- the discovery annotations this operator stamps are
+		// exactly that. Spec, labels and annotations still wake it; a status-only
+		// update does not, and the RequeueAfter this reconciler already returns
+		// is what paces the polling.
+		For(&mcpv1alpha1.MCPServer{}, builder.WithPredicates(predicate.Or(
+			predicate.GenerationChangedPredicate{},
+			predicate.LabelChangedPredicate{},
+			predicate.AnnotationChangedPredicate{},
+		))).
 		Owns(&corev1.Pod{}).
 		Owns(&networkingv1.NetworkPolicy{}).
 		Complete(r)
