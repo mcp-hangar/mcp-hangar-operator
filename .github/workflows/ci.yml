@@ -17,6 +17,15 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Keep in step with Makefile's ENVTEST_K8S_VERSION so a local `make test` and
+  # CI agree about which apiserver the suite ran against.
+  ENVTEST_K8S_VERSION: "1.34.1"
+  # The apiserver the generated CRDs must install on, pinned by digest so a kind
+  # release cannot silently change what "current Kubernetes" means here. 1.36 is
+  # deliberate: it is the version that rejected the CRD in #54.
+  KIND_NODE_IMAGE: "kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5"
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -44,7 +53,7 @@ jobs:
       - name: Run tests (race)
         run: |
           set -euo pipefail
-          KUBEBUILDER_ASSETS="$(setup-envtest use 1.29.0 -p path)"
+          KUBEBUILDER_ASSETS="$(setup-envtest use "$ENVTEST_K8S_VERSION" -p path)"
           export KUBEBUILDER_ASSETS
           go test -race ./...
 
@@ -63,3 +72,62 @@ jobs:
           # the k8s v0.36 / controller-runtime v0.24 bump requires. Action v8 is
           # the v2-compatible major (v6 is v1-only); .golangci.yml is v2 format.
           version: v2.12.2
+
+  # Does what this repo generates actually install on a current Kubernetes?
+  #
+  # `make test` could not answer that for the CRDs' CEL rules, and for a while
+  # nothing could: the envtest suite stripped x-kubernetes-validations before
+  # handing the CRDs over, so an invalid rule was invisible at every version.
+  # That is how a rule reading `self.metadata.annotations` -- a field CRD
+  # validation CEL does not expose -- shipped in a release and failed at
+  # `kubectl apply` on k8s 1.36 (#30, #54).
+  #
+  # The stripping is gone, so the suite now catches a bad rule too. This job
+  # covers what the suite structurally cannot: that the YAML in
+  # config/crd/bases is what the types generate, and that a REAL apiserver
+  # Establishes it. Fast on purpose -- no CNI, no operator, no CRs.
+  crd-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # A stale config/crd/bases would let this job pass against yesterday's
+      # CRDs while the types say something else.
+      - name: Manifests are up to date
+        run: |
+          set -euo pipefail
+          make manifests
+          if ! git diff --quiet -- config/crd/bases; then
+            echo "::error::config/crd/bases is stale -- run 'make manifests' and commit the result."
+            git diff --stat -- config/crd/bases
+            exit 1
+          fi
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: crd-install
+          node_image: ${{ env.KIND_NODE_IMAGE }}
+
+      - name: Install the generated CRDs
+        run: |
+          set -euo pipefail
+          kubectl apply --server-side -f config/crd/bases/
+
+      # apply succeeding is not the assertion: a CRD can be accepted and then
+      # fail to Establish. Waiting on the condition is what proves it is usable.
+      - name: Every CRD reaches Established
+        run: |
+          set -euo pipefail
+          names="$(kubectl get crd -o name -l '' | grep 'mcp-hangar.io' || true)"
+          if [ -z "$names" ]; then
+            echo "::error::no mcp-hangar.io CRDs found after apply"
+            exit 1
+          fi
+          echo "$names"
+          # shellcheck disable=SC2086
+          kubectl wait --for=condition=Established --timeout=60s $names
