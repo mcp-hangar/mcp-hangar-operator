@@ -39,9 +39,13 @@ func TestMain(m *testing.M) {
 		panic("failed to load test CRDs: " + err.Error())
 	}
 
-	// Configure envtest with generated CRDs from this repo.
-	// For envtest we strip CEL x-kubernetes-validations because the local
-	// control-plane version used in tests rejects metadata.annotations access.
+	// Configure envtest with the generated CRDs from this repo, CEL rules and
+	// all. They used to be stripped, because one rule read
+	// `self.metadata.annotations` -- a field CRD validation CEL does not expose
+	// -- and the control plane rejected the CRD. Stripping made the suite pass
+	// and left the CRD uninstallable on any current cluster (#30, #54). The
+	// rule is gone; handing the apiserver what we actually ship is the check
+	// that would have caught it.
 	testEnv = &envtest.Environment{
 		CRDs:                  crds,
 		ErrorIfCRDPathMissing: true,
@@ -154,9 +158,13 @@ func firstFoundEnvTestBinaryDir() string {
 }
 
 func loadTestCRDs() ([]*apiextensionsv1.CustomResourceDefinition, error) {
+	// Every CRD this repo generates. mcpegresspolicies was missing, and it is
+	// the only one carrying a CEL rule -- so the single rule in the tree was
+	// unreached twice over: not loaded here, and stripped if it had been.
 	base := filepath.Join("..", "..", "config", "crd", "bases")
 	files := []string{
 		"mcp-hangar.io_mcpdiscoverysources.yaml",
+		"mcp-hangar.io_mcpegresspolicies.yaml",
 		"mcp-hangar.io_mcpservergroups.yaml",
 		"mcp-hangar.io_mcpservers.yaml",
 	}
@@ -173,75 +181,8 @@ func loadTestCRDs() ([]*apiextensionsv1.CustomResourceDefinition, error) {
 			return nil, err
 		}
 
-		for i := range crd.Spec.Versions {
-			if crd.Spec.Versions[i].Schema == nil {
-				continue
-			}
-			stripXValidations(crd.Spec.Versions[i].Schema.OpenAPIV3Schema)
-		}
-
 		crds = append(crds, crd)
 	}
 
 	return crds, nil
-}
-
-func stripXValidations(schema *apiextensionsv1.JSONSchemaProps) {
-	if schema == nil {
-		return
-	}
-
-	schema.XValidations = nil
-
-	for key := range schema.Properties {
-		child := schema.Properties[key]
-		stripXValidations(&child)
-		schema.Properties[key] = child
-	}
-
-	for i := range schema.AllOf {
-		stripXValidations(&schema.AllOf[i])
-	}
-	for i := range schema.AnyOf {
-		stripXValidations(&schema.AnyOf[i])
-	}
-	for i := range schema.OneOf {
-		stripXValidations(&schema.OneOf[i])
-	}
-	if schema.Not != nil {
-		stripXValidations(schema.Not)
-	}
-	if schema.Items != nil {
-		stripXValidations(schema.Items.Schema)
-		for i := range schema.Items.JSONSchemas {
-			stripXValidations(&schema.Items.JSONSchemas[i])
-		}
-	}
-	if schema.AdditionalProperties != nil {
-		stripXValidations(schema.AdditionalProperties.Schema)
-	}
-	if schema.AdditionalItems != nil {
-		stripXValidations(schema.AdditionalItems.Schema)
-	}
-	if schema.PatternProperties != nil {
-		for key := range schema.PatternProperties {
-			child := schema.PatternProperties[key]
-			stripXValidations(&child)
-			schema.PatternProperties[key] = child
-		}
-	}
-	if schema.Dependencies != nil {
-		for key := range schema.Dependencies {
-			dep := schema.Dependencies[key]
-			if dep.Schema != nil {
-				stripXValidations(dep.Schema)
-			}
-			schema.Dependencies[key] = dep
-		}
-	}
-	for i := range schema.Definitions {
-		child := schema.Definitions[i]
-		stripXValidations(&child)
-		schema.Definitions[i] = child
-	}
 }
