@@ -7,7 +7,7 @@
 | Module | `github.com/mcp-hangar/operator` |
 | Language | Go 1.23 |
 | Framework | controller-runtime v0.17 (kubebuilder) |
-| CRD API version | `mcp-hangar.io/v1alpha1` |
+| CRD API version | `mcp-hangar.io/v1alpha2` (storage; v1alpha1 still served, converted) |
 | Linting | golangci-lint v1.55 |
 | Testing | envtest + testify + gomega |
 | Image | `ghcr.io/mcp-hangar/mcp-hangar-operator` |
@@ -54,11 +54,16 @@ make uninstall       # remove CRDs
 ```
 operator/
 ├── api/
-│   └── v1alpha1/                  # CRD type definitions
-│       ├── groupversion_info.go   # SchemeBuilder, GroupVersion
-│       ├── mcpprovider_types.go   # MCPProvider CRD
-│       ├── mcpprovidergroup_types.go  # MCPProviderGroup CRD
-│       ├── mcpdiscoverysource_types.go # MCPDiscoverySource CRD
+│   ├── v1alpha1/                  # served, converted to the hub
+│   │   ├── groupversion_info.go   # SchemeBuilder, GroupVersion
+│   │   ├── conversion.go          # hand-written conversion to/from v1alpha2
+│   │   ├── mcpserver_types.go     # MCPServer CRD
+│   │   ├── mcpservergroup_types.go # MCPServerGroup CRD
+│   │   ├── mcpdiscoverysource_types.go # MCPDiscoverySource CRD
+│   │   └── zz_generated.deepcopy.go   # Generated -- do not edit
+│   └── v1alpha2/                  # STORAGE version (the hub)
+│       ├── mcpserver_types.go, mcpservergroup_types.go
+│       ├── mcpdiscoverysource_types.go, mcpegresspolicy_types.go
 │       └── zz_generated.deepcopy.go   # Generated -- do not edit
 │
 ├── cmd/
@@ -67,13 +72,13 @@ operator/
 │
 ├── internal/
 │   └── controller/                # Reconciliation controllers
-│       ├── mcpprovider_controller.go
-│       ├── mcpprovidergroup_controller.go
+│       ├── mcpserver_controller.go
+│       ├── mcpservergroup_controller.go
 │       ├── mcpdiscoverysource_controller.go
+│       ├── mcpegresspolicy_controller.go
 │       ├── suite_test.go          # envtest setup (TestMain)
-│       ├── controller_test.go
-│       ├── mcpprovidergroup_controller_test.go
-│       └── mcpdiscoverysource_controller_test.go
+│       ├── admission_test.go      # CRD schema bounds, against a real apiserver
+│       └── *_controller_test.go
 │
 ├── pkg/
 │   ├── hangar/                    # Client for MCP Hangar core
@@ -97,24 +102,21 @@ operator/
 
 ## Custom Resource Definitions
 
-### MCPProvider
+### MCPServer
 
-Manages individual MCP provider lifecycle in Kubernetes.
+Manages an individual MCP server's lifecycle in Kubernetes.
 
 ```yaml
-apiVersion: mcp-hangar.io/v1alpha1
-kind: MCPProvider
+apiVersion: mcp-hangar.io/v1alpha2
+kind: MCPServer
 metadata:
-  name: math-provider
+  name: math-server
 spec:
   mode: container           # container | remote
   image: ghcr.io/example/math-mcp:latest
   replicas: 1
-  idleTTL: "5m"
   startupTimeout: "30s"
-  healthCheck:
-    enabled: true
-    interval: "30s"
+  shutdownGracePeriod: "30s"
   resources:
     requests:
       cpu: "100m"
@@ -124,13 +126,20 @@ spec:
       memory: "256Mi"
 ```
 
-### MCPProviderGroup
+Idle stop, circuit breaking and tool allow-lists are **core** settings
+(`config.yaml` / REST), not `MCPServer` fields. The operator is the deploy-time
+admission plane; do not add CR fields for them, and do not teach the operator to
+call those APIs.
 
-Groups providers for load balancing and failover.
+### MCPServerGroup
+
+Selects `MCPServer`s by label, counts their states and reports Ready/Degraded/
+Available against a `healthPolicy`. It is a status aggregator — **traffic is not
+routed through it**, and there is no strategy or failover to configure.
 
 ### MCPDiscoverySource
 
-Configures automatic provider discovery.
+Configures automatic server discovery.
 
 ## Architecture
 
@@ -187,9 +196,9 @@ meta.SetStatusCondition(&provider.Status.Conditions, metav1.Condition{
 - Test file naming: `*_test.go` alongside source
 
 ```go
-func TestMCPProviderReconcile_CreatesReadyProvider(t *testing.T) {
+func TestMCPServerReconcile_CreatesReadyServer(t *testing.T) {
     // Arrange
-    provider := &mcpv1alpha1.MCPProvider{...}
+    server := &mcpv1alpha2.MCPServer{...}
     // Act
     result, err := reconciler.Reconcile(ctx, ctrl.Request{...})
     // Assert
@@ -265,43 +274,41 @@ The operator is the **primary enforcement engine** for Kubernetes-deployed MCP s
 |------|--------|
 | **Upgrade strategy** | CRD versioning, conversion webhooks, migration guide |
 
-## Capability Declaration (v0.13.0)
+## Capability Declaration
 
-The MCPProvider CRD must be extended with a `capabilities` block declaring what each server needs:
+`spec.capabilities` declares what a server needs, and the operator acts on two
+parts of it:
 
 ```yaml
-apiVersion: mcp-hangar.io/v1alpha1
-kind: MCPProvider
+apiVersion: mcp-hangar.io/v1alpha2
+kind: MCPServer
 metadata:
-  name: math-provider
+  name: math-server
 spec:
   mode: container
   image: ghcr.io/example/math-mcp:latest
   capabilities:
-    network:
+    enforcementMode: block      # audit | block -- what a violation does
+    network:                    # feeds the generated NetworkPolicy
       egress:
         - host: "api.example.com"
-          ports: [443]
+          port: 443
         - cidr: "10.0.0.0/8"
-          ports: [5432]
-    filesystem:
-      readOnly: true
-      mounts:
-        - path: /data
-          readOnly: false
-    environment:
-      - NAME_PATTERN  # Allowed env var patterns
-    tools:
-      expected:
-        - name: calculate
-          parameters: [expression]
+          port: 5432
+    tools:                      # drives capability-violation events
+      maxCount: 10
+      expectedTools: [calculate]
 ```
 
 The operator uses this block to:
-1. Generate NetworkPolicy resources (default-deny egress + explicit allowlist)
+
+1. Generate NetworkPolicy resources (default-deny egress + explicit allow-list)
 2. Enforce Pod Security Standards on generated pods
-3. Verify runtime behavior matches declarations
-4. Emit violation events on drift
+3. Emit violation events when the running tool set does not match the declaration
+
+**`filesystem`, `environment` and `resources` children are gone** (#121). They
+were the Tetragon / hangar-agent path, retired by ADR-010, and nothing read
+them. Do not re-add them: a declaration nothing enforces reads as enforcement.
 
 ## What NOT to Do
 
