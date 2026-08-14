@@ -1386,30 +1386,6 @@ spec:
                       type: string
                   type: object
                 type: array
-              tools:
-                description: Tools configures tool exposure
-                properties:
-                  allowList:
-                    description: AllowList restricts exposed tools (empty = all)
-                    items:
-                      type: string
-                    type: array
-                  denyList:
-                    description: DenyList blocks specific tools
-                    items:
-                      type: string
-                    type: array
-                  rateLimit:
-                    description: RateLimit configures rate limiting
-                    properties:
-                      burstSize:
-                        format: int32
-                        type: integer
-                      requestsPerMinute:
-                        format: int32
-                        type: integer
-                    type: object
-                type: object
               volumes:
                 description: Volumes defines volume mounts
                 items:
@@ -3161,30 +3137,6 @@ spec:
                       type: string
                   type: object
                 type: array
-              tools:
-                description: Tools configures tool exposure
-                properties:
-                  allowList:
-                    description: AllowList restricts exposed tools (empty = all)
-                    items:
-                      type: string
-                    type: array
-                  denyList:
-                    description: DenyList blocks specific tools
-                    items:
-                      type: string
-                    type: array
-                  rateLimit:
-                    description: RateLimit configures rate limiting
-                    properties:
-                      burstSize:
-                        format: int32
-                        type: integer
-                      requestsPerMinute:
-                        format: int32
-                        type: integer
-                    type: object
-                type: object
               volumes:
                 description: Volumes defines volume mounts
                 items:

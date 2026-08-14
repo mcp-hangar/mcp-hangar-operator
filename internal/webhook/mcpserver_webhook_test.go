@@ -161,35 +161,6 @@ func TestValidateCreate_HealthCheckInvalidDuration(t *testing.T) {
 	assert.Contains(t, err.Error(), "spec.healthCheck.interval")
 }
 
-// ── Tools validation ──────────────────────────────────────────────────
-
-func TestValidateCreate_ToolsAllowAndDenyMutuallyExclusive(t *testing.T) {
-	v := &webhook.MCPServerValidator{}
-	p := newProvider("both-lists", mcpv1alpha1.MCPServerModeContainer)
-	p.Spec.Image = "test:latest"
-	p.Spec.Tools = &mcpv1alpha1.ToolsConfig{
-		AllowList: []string{"calc"},
-		DenyList:  []string{"exec"},
-	}
-
-	_, err := v.ValidateCreate(context.Background(), p)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "mutually exclusive")
-}
-
-func TestValidateCreate_ToolsAllowListOnly(t *testing.T) {
-	v := &webhook.MCPServerValidator{}
-	p := newProvider("allow-only", mcpv1alpha1.MCPServerModeContainer)
-	p.Spec.Image = "test:latest"
-	p.Spec.Tools = &mcpv1alpha1.ToolsConfig{
-		AllowList: []string{"calc", "convert"},
-	}
-
-	warnings, err := v.ValidateCreate(context.Background(), p)
-	assert.NoError(t, err)
-	assert.Empty(t, warnings)
-}
-
 // ── Capabilities validation ──────────────────────────────────────────
 
 func TestValidateCreate_DuplicateExpectedTools(t *testing.T) {

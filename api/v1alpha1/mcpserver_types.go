@@ -125,10 +125,6 @@ type MCPServerSpec struct {
 	// +optional
 	PriorityClassName string `json:"priorityClassName,omitempty"`
 
-	// Tools configures tool exposure
-	// +optional
-	Tools *ToolsConfig `json:"tools,omitempty"`
-
 	// CircuitBreaker configures circuit breaker behavior
 	// +optional
 	CircuitBreaker *CircuitBreakerConfig `json:"circuitBreaker,omitempty"`
@@ -306,24 +302,6 @@ type Toleration struct {
 	Value             string `json:"value,omitempty"`
 	Effect            string `json:"effect,omitempty"`
 	TolerationSeconds *int64 `json:"tolerationSeconds,omitempty"`
-}
-
-// ToolsConfig defines tool exposure settings
-type ToolsConfig struct {
-	// AllowList restricts exposed tools (empty = all)
-	AllowList []string `json:"allowList,omitempty"`
-
-	// DenyList blocks specific tools
-	DenyList []string `json:"denyList,omitempty"`
-
-	// RateLimit configures rate limiting
-	RateLimit *RateLimitConfig `json:"rateLimit,omitempty"`
-}
-
-// RateLimitConfig defines rate limiting settings
-type RateLimitConfig struct {
-	RequestsPerMinute int32 `json:"requestsPerMinute,omitempty"`
-	BurstSize         int32 `json:"burstSize,omitempty"`
 }
 
 // CircuitBreakerConfig defines circuit breaker settings

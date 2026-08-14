@@ -104,17 +104,6 @@ func TestV2_ValidDurations(t *testing.T) {
 	assert.Empty(t, warnings)
 }
 
-func TestV2_ToolsMutuallyExclusive(t *testing.T) {
-	v := &webhook.MCPServerV1alpha2Validator{}
-	p := newProviderV2("both-lists", mcpv1alpha2.MCPServerModeContainer)
-	p.Spec.Image = "test:latest"
-	p.Spec.Tools = &mcpv1alpha2.ToolsConfig{AllowList: []string{"calc"}, DenyList: []string{"exec"}}
-
-	_, err := v.ValidateCreate(context.Background(), p)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "mutually exclusive")
-}
-
 func TestV2_DuplicateExpectedTools(t *testing.T) {
 	v := &webhook.MCPServerV1alpha2Validator{}
 	p := newProviderV2("dup-tools", mcpv1alpha2.MCPServerModeContainer)
