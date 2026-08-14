@@ -265,27 +265,10 @@ func TestMCPServerGroup_RoundTrip(t *testing.T) {
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{"tier": "backend"},
 			},
-			Failover: &FailoverConfig{
-				Enabled:    boolPtr(true),
-				MaxRetries: 3,
-				RetryDelay: "2s",
-				RetryOn:    []string{"timeout"},
-			},
 			HealthPolicy: &HealthPolicy{
 				MinHealthyPercentage: 75,
 				MinHealthyCount:      int32Ptr(2),
 				UnhealthyThreshold:   5,
-			},
-			SessionAffinity: &SessionAffinityConfig{
-				Enabled: true,
-				Type:    "Header",
-				Header:  "X-Session-ID",
-				TTL:     "15m0s",
-			},
-			CircuitBreaker: &GroupCircuitBreakerConfig{
-				Enabled:          true,
-				FailureThreshold: 10,
-				ResetTimeout:     "2m0s",
 			},
 		},
 		Status: MCPServerGroupStatus{
@@ -308,18 +291,11 @@ func TestMCPServerGroup_RoundTrip(t *testing.T) {
 	require.NoError(t, original.ConvertTo(hub))
 
 	// Verify duration conversions
-	assert.Equal(t, durationPtr(2*time.Second), hub.Spec.Failover.RetryDelay)
-	assert.Equal(t, durationPtr(15*time.Minute), hub.Spec.SessionAffinity.TTL)
-	assert.Equal(t, durationPtr(2*time.Minute), hub.Spec.CircuitBreaker.ResetTimeout)
 
 	roundTripped := &MCPServerGroup{}
 	require.NoError(t, roundTripped.ConvertFrom(hub))
 
 	assert.Equal(t, original.Spec.Selector, roundTripped.Spec.Selector)
-	assert.Equal(t, original.Spec.Failover.MaxRetries, roundTripped.Spec.Failover.MaxRetries)
-	assert.Equal(t, original.Spec.Failover.RetryDelay, roundTripped.Spec.Failover.RetryDelay)
-	assert.Equal(t, original.Spec.SessionAffinity.TTL, roundTripped.Spec.SessionAffinity.TTL)
-	assert.Equal(t, original.Spec.CircuitBreaker.ResetTimeout, roundTripped.Spec.CircuitBreaker.ResetTimeout)
 	assert.Equal(t, original.Status.ProviderCount, roundTripped.Status.ProviderCount)
 	assert.Equal(t, original.Status.ReadyCount, roundTripped.Status.ReadyCount)
 	require.Len(t, roundTripped.Status.Providers, 1)

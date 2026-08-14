@@ -11,43 +11,9 @@ type MCPServerGroupSpec struct {
 	// +kubebuilder:validation:Required
 	Selector *metav1.LabelSelector `json:"selector"`
 
-	// Failover configures failover behavior
-	// +optional
-	Failover *FailoverConfig `json:"failover,omitempty"`
-
 	// HealthPolicy defines group health requirements
 	// +optional
 	HealthPolicy *HealthPolicy `json:"healthPolicy,omitempty"`
-
-	// SessionAffinity configures session stickiness
-	// +optional
-	SessionAffinity *SessionAffinityConfig `json:"sessionAffinity,omitempty"`
-
-	// CircuitBreaker configures group-level circuit breaker
-	// +optional
-	CircuitBreaker *GroupCircuitBreakerConfig `json:"circuitBreaker,omitempty"`
-}
-
-// FailoverConfig defines failover settings
-type FailoverConfig struct {
-	// Enabled enables automatic failover
-	// +kubebuilder:default=true
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// MaxRetries is the maximum retry attempts
-	// +kubebuilder:default=2
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=10
-	MaxRetries int32 `json:"maxRetries,omitempty"`
-
-	// RetryDelay is the delay between retries.
-	// Uses standard Kubernetes duration format (e.g. "1s").
-	// +optional
-	RetryDelay *metav1.Duration `json:"retryDelay,omitempty"`
-
-	// RetryOn lists conditions that trigger retry
-	// +kubebuilder:default={"timeout","connection_error"}
-	RetryOn []string `json:"retryOn,omitempty"`
 }
 
 // HealthPolicy defines group health requirements
@@ -66,43 +32,6 @@ type HealthPolicy struct {
 	// +kubebuilder:default=3
 	// +kubebuilder:validation:Minimum=1
 	UnhealthyThreshold int32 `json:"unhealthyThreshold,omitempty"`
-}
-
-// SessionAffinityConfig defines session affinity settings
-type SessionAffinityConfig struct {
-	// Enabled enables session affinity
-	// +kubebuilder:default=false
-	Enabled bool `json:"enabled,omitempty"`
-
-	// Type is the affinity type (ClientIP or Header)
-	// +kubebuilder:default=ClientIP
-	// +kubebuilder:validation:Enum=ClientIP;Header
-	Type string `json:"type,omitempty"`
-
-	// Header is the header name for Header affinity type
-	// +optional
-	Header string `json:"header,omitempty"`
-
-	// TTL is the session TTL.
-	// Uses standard Kubernetes duration format (e.g. "10m0s").
-	// +optional
-	TTL *metav1.Duration `json:"ttl,omitempty"`
-}
-
-// GroupCircuitBreakerConfig defines group-level circuit breaker
-type GroupCircuitBreakerConfig struct {
-	// Enabled enables group circuit breaker
-	// +kubebuilder:default=false
-	Enabled bool `json:"enabled,omitempty"`
-
-	// FailureThreshold before opening circuit
-	// +kubebuilder:default=10
-	FailureThreshold int32 `json:"failureThreshold,omitempty"`
-
-	// ResetTimeout before attempting recovery.
-	// Uses standard Kubernetes duration format (e.g. "1m0s").
-	// +optional
-	ResetTimeout *metav1.Duration `json:"resetTimeout,omitempty"`
 }
 
 // MCPServerGroupStatus defines the observed state of MCPServerGroup
@@ -183,22 +112,6 @@ func init() {
 }
 
 // Helper methods
-
-// IsFailoverEnabled returns true if failover is enabled
-func (g *MCPServerGroup) IsFailoverEnabled() bool {
-	if g.Spec.Failover == nil || g.Spec.Failover.Enabled == nil {
-		return true // Default enabled
-	}
-	return *g.Spec.Failover.Enabled
-}
-
-// GetMaxRetries returns the maximum retry count
-func (g *MCPServerGroup) GetMaxRetries() int32 {
-	if g.Spec.Failover == nil {
-		return 2 // Default
-	}
-	return g.Spec.Failover.MaxRetries
-}
 
 // IsHealthy returns true if the group meets health requirements
 func (s *MCPServerGroupStatus) IsHealthy(policy *HealthPolicy) bool {
