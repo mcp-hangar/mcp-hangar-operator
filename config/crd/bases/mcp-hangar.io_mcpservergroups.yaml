@@ -20,9 +20,6 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.strategy
-      name: Strategy
-      type: string
     - jsonPath: .status.providerCount
       name: Providers
       type: integer
@@ -196,25 +193,12 @@ spec:
                     - Header
                     type: string
                 type: object
-              strategy:
-                default: RoundRobin
-                description: Strategy is the load balancing strategy
-                enum:
-                - RoundRobin
-                - LeastConnections
-                - Random
-                - Weighted
-                - Failover
-                type: string
             required:
             - selector
             type: object
           status:
             description: MCPServerGroupStatus defines the observed state of MCPServerGroup
             properties:
-              activeStrategy:
-                description: ActiveStrategy is the currently active strategy
-                type: string
               coldCount:
                 description: ColdCount is the number of cold providers
                 format: int32
@@ -276,10 +260,6 @@ spec:
                   description: MCPServerMemberStatus defines the status of a group
                     member
                   properties:
-                    activeConnections:
-                      description: ActiveConnections for least connections strategy
-                      format: int32
-                      type: integer
                     lastHealthCheck:
                       description: LastHealthCheck time
                       format: date-time
@@ -293,10 +273,6 @@ spec:
                     state:
                       description: State of the provider
                       type: string
-                    weight:
-                      description: Weight for weighted load balancing
-                      format: int32
-                      type: integer
                   required:
                   - name
                   - namespace
@@ -313,9 +289,6 @@ spec:
     subresources:
       status: {}
   - additionalPrinterColumns:
-    - jsonPath: .spec.strategy
-      name: Strategy
-      type: string
     - jsonPath: .status.providerCount
       name: Providers
       type: integer
@@ -492,25 +465,12 @@ spec:
                     - Header
                     type: string
                 type: object
-              strategy:
-                default: RoundRobin
-                description: Strategy is the load balancing strategy
-                enum:
-                - RoundRobin
-                - LeastConnections
-                - Random
-                - Weighted
-                - Failover
-                type: string
             required:
             - selector
             type: object
           status:
             description: MCPServerGroupStatus defines the observed state of MCPServerGroup
             properties:
-              activeStrategy:
-                description: ActiveStrategy is the currently active strategy
-                type: string
               coldCount:
                 description: ColdCount is the number of cold providers
                 format: int32
@@ -599,10 +559,6 @@ spec:
                   description: MCPServerMemberStatus defines the status of a group
                     member
                   properties:
-                    activeConnections:
-                      description: ActiveConnections for least connections strategy
-                      format: int32
-                      type: integer
                     lastHealthCheck:
                       description: LastHealthCheck time
                       format: date-time
@@ -616,10 +572,6 @@ spec:
                     state:
                       description: State of the provider
                       type: string
-                    weight:
-                      description: Weight for weighted load balancing
-                      format: int32
-                      type: integer
                   required:
                   - name
                   - namespace

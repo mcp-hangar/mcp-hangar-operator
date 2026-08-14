@@ -265,7 +265,6 @@ func TestMCPServerGroup_RoundTrip(t *testing.T) {
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{"tier": "backend"},
 			},
-			Strategy: StrategyWeighted,
 			Failover: &FailoverConfig{
 				Enabled:    boolPtr(true),
 				MaxRetries: 3,
@@ -295,13 +294,12 @@ func TestMCPServerGroup_RoundTrip(t *testing.T) {
 			DegradedCount:      1,
 			ColdCount:          0,
 			DeadCount:          0,
-			ActiveStrategy:     "Weighted",
 			ObservedGeneration: 3,
 			Conditions: []Condition{
 				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Healthy", Message: "Group is healthy"},
 			},
 			Providers: []MCPServerMemberStatus{
-				{Name: "p1", Namespace: "default", State: "Ready", Weight: 10, ActiveConnections: 5},
+				{Name: "p1", Namespace: "default", State: "Ready"},
 			},
 		},
 	}
@@ -318,7 +316,6 @@ func TestMCPServerGroup_RoundTrip(t *testing.T) {
 	require.NoError(t, roundTripped.ConvertFrom(hub))
 
 	assert.Equal(t, original.Spec.Selector, roundTripped.Spec.Selector)
-	assert.Equal(t, original.Spec.Strategy, roundTripped.Spec.Strategy)
 	assert.Equal(t, original.Spec.Failover.MaxRetries, roundTripped.Spec.Failover.MaxRetries)
 	assert.Equal(t, original.Spec.Failover.RetryDelay, roundTripped.Spec.Failover.RetryDelay)
 	assert.Equal(t, original.Spec.SessionAffinity.TTL, roundTripped.Spec.SessionAffinity.TTL)

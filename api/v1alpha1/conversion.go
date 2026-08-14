@@ -205,7 +205,6 @@ func (src *MCPServerGroup) ConvertTo(dstRaw conversion.Hub) error {
 
 	// Spec
 	dst.Spec.Selector = src.Spec.Selector
-	dst.Spec.Strategy = v1alpha2.LoadBalancingStrategy(src.Spec.Strategy)
 
 	var err error
 
@@ -255,18 +254,15 @@ func (src *MCPServerGroup) ConvertTo(dstRaw conversion.Hub) error {
 	dst.Status.DegradedCount = src.Status.DegradedCount
 	dst.Status.ColdCount = src.Status.ColdCount
 	dst.Status.DeadCount = src.Status.DeadCount
-	dst.Status.ActiveStrategy = src.Status.ActiveStrategy
 	dst.Status.ObservedGeneration = src.Status.ObservedGeneration
 	dst.Status.Conditions = conditionsToStandard(src.Status.Conditions)
 
 	for _, p := range src.Status.Providers {
 		dst.Status.Providers = append(dst.Status.Providers, v1alpha2.MCPServerMemberStatus{
-			Name:              p.Name,
-			Namespace:         p.Namespace,
-			State:             p.State,
-			Weight:            p.Weight,
-			ActiveConnections: p.ActiveConnections,
-			LastHealthCheck:   p.LastHealthCheck,
+			Name:            p.Name,
+			Namespace:       p.Namespace,
+			State:           p.State,
+			LastHealthCheck: p.LastHealthCheck,
 		})
 	}
 
@@ -284,7 +280,6 @@ func (dst *MCPServerGroup) ConvertFrom(srcRaw conversion.Hub) error {
 
 	// Spec
 	dst.Spec.Selector = src.Spec.Selector
-	dst.Spec.Strategy = LoadBalancingStrategy(src.Spec.Strategy)
 
 	if src.Spec.Failover != nil {
 		dst.Spec.Failover = &FailoverConfig{
@@ -326,18 +321,15 @@ func (dst *MCPServerGroup) ConvertFrom(srcRaw conversion.Hub) error {
 	dst.Status.DegradedCount = src.Status.DegradedCount
 	dst.Status.ColdCount = src.Status.ColdCount
 	dst.Status.DeadCount = src.Status.DeadCount
-	dst.Status.ActiveStrategy = src.Status.ActiveStrategy
 	dst.Status.ObservedGeneration = src.Status.ObservedGeneration
 	dst.Status.Conditions = conditionsFromStandard(src.Status.Conditions)
 
 	for _, p := range src.Status.Providers {
 		dst.Status.Providers = append(dst.Status.Providers, MCPServerMemberStatus{
-			Name:              p.Name,
-			Namespace:         p.Namespace,
-			State:             p.State,
-			Weight:            p.Weight,
-			ActiveConnections: p.ActiveConnections,
-			LastHealthCheck:   p.LastHealthCheck,
+			Name:            p.Name,
+			Namespace:       p.Namespace,
+			State:           p.State,
+			LastHealthCheck: p.LastHealthCheck,
 		})
 	}
 

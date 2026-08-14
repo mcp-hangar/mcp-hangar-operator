@@ -5,27 +5,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// LoadBalancingStrategy defines the load balancing algorithm
-// +kubebuilder:validation:Enum=RoundRobin;LeastConnections;Random;Weighted;Failover
-type LoadBalancingStrategy string
-
-const (
-	StrategyRoundRobin       LoadBalancingStrategy = "RoundRobin"
-	StrategyLeastConnections LoadBalancingStrategy = "LeastConnections"
-	StrategyRandom           LoadBalancingStrategy = "Random"
-	StrategyWeighted         LoadBalancingStrategy = "Weighted"
-	StrategyFailover         LoadBalancingStrategy = "Failover"
-)
-
 // MCPServerGroupSpec defines the desired state of MCPServerGroup
 type MCPServerGroupSpec struct {
 	// Selector selects MCPServers to include in the group
 	// +kubebuilder:validation:Required
 	Selector *metav1.LabelSelector `json:"selector"`
-
-	// Strategy is the load balancing strategy
-	// +kubebuilder:default=RoundRobin
-	Strategy LoadBalancingStrategy `json:"strategy,omitempty"`
 
 	// Failover configures failover behavior
 	// +optional
@@ -135,9 +119,6 @@ type MCPServerGroupStatus struct {
 	// DeadCount is the number of dead providers
 	DeadCount int32 `json:"deadCount,omitempty"`
 
-	// ActiveStrategy is the currently active strategy
-	ActiveStrategy string `json:"activeStrategy,omitempty"`
-
 	// Providers contains provider member details
 	Providers []MCPServerMemberStatus `json:"providers,omitempty"`
 
@@ -159,19 +140,12 @@ type MCPServerMemberStatus struct {
 	// State of the provider
 	State string `json:"state,omitempty"`
 
-	// Weight for weighted load balancing
-	Weight int32 `json:"weight,omitempty"`
-
-	// ActiveConnections for least connections strategy
-	ActiveConnections int32 `json:"activeConnections,omitempty"`
-
 	// LastHealthCheck time
 	LastHealthCheck *metav1.Time `json:"lastHealthCheck,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:printcolumn:name="Strategy",type=string,JSONPath=`.spec.strategy`
 // +kubebuilder:printcolumn:name="Providers",type=integer,JSONPath=`.status.providerCount`
 // +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyCount`
 // +kubebuilder:printcolumn:name="Degraded",type=integer,JSONPath=`.status.degradedCount`
