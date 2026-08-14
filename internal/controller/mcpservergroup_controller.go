@@ -205,7 +205,6 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 	group.Status.ColdCount = coldCount
 	group.Status.DeadCount = deadCount
 	group.Status.Providers = memberStatuses
-	group.Status.ActiveStrategy = string(group.Spec.Strategy)
 
 	// Evaluate conditions
 	r.evaluateConditions(group)
