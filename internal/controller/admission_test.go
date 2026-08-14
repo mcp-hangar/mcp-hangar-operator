@@ -45,45 +45,49 @@ func TestAdmission_Envtest_NoCapsCreated(t *testing.T) {
 	_ = k8sClient.Delete(ctx, provider)
 }
 
-// TestAdmission_Envtest_MetricsPortOutOfRangeRejected verifies the CRD schema
-// bound on spec.observability.metrics.port (Minimum=1, Maximum=65535, #22).
-func TestAdmission_Envtest_MetricsPortOutOfRangeRejected(t *testing.T) {
+// These two verify that a numeric CRD schema bound actually reaches the
+// apiserver (#22) -- that the generated openAPIV3Schema is installed and
+// enforced, not merely present in the repo.
+//
+// They used to drive spec.observability.metrics.port, which was removed in #121
+// along with the rest of the observability declaration. The bound they exist to
+// cover is not gone, so the probe moved rather than being deleted:
+// spec.replicas carries Minimum=0 / Maximum=10 and is live.
+func TestAdmission_Envtest_ReplicasOutOfRangeRejected(t *testing.T) {
+	tooMany := int32(11)
 	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "envtest-bad-metrics-port",
+			Name:      "envtest-bad-replicas",
 			Namespace: "default",
 		},
 		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:  mcpv1alpha1.MCPServerModeContainer,
-			Image: "test:latest",
-			Observability: &mcpv1alpha1.ObservabilityConfig{
-				Metrics: &mcpv1alpha1.MetricsConfig{Enabled: true, Port: 70000},
-			},
+			Mode:     mcpv1alpha1.MCPServerModeContainer,
+			Image:    "test:latest",
+			Replicas: &tooMany,
 		},
 	}
 
 	err := k8sClient.Create(ctx, provider)
-	require.Error(t, err, "metrics.port 70000 should be rejected by the CRD schema")
+	require.Error(t, err, "replicas 11 should be rejected by the CRD schema (Maximum=10)")
 	_ = k8sClient.Delete(ctx, provider)
 }
 
-func TestAdmission_Envtest_MetricsPortInRangeAccepted(t *testing.T) {
+func TestAdmission_Envtest_ReplicasInRangeAccepted(t *testing.T) {
+	inRange := int32(3)
 	provider := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "envtest-good-metrics-port",
+			Name:      "envtest-good-replicas",
 			Namespace: "default",
 		},
 		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:  mcpv1alpha1.MCPServerModeContainer,
-			Image: "test:latest",
-			Observability: &mcpv1alpha1.ObservabilityConfig{
-				Metrics: &mcpv1alpha1.MetricsConfig{Enabled: true, Port: 9090},
-			},
+			Mode:     mcpv1alpha1.MCPServerModeContainer,
+			Image:    "test:latest",
+			Replicas: &inRange,
 		},
 	}
 
 	err := k8sClient.Create(ctx, provider)
-	require.NoError(t, err, "metrics.port 9090 should be accepted")
+	require.NoError(t, err, "replicas 3 should be accepted")
 	_ = k8sClient.Delete(ctx, provider)
 }
 

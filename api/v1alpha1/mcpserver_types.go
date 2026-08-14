@@ -116,10 +116,6 @@ type MCPServerSpec struct {
 	// +optional
 	PriorityClassName string `json:"priorityClassName,omitempty"`
 
-	// Observability configures observability features
-	// +optional
-	Observability *ObservabilityConfig `json:"observability,omitempty"`
-
 	// Capabilities declares what resources the MCP server needs.
 	// Used by the operator for NetworkPolicy generation and enforcement.
 	// +optional
@@ -266,29 +262,6 @@ type Toleration struct {
 	TolerationSeconds *int64 `json:"tolerationSeconds,omitempty"`
 }
 
-// ObservabilityConfig defines observability settings
-type ObservabilityConfig struct {
-	Tracing *TracingConfig `json:"tracing,omitempty"`
-	Metrics *MetricsConfig `json:"metrics,omitempty"`
-}
-
-// TracingConfig defines tracing settings
-type TracingConfig struct {
-	Enabled bool `json:"enabled,omitempty"`
-	// SamplingRate as string (e.g., "0.1" for 10%)
-	// +kubebuilder:validation:Pattern=`^[0-9]*\.?[0-9]+$`
-	SamplingRate string `json:"samplingRate,omitempty"`
-}
-
-// MetricsConfig defines metrics settings
-type MetricsConfig struct {
-	Enabled bool `json:"enabled,omitempty"`
-	// Port is the TCP port the metrics endpoint listens on.
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	Port int32 `json:"port,omitempty"`
-}
-
 // MCPServerCapabilities declares what resources an MCP server needs.
 // The operator uses this to generate NetworkPolicy, enforce Pod Security Standards,
 // and verify runtime behavior matches declarations.
@@ -297,21 +270,9 @@ type MCPServerCapabilities struct {
 	// +optional
 	Network *NetworkCapabilitiesSpec `json:"network,omitempty"`
 
-	// Filesystem defines allowed filesystem access
-	// +optional
-	Filesystem *FilesystemCapabilitiesSpec `json:"filesystem,omitempty"`
-
-	// Environment defines required/optional environment variables
-	// +optional
-	Environment *EnvironmentCapabilitiesSpec `json:"environment,omitempty"`
-
 	// Tools defines tool schema constraints
 	// +optional
 	Tools *ToolCapabilitiesSpec `json:"tools,omitempty"`
-
-	// Resources defines resource consumption expectations (soft limits for behavioral profiling)
-	// +optional
-	Resources *ResourceCapabilitiesSpec `json:"resources,omitempty"`
 
 	// EnforcementMode controls how violations are handled: alert, block, or quarantine.
 	// +kubebuilder:validation:Enum=alert;block;quarantine
@@ -360,33 +321,6 @@ type EgressRuleSpec struct {
 	CIDR string `json:"cidr,omitempty"`
 }
 
-// FilesystemCapabilitiesSpec declares filesystem access requirements
-type FilesystemCapabilitiesSpec struct {
-	// ReadPaths lists allowed read-only mount paths
-	// +optional
-	ReadPaths []string `json:"readPaths,omitempty"`
-
-	// WritePaths lists allowed read-write mount paths
-	// +optional
-	WritePaths []string `json:"writePaths,omitempty"`
-
-	// TempAllowed controls whether /tmp writes are permitted
-	// +kubebuilder:default=true
-	// +optional
-	TempAllowed *bool `json:"tempAllowed,omitempty"`
-}
-
-// EnvironmentCapabilitiesSpec declares environment variable requirements
-type EnvironmentCapabilitiesSpec struct {
-	// Required lists environment variables the provider must have
-	// +optional
-	Required []string `json:"required,omitempty"`
-
-	// Optional lists environment variables the provider may use
-	// +optional
-	Optional []string `json:"optional,omitempty"`
-}
-
 // ToolCapabilitiesSpec declares tool schema constraints
 type ToolCapabilitiesSpec struct {
 	// MaxCount is the maximum number of tools the provider may advertise (0 = unlimited)
@@ -404,18 +338,6 @@ type ToolCapabilitiesSpec struct {
 	// list trigger a schema_mismatch violation.
 	// +optional
 	ExpectedTools []string `json:"expectedTools,omitempty"`
-}
-
-// ResourceCapabilitiesSpec declares resource consumption expectations (soft limits)
-type ResourceCapabilitiesSpec struct {
-	// MaxMemoryMB is the maximum expected memory usage in MiB (0 = unlimited)
-	// +kubebuilder:validation:Minimum=0
-	// +optional
-	MaxMemoryMB int32 `json:"maxMemoryMB,omitempty"`
-
-	// MaxCPUPercent is the maximum expected CPU utilization percent (0 = unlimited)
-	// +optional
-	MaxCPUPercent string `json:"maxCPUPercent,omitempty"`
 }
 
 // MCPServerStatus defines the observed state of MCPServer
