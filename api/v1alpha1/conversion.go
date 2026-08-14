@@ -206,45 +206,11 @@ func (src *MCPServerGroup) ConvertTo(dstRaw conversion.Hub) error {
 	// Spec
 	dst.Spec.Selector = src.Spec.Selector
 
-	var err error
-
-	if src.Spec.Failover != nil {
-		dst.Spec.Failover = &v1alpha2.FailoverConfig{
-			Enabled:    src.Spec.Failover.Enabled,
-			MaxRetries: src.Spec.Failover.MaxRetries,
-			RetryOn:    src.Spec.Failover.RetryOn,
-		}
-		if dst.Spec.Failover.RetryDelay, err = stringToDuration(src.Spec.Failover.RetryDelay); err != nil {
-			return fmt.Errorf("converting spec.failover.retryDelay: %w", err)
-		}
-	}
-
 	if src.Spec.HealthPolicy != nil {
 		dst.Spec.HealthPolicy = &v1alpha2.HealthPolicy{
 			MinHealthyPercentage: src.Spec.HealthPolicy.MinHealthyPercentage,
 			MinHealthyCount:      src.Spec.HealthPolicy.MinHealthyCount,
 			UnhealthyThreshold:   src.Spec.HealthPolicy.UnhealthyThreshold,
-		}
-	}
-
-	if src.Spec.SessionAffinity != nil {
-		dst.Spec.SessionAffinity = &v1alpha2.SessionAffinityConfig{
-			Enabled: src.Spec.SessionAffinity.Enabled,
-			Type:    src.Spec.SessionAffinity.Type,
-			Header:  src.Spec.SessionAffinity.Header,
-		}
-		if dst.Spec.SessionAffinity.TTL, err = stringToDuration(src.Spec.SessionAffinity.TTL); err != nil {
-			return fmt.Errorf("converting spec.sessionAffinity.ttl: %w", err)
-		}
-	}
-
-	if src.Spec.CircuitBreaker != nil {
-		dst.Spec.CircuitBreaker = &v1alpha2.GroupCircuitBreakerConfig{
-			Enabled:          src.Spec.CircuitBreaker.Enabled,
-			FailureThreshold: src.Spec.CircuitBreaker.FailureThreshold,
-		}
-		if dst.Spec.CircuitBreaker.ResetTimeout, err = stringToDuration(src.Spec.CircuitBreaker.ResetTimeout); err != nil {
-			return fmt.Errorf("converting spec.circuitBreaker.resetTimeout: %w", err)
 		}
 	}
 
@@ -281,37 +247,11 @@ func (dst *MCPServerGroup) ConvertFrom(srcRaw conversion.Hub) error {
 	// Spec
 	dst.Spec.Selector = src.Spec.Selector
 
-	if src.Spec.Failover != nil {
-		dst.Spec.Failover = &FailoverConfig{
-			Enabled:    src.Spec.Failover.Enabled,
-			MaxRetries: src.Spec.Failover.MaxRetries,
-			RetryDelay: durationToString(src.Spec.Failover.RetryDelay),
-			RetryOn:    src.Spec.Failover.RetryOn,
-		}
-	}
-
 	if src.Spec.HealthPolicy != nil {
 		dst.Spec.HealthPolicy = &HealthPolicy{
 			MinHealthyPercentage: src.Spec.HealthPolicy.MinHealthyPercentage,
 			MinHealthyCount:      src.Spec.HealthPolicy.MinHealthyCount,
 			UnhealthyThreshold:   src.Spec.HealthPolicy.UnhealthyThreshold,
-		}
-	}
-
-	if src.Spec.SessionAffinity != nil {
-		dst.Spec.SessionAffinity = &SessionAffinityConfig{
-			Enabled: src.Spec.SessionAffinity.Enabled,
-			Type:    src.Spec.SessionAffinity.Type,
-			Header:  src.Spec.SessionAffinity.Header,
-			TTL:     durationToString(src.Spec.SessionAffinity.TTL),
-		}
-	}
-
-	if src.Spec.CircuitBreaker != nil {
-		dst.Spec.CircuitBreaker = &GroupCircuitBreakerConfig{
-			Enabled:          src.Spec.CircuitBreaker.Enabled,
-			FailureThreshold: src.Spec.CircuitBreaker.FailureThreshold,
-			ResetTimeout:     durationToString(src.Spec.CircuitBreaker.ResetTimeout),
 		}
 	}
 

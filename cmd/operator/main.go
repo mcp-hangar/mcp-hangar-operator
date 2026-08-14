@@ -165,11 +165,13 @@ func main() {
 	}
 
 	// Register MCPServerGroup controller.
+	// No HangarClient: the group reconciler never called one. It selects,
+	// counts and evaluates healthPolicy; talking to /api/groups would be a
+	// different product (#122, #123).
 	if err := (&controller.MCPServerGroupReconciler{
-		Client:       mgr.GetClient(),
-		Scheme:       mgr.GetScheme(),
-		Recorder:     mgr.GetEventRecorderFor("mcpservergroup-controller"),
-		HangarClient: hangarClient,
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("mcpservergroup-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPServerGroup")
 		os.Exit(1)

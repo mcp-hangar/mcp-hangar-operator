@@ -57,50 +57,6 @@ spec:
           spec:
             description: MCPServerGroupSpec defines the desired state of MCPServerGroup
             properties:
-              circuitBreaker:
-                description: CircuitBreaker configures group-level circuit breaker
-                properties:
-                  enabled:
-                    default: false
-                    description: Enabled enables group circuit breaker
-                    type: boolean
-                  failureThreshold:
-                    default: 10
-                    description: FailureThreshold before opening circuit
-                    format: int32
-                    type: integer
-                  resetTimeout:
-                    default: 1m
-                    description: ResetTimeout before attempting recovery
-                    type: string
-                type: object
-              failover:
-                description: Failover configures failover behavior
-                properties:
-                  enabled:
-                    default: true
-                    description: Enabled enables automatic failover
-                    type: boolean
-                  maxRetries:
-                    default: 2
-                    description: MaxRetries is the maximum retry attempts
-                    format: int32
-                    maximum: 10
-                    minimum: 0
-                    type: integer
-                  retryDelay:
-                    default: 1s
-                    description: RetryDelay is the delay between retries
-                    type: string
-                  retryOn:
-                    default:
-                    - timeout
-                    - connection_error
-                    description: RetryOn lists conditions that trigger retry
-                    items:
-                      type: string
-                    type: array
-                type: object
               healthPolicy:
                 description: HealthPolicy defines group health requirements
                 properties:
@@ -171,28 +127,6 @@ spec:
                     type: object
                 type: object
                 x-kubernetes-map-type: atomic
-              sessionAffinity:
-                description: SessionAffinity configures session stickiness
-                properties:
-                  enabled:
-                    default: false
-                    description: Enabled enables session affinity
-                    type: boolean
-                  header:
-                    description: Header is the header name for Header affinity type
-                    type: string
-                  ttl:
-                    default: 10m
-                    description: TTL is the session TTL
-                    type: string
-                  type:
-                    default: ClientIP
-                    description: Type is the affinity type (ClientIP or Header)
-                    enum:
-                    - ClientIP
-                    - Header
-                    type: string
-                type: object
             required:
             - selector
             type: object
@@ -326,52 +260,6 @@ spec:
           spec:
             description: MCPServerGroupSpec defines the desired state of MCPServerGroup
             properties:
-              circuitBreaker:
-                description: CircuitBreaker configures group-level circuit breaker
-                properties:
-                  enabled:
-                    default: false
-                    description: Enabled enables group circuit breaker
-                    type: boolean
-                  failureThreshold:
-                    default: 10
-                    description: FailureThreshold before opening circuit
-                    format: int32
-                    type: integer
-                  resetTimeout:
-                    description: |-
-                      ResetTimeout before attempting recovery.
-                      Uses standard Kubernetes duration format (e.g. "1m0s").
-                    type: string
-                type: object
-              failover:
-                description: Failover configures failover behavior
-                properties:
-                  enabled:
-                    default: true
-                    description: Enabled enables automatic failover
-                    type: boolean
-                  maxRetries:
-                    default: 2
-                    description: MaxRetries is the maximum retry attempts
-                    format: int32
-                    maximum: 10
-                    minimum: 0
-                    type: integer
-                  retryDelay:
-                    description: |-
-                      RetryDelay is the delay between retries.
-                      Uses standard Kubernetes duration format (e.g. "1s").
-                    type: string
-                  retryOn:
-                    default:
-                    - timeout
-                    - connection_error
-                    description: RetryOn lists conditions that trigger retry
-                    items:
-                      type: string
-                    type: array
-                type: object
               healthPolicy:
                 description: HealthPolicy defines group health requirements
                 properties:
@@ -442,29 +330,6 @@ spec:
                     type: object
                 type: object
                 x-kubernetes-map-type: atomic
-              sessionAffinity:
-                description: SessionAffinity configures session stickiness
-                properties:
-                  enabled:
-                    default: false
-                    description: Enabled enables session affinity
-                    type: boolean
-                  header:
-                    description: Header is the header name for Header affinity type
-                    type: string
-                  ttl:
-                    description: |-
-                      TTL is the session TTL.
-                      Uses standard Kubernetes duration format (e.g. "10m0s").
-                    type: string
-                  type:
-                    default: ClientIP
-                    description: Type is the affinity type (ClientIP or Header)
-                    enum:
-                    - ClientIP
-                    - Header
-                    type: string
-                type: object
             required:
             - selector
             type: object
