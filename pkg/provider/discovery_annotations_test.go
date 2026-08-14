@@ -61,11 +61,14 @@ func TestTheExistingAnnotationsAreUntouched(t *testing.T) {
 
 func TestTtlIsNotMappedFromIdleTtl(t *testing.T) {
 	// `mcp-hangar.io/ttl` is the *discovery* TTL: how long core keeps an entry
-	// it has stopped seeing. `idleTTL` is how long an idle server stays running.
-	// The names rhyme and the meanings do not -- mapping one to the other would
-	// deregister busy servers on a schedule.
+	// it has stopped seeing. It is not an idle timeout, and the builder must
+	// never stamp it from a CR field -- the names rhyme and the meanings do not,
+	// so mapping one to the other would deregister busy servers on a schedule.
+	//
+	// `spec.idleTTL` used to be the field that made this tempting; it was removed
+	// in #120 because the operator never honoured it. The assertion outlives it:
+	// the annotation must stay absent whatever the CR carries.
 	server := containerServer("operator-probe")
-	server.Spec.IdleTTL = "30s"
 
 	pod, err := BuildPodForMCPServer(server)
 	require.NoError(t, err)

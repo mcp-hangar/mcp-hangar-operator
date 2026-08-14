@@ -50,9 +50,6 @@ func (src *MCPServer) ConvertTo(dstRaw conversion.Hub) error {
 
 	// Spec: duration fields (string -> *metav1.Duration)
 	var err error
-	if dst.Spec.IdleTTL, err = stringToDuration(src.Spec.IdleTTL); err != nil {
-		return fmt.Errorf("converting spec.idleTTL: %w", err)
-	}
 	if dst.Spec.StartupTimeout, err = stringToDuration(src.Spec.StartupTimeout); err != nil {
 		return fmt.Errorf("converting spec.startupTimeout: %w", err)
 	}
@@ -61,20 +58,6 @@ func (src *MCPServer) ConvertTo(dstRaw conversion.Hub) error {
 	}
 
 	// Spec: nested structs
-	if src.Spec.HealthCheck != nil {
-		dst.Spec.HealthCheck = &v1alpha2.HealthCheckConfig{
-			Enabled:          src.Spec.HealthCheck.Enabled,
-			FailureThreshold: src.Spec.HealthCheck.FailureThreshold,
-			SuccessThreshold: src.Spec.HealthCheck.SuccessThreshold,
-		}
-		if dst.Spec.HealthCheck.Interval, err = stringToDuration(src.Spec.HealthCheck.Interval); err != nil {
-			return fmt.Errorf("converting spec.healthCheck.interval: %w", err)
-		}
-		if dst.Spec.HealthCheck.Timeout, err = stringToDuration(src.Spec.HealthCheck.Timeout); err != nil {
-			return fmt.Errorf("converting spec.healthCheck.timeout: %w", err)
-		}
-	}
-
 	if src.Spec.Resources != nil {
 		dst.Spec.Resources = convertResourceRequirementsTo(src.Spec.Resources)
 	}
@@ -87,18 +70,6 @@ func (src *MCPServer) ConvertTo(dstRaw conversion.Hub) error {
 	}
 
 	dst.Spec.Tolerations = convertTolerationsTo(src.Spec.Tolerations)
-
-	if src.Spec.CircuitBreaker != nil {
-		dst.Spec.CircuitBreaker = &v1alpha2.CircuitBreakerConfig{
-			Enabled:          src.Spec.CircuitBreaker.Enabled,
-			FailureThreshold: src.Spec.CircuitBreaker.FailureThreshold,
-			SuccessThreshold: src.Spec.CircuitBreaker.SuccessThreshold,
-			HalfOpenRequests: src.Spec.CircuitBreaker.HalfOpenRequests,
-		}
-		if dst.Spec.CircuitBreaker.ResetTimeout, err = stringToDuration(src.Spec.CircuitBreaker.ResetTimeout); err != nil {
-			return fmt.Errorf("converting spec.circuitBreaker.resetTimeout: %w", err)
-		}
-	}
 
 	if src.Spec.Observability != nil {
 		dst.Spec.Observability = convertObservabilityTo(src.Spec.Observability)
@@ -163,21 +134,10 @@ func (dst *MCPServer) ConvertFrom(srcRaw conversion.Hub) error {
 	dst.Spec.PriorityClassName = src.Spec.PriorityClassName
 
 	// Spec: duration fields (*metav1.Duration -> string)
-	dst.Spec.IdleTTL = durationToString(src.Spec.IdleTTL)
 	dst.Spec.StartupTimeout = durationToString(src.Spec.StartupTimeout)
 	dst.Spec.ShutdownGracePeriod = durationToString(src.Spec.ShutdownGracePeriod)
 
 	// Spec: nested structs
-	if src.Spec.HealthCheck != nil {
-		dst.Spec.HealthCheck = &HealthCheckConfig{
-			Enabled:          src.Spec.HealthCheck.Enabled,
-			Interval:         durationToString(src.Spec.HealthCheck.Interval),
-			Timeout:          durationToString(src.Spec.HealthCheck.Timeout),
-			FailureThreshold: src.Spec.HealthCheck.FailureThreshold,
-			SuccessThreshold: src.Spec.HealthCheck.SuccessThreshold,
-		}
-	}
-
 	if src.Spec.Resources != nil {
 		dst.Spec.Resources = convertResourceRequirementsFrom(src.Spec.Resources)
 	}
@@ -190,16 +150,6 @@ func (dst *MCPServer) ConvertFrom(srcRaw conversion.Hub) error {
 	}
 
 	dst.Spec.Tolerations = convertTolerationsFrom(src.Spec.Tolerations)
-
-	if src.Spec.CircuitBreaker != nil {
-		dst.Spec.CircuitBreaker = &CircuitBreakerConfig{
-			Enabled:          src.Spec.CircuitBreaker.Enabled,
-			FailureThreshold: src.Spec.CircuitBreaker.FailureThreshold,
-			SuccessThreshold: src.Spec.CircuitBreaker.SuccessThreshold,
-			ResetTimeout:     durationToString(src.Spec.CircuitBreaker.ResetTimeout),
-			HalfOpenRequests: src.Spec.CircuitBreaker.HalfOpenRequests,
-		}
-	}
 
 	if src.Spec.Observability != nil {
 		dst.Spec.Observability = convertObservabilityFrom(src.Spec.Observability)

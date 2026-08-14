@@ -91,16 +91,8 @@ func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 
 	// Duration fields: reject negative values.
 	durationFields := map[string]*metav1.Duration{
-		"spec.idleTTL":             p.Spec.IdleTTL,
 		"spec.startupTimeout":      p.Spec.StartupTimeout,
 		"spec.shutdownGracePeriod": p.Spec.ShutdownGracePeriod,
-	}
-	if p.Spec.HealthCheck != nil {
-		durationFields["spec.healthCheck.interval"] = p.Spec.HealthCheck.Interval
-		durationFields["spec.healthCheck.timeout"] = p.Spec.HealthCheck.Timeout
-	}
-	if p.Spec.CircuitBreaker != nil {
-		durationFields["spec.circuitBreaker.resetTimeout"] = p.Spec.CircuitBreaker.ResetTimeout
 	}
 	for field, val := range durationFields {
 		if val == nil {

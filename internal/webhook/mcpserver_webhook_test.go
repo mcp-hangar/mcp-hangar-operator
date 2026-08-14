@@ -108,11 +108,11 @@ func TestValidateCreate_InvalidDuration(t *testing.T) {
 	v := &webhook.MCPServerValidator{}
 	p := newProvider("bad-duration", mcpv1alpha1.MCPServerModeContainer)
 	p.Spec.Image = "test:latest"
-	p.Spec.IdleTTL = "not-a-duration"
+	p.Spec.StartupTimeout = "not-a-duration"
 
 	_, err := v.ValidateCreate(context.Background(), p)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "spec.idleTTL")
+	assert.Contains(t, err.Error(), "spec.startupTimeout")
 	assert.Contains(t, err.Error(), "not a valid duration")
 }
 
@@ -132,33 +132,12 @@ func TestValidateCreate_ValidDurations(t *testing.T) {
 	v := &webhook.MCPServerValidator{}
 	p := newProvider("valid-durations", mcpv1alpha1.MCPServerModeContainer)
 	p.Spec.Image = "test:latest"
-	p.Spec.IdleTTL = "10m"
 	p.Spec.StartupTimeout = "1m30s"
 	p.Spec.ShutdownGracePeriod = "45s"
-	p.Spec.HealthCheck = &mcpv1alpha1.HealthCheckConfig{
-		Interval: "30s",
-		Timeout:  "5s",
-	}
-	p.Spec.CircuitBreaker = &mcpv1alpha1.CircuitBreakerConfig{
-		ResetTimeout: "1m",
-	}
 
 	warnings, err := v.ValidateCreate(context.Background(), p)
 	assert.NoError(t, err)
 	assert.Empty(t, warnings)
-}
-
-func TestValidateCreate_HealthCheckInvalidDuration(t *testing.T) {
-	v := &webhook.MCPServerValidator{}
-	p := newProvider("bad-hc-duration", mcpv1alpha1.MCPServerModeContainer)
-	p.Spec.Image = "test:latest"
-	p.Spec.HealthCheck = &mcpv1alpha1.HealthCheckConfig{
-		Interval: "abc",
-	}
-
-	_, err := v.ValidateCreate(context.Background(), p)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "spec.healthCheck.interval")
 }
 
 // ── Capabilities validation ──────────────────────────────────────────
@@ -322,7 +301,7 @@ func TestValidateCreate_MultipleErrors(t *testing.T) {
 	v := &webhook.MCPServerValidator{}
 	p := newProvider("multi-error", mcpv1alpha1.MCPServerModeContainer)
 	// Missing image + bad duration + duplicate tools
-	p.Spec.IdleTTL = "xyz"
+	p.Spec.StartupTimeout = "xyz"
 	p.Spec.Capabilities = &mcpv1alpha1.MCPServerCapabilities{
 		Tools: &mcpv1alpha1.ToolCapabilitiesSpec{
 			ExpectedTools: []string{"a", "a"},
@@ -333,7 +312,7 @@ func TestValidateCreate_MultipleErrors(t *testing.T) {
 	require.Error(t, err)
 	errMsg := err.Error()
 	assert.Contains(t, errMsg, "spec.image is required")
-	assert.Contains(t, errMsg, "spec.idleTTL")
+	assert.Contains(t, errMsg, "spec.startupTimeout")
 	assert.Contains(t, errMsg, "duplicate")
 }
 

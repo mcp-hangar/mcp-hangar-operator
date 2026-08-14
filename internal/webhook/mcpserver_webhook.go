@@ -86,16 +86,8 @@ func validateProvider(p *mcpv1alpha1.MCPServer) (admission.Warnings, error) {
 
 	// Duration fields
 	durationFields := map[string]string{
-		"spec.idleTTL":             p.Spec.IdleTTL,
 		"spec.startupTimeout":      p.Spec.StartupTimeout,
 		"spec.shutdownGracePeriod": p.Spec.ShutdownGracePeriod,
-	}
-	if p.Spec.HealthCheck != nil {
-		durationFields["spec.healthCheck.interval"] = p.Spec.HealthCheck.Interval
-		durationFields["spec.healthCheck.timeout"] = p.Spec.HealthCheck.Timeout
-	}
-	if p.Spec.CircuitBreaker != nil {
-		durationFields["spec.circuitBreaker.resetTimeout"] = p.Spec.CircuitBreaker.ResetTimeout
 	}
 	errs = append(errs, validateDurationStrings(durationFields)...)
 
