@@ -1285,34 +1285,6 @@ spec:
                                 type: boolean
                             type: object
                         type: object
-                      circuitBreaker:
-                        description: CircuitBreaker configures circuit breaker behavior
-                        properties:
-                          enabled:
-                            default: true
-                            description: Enabled enables circuit breaker
-                            type: boolean
-                          failureThreshold:
-                            default: 5
-                            description: FailureThreshold before opening circuit
-                            format: int32
-                            type: integer
-                          halfOpenRequests:
-                            default: 3
-                            description: HalfOpenRequests allowed during half-open
-                              state
-                            format: int32
-                            type: integer
-                          resetTimeout:
-                            default: 30s
-                            description: ResetTimeout before attempting recovery
-                            type: string
-                          successThreshold:
-                            default: 2
-                            description: SuccessThreshold before closing circuit
-                            format: int32
-                            type: integer
-                        type: object
                       command:
                         description: Command overrides the container entrypoint
                         items:
@@ -1368,39 +1340,6 @@ spec:
                           - name
                           type: object
                         type: array
-                      healthCheck:
-                        description: HealthCheck configures health checking
-                        properties:
-                          enabled:
-                            default: true
-                            description: Enabled enables health checks
-                            type: boolean
-                          failureThreshold:
-                            default: 3
-                            description: FailureThreshold before marking unhealthy
-                            format: int32
-                            minimum: 1
-                            type: integer
-                          interval:
-                            default: 30s
-                            description: Interval between health checks
-                            type: string
-                          successThreshold:
-                            default: 1
-                            description: SuccessThreshold before marking healthy
-                            format: int32
-                            minimum: 1
-                            type: integer
-                          timeout:
-                            default: 5s
-                            description: Timeout for each health check
-                            type: string
-                        type: object
-                      idleTTL:
-                        default: 5m
-                        description: IdleTTL is the duration before an idle provider
-                          is stopped
-                        type: string
                       image:
                         description: Image is the container image for the provider
                           (required for container mode)
@@ -3047,35 +2986,6 @@ spec:
                                 type: boolean
                             type: object
                         type: object
-                      circuitBreaker:
-                        description: CircuitBreaker configures circuit breaker behavior
-                        properties:
-                          enabled:
-                            default: true
-                            description: Enabled enables circuit breaker
-                            type: boolean
-                          failureThreshold:
-                            default: 5
-                            description: FailureThreshold before opening circuit
-                            format: int32
-                            type: integer
-                          halfOpenRequests:
-                            default: 3
-                            description: HalfOpenRequests allowed during half-open
-                              state
-                            format: int32
-                            type: integer
-                          resetTimeout:
-                            description: |-
-                              ResetTimeout before attempting recovery.
-                              Uses standard Kubernetes duration format (e.g. "30s").
-                            type: string
-                          successThreshold:
-                            default: 2
-                            description: SuccessThreshold before closing circuit
-                            format: int32
-                            type: integer
-                        type: object
                       command:
                         description: Command overrides the container entrypoint
                         items:
@@ -3131,41 +3041,6 @@ spec:
                           - name
                           type: object
                         type: array
-                      healthCheck:
-                        description: HealthCheck configures health checking
-                        properties:
-                          enabled:
-                            default: true
-                            description: Enabled enables health checks
-                            type: boolean
-                          failureThreshold:
-                            default: 3
-                            description: FailureThreshold before marking unhealthy
-                            format: int32
-                            minimum: 1
-                            type: integer
-                          interval:
-                            description: |-
-                              Interval between health checks.
-                              Uses standard Kubernetes duration format (e.g. "30s").
-                            type: string
-                          successThreshold:
-                            default: 1
-                            description: SuccessThreshold before marking healthy
-                            format: int32
-                            minimum: 1
-                            type: integer
-                          timeout:
-                            description: |-
-                              Timeout for each health check.
-                              Uses standard Kubernetes duration format (e.g. "5s").
-                            type: string
-                        type: object
-                      idleTTL:
-                        description: |-
-                          IdleTTL is the duration before an idle provider is stopped.
-                          Uses standard Kubernetes duration format (e.g. "5m0s").
-                        type: string
                       image:
                         description: Image is the container image for the provider
                           (required for container mode)

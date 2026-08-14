@@ -103,9 +103,9 @@ func TestConversionWebhookRoundTrip(t *testing.T) {
 	v1 := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:     mcpv1alpha1.MCPServerModeRemote,
-			Endpoint: "https://api.example.com/mcp",
-			IdleTTL:  "5m",
+			Mode:           mcpv1alpha1.MCPServerModeRemote,
+			Endpoint:       "https://api.example.com/mcp",
+			StartupTimeout: "5m",
 		},
 	}
 	require.Eventually(t, func() bool {
@@ -118,8 +118,8 @@ func TestConversionWebhookRoundTrip(t *testing.T) {
 	require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: ns}, gotV2))
 	assert.Equal(t, mcpv1alpha2.MCPServerModeRemote, gotV2.Spec.Mode)
 	assert.Equal(t, "https://api.example.com/mcp", gotV2.Spec.Endpoint)
-	require.NotNil(t, gotV2.Spec.IdleTTL, "idleTTL must survive conversion into the typed v1alpha2 metav1.Duration")
-	assert.Equal(t, 5*time.Minute, gotV2.Spec.IdleTTL.Duration)
+	require.NotNil(t, gotV2.Spec.StartupTimeout, "startupTimeout must survive conversion into the typed v1alpha2 metav1.Duration")
+	assert.Equal(t, 5*time.Minute, gotV2.Spec.StartupTimeout.Duration)
 
 	// And read it back as v1alpha1 (storage v1alpha2 -> v1alpha1): a second
 	// conversion in the reverse direction.
@@ -130,7 +130,7 @@ func TestConversionWebhookRoundTrip(t *testing.T) {
 	// to the v1alpha1 string form, so it is normalized ("5m" -> "5m0s"). This
 	// normalization is itself proof the hand-written conversion ran rather than a
 	// blind apiVersion relabel.
-	assert.Equal(t, "5m0s", gotV1.Spec.IdleTTL, "idleTTL must convert back to the v1alpha1 string form")
+	assert.Equal(t, "5m0s", gotV1.Spec.StartupTimeout, "startupTimeout must convert back to the v1alpha1 string form")
 }
 
 func loadCRDs() ([]*apiextensionsv1.CustomResourceDefinition, error) {

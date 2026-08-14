@@ -66,11 +66,6 @@ type MCPServerSpec struct {
 	// +optional
 	Replicas *int32 `json:"replicas,omitempty"`
 
-	// IdleTTL is the duration before an idle provider is stopped
-	// +kubebuilder:default="5m"
-	// +optional
-	IdleTTL string `json:"idleTTL,omitempty"`
-
 	// StartupTimeout is the maximum time to wait for provider startup
 	// +kubebuilder:default="30s"
 	// +optional
@@ -80,10 +75,6 @@ type MCPServerSpec struct {
 	// +kubebuilder:default="30s"
 	// +optional
 	ShutdownGracePeriod string `json:"shutdownGracePeriod,omitempty"`
-
-	// HealthCheck configures health checking
-	// +optional
-	HealthCheck *HealthCheckConfig `json:"healthCheck,omitempty"`
 
 	// Resources defines resource requirements
 	// +optional
@@ -125,10 +116,6 @@ type MCPServerSpec struct {
 	// +optional
 	PriorityClassName string `json:"priorityClassName,omitempty"`
 
-	// CircuitBreaker configures circuit breaker behavior
-	// +optional
-	CircuitBreaker *CircuitBreakerConfig `json:"circuitBreaker,omitempty"`
-
 	// Observability configures observability features
 	// +optional
 	Observability *ObservabilityConfig `json:"observability,omitempty"`
@@ -137,31 +124,6 @@ type MCPServerSpec struct {
 	// Used by the operator for NetworkPolicy generation and enforcement.
 	// +optional
 	Capabilities *MCPServerCapabilities `json:"capabilities,omitempty"`
-}
-
-// HealthCheckConfig defines health check settings
-type HealthCheckConfig struct {
-	// Enabled enables health checks
-	// +kubebuilder:default=true
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// Interval between health checks
-	// +kubebuilder:default="30s"
-	Interval string `json:"interval,omitempty"`
-
-	// Timeout for each health check
-	// +kubebuilder:default="5s"
-	Timeout string `json:"timeout,omitempty"`
-
-	// FailureThreshold before marking unhealthy
-	// +kubebuilder:default=3
-	// +kubebuilder:validation:Minimum=1
-	FailureThreshold int32 `json:"failureThreshold,omitempty"`
-
-	// SuccessThreshold before marking healthy
-	// +kubebuilder:default=1
-	// +kubebuilder:validation:Minimum=1
-	SuccessThreshold int32 `json:"successThreshold,omitempty"`
 }
 
 // ResourceRequirements defines resource requests and limits
@@ -302,29 +264,6 @@ type Toleration struct {
 	Value             string `json:"value,omitempty"`
 	Effect            string `json:"effect,omitempty"`
 	TolerationSeconds *int64 `json:"tolerationSeconds,omitempty"`
-}
-
-// CircuitBreakerConfig defines circuit breaker settings
-type CircuitBreakerConfig struct {
-	// Enabled enables circuit breaker
-	// +kubebuilder:default=true
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// FailureThreshold before opening circuit
-	// +kubebuilder:default=5
-	FailureThreshold int32 `json:"failureThreshold,omitempty"`
-
-	// SuccessThreshold before closing circuit
-	// +kubebuilder:default=2
-	SuccessThreshold int32 `json:"successThreshold,omitempty"`
-
-	// ResetTimeout before attempting recovery
-	// +kubebuilder:default="30s"
-	ResetTimeout string `json:"resetTimeout,omitempty"`
-
-	// HalfOpenRequests allowed during half-open state
-	// +kubebuilder:default=3
-	HalfOpenRequests int32 `json:"halfOpenRequests,omitempty"`
 }
 
 // ObservabilityConfig defines observability settings

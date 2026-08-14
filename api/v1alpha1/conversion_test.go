@@ -42,7 +42,7 @@ func TestMCPServer_ConvertTo_MinimalSpec(t *testing.T) {
 	assert.Equal(t, "test-provider", dst.Name)
 	assert.Equal(t, v1alpha2.MCPServerModeContainer, dst.Spec.Mode)
 	assert.Equal(t, "example/provider:latest", dst.Spec.Image)
-	assert.Nil(t, dst.Spec.IdleTTL)
+	assert.Nil(t, dst.Spec.StartupTimeout)
 }
 
 func TestMCPServer_RoundTrip_FullSpec(t *testing.T) {
@@ -59,20 +59,12 @@ func TestMCPServer_RoundTrip_FullSpec(t *testing.T) {
 			Args:                []string{"--port=8080"},
 			WorkingDir:          "/app",
 			Replicas:            int32Ptr(3),
-			IdleTTL:             "5m0s",
 			StartupTimeout:      "30s",
 			ShutdownGracePeriod: "15s",
 			ServiceAccountName:  "mcp-sa",
 			PriorityClassName:   "high-priority",
 			ImagePullSecrets:    []corev1.LocalObjectReference{{Name: "registry-secret"}},
 			NodeSelector:        map[string]string{"node-type": "gpu"},
-			HealthCheck: &HealthCheckConfig{
-				Enabled:          boolPtr(true),
-				Interval:         "1m0s",
-				Timeout:          "10s",
-				FailureThreshold: 5,
-				SuccessThreshold: 2,
-			},
 			Resources: &ResourceRequirements{
 				Requests: &ResourceList{CPU: "100m", Memory: "128Mi"},
 				Limits:   &ResourceList{CPU: "500m", Memory: "512Mi"},
@@ -116,13 +108,6 @@ func TestMCPServer_RoundTrip_FullSpec(t *testing.T) {
 			},
 			Tolerations: []Toleration{
 				{Key: "dedicated", Operator: "Equal", Value: "mcp", Effect: "NoSchedule", TolerationSeconds: int64Ptr(300)},
-			},
-			CircuitBreaker: &CircuitBreakerConfig{
-				Enabled:          boolPtr(true),
-				FailureThreshold: 5,
-				SuccessThreshold: 2,
-				ResetTimeout:     "45s",
-				HalfOpenRequests: 3,
 			},
 			Observability: &ObservabilityConfig{
 				Tracing: &TracingConfig{Enabled: true, SamplingRate: "0.1"},
@@ -192,12 +177,8 @@ func TestMCPServer_RoundTrip_FullSpec(t *testing.T) {
 	require.NoError(t, original.ConvertTo(hub))
 
 	// Verify key v1alpha2 improvements
-	assert.Equal(t, durationPtr(5*time.Minute), hub.Spec.IdleTTL)
 	assert.Equal(t, durationPtr(30*time.Second), hub.Spec.StartupTimeout)
 	assert.Equal(t, durationPtr(15*time.Second), hub.Spec.ShutdownGracePeriod)
-	assert.Equal(t, durationPtr(1*time.Minute), hub.Spec.HealthCheck.Interval)
-	assert.Equal(t, durationPtr(10*time.Second), hub.Spec.HealthCheck.Timeout)
-	assert.Equal(t, durationPtr(45*time.Second), hub.Spec.CircuitBreaker.ResetTimeout)
 	// Conditions should be metav1.Condition
 	require.Len(t, hub.Status.Conditions, 1)
 	assert.Equal(t, "Ready", hub.Status.Conditions[0].Type)
@@ -231,16 +212,16 @@ func TestMCPServer_RoundTrip_FullSpec(t *testing.T) {
 func TestMCPServer_ConvertTo_InvalidDuration(t *testing.T) {
 	src := &MCPServer{
 		Spec: MCPServerSpec{
-			Mode:    MCPServerModeContainer,
-			Image:   "test:latest",
-			IdleTTL: "not-a-duration",
+			Mode:           MCPServerModeContainer,
+			Image:          "test:latest",
+			StartupTimeout: "not-a-duration",
 		},
 	}
 
 	dst := &v1alpha2.MCPServer{}
 	err := src.ConvertTo(dst)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "spec.idleTTL")
+	assert.Contains(t, err.Error(), "spec.startupTimeout")
 }
 
 func TestMCPServer_ConvertTo_EmptyDurations(t *testing.T) {
@@ -254,7 +235,6 @@ func TestMCPServer_ConvertTo_EmptyDurations(t *testing.T) {
 	dst := &v1alpha2.MCPServer{}
 	require.NoError(t, src.ConvertTo(dst))
 
-	assert.Nil(t, dst.Spec.IdleTTL)
 	assert.Nil(t, dst.Spec.StartupTimeout)
 	assert.Nil(t, dst.Spec.ShutdownGracePeriod)
 }
@@ -391,7 +371,6 @@ func TestMCPDiscoverySource_RoundTrip(t *testing.T) {
 				Spec: &MCPServerSpec{
 					Mode:           MCPServerModeContainer,
 					Image:          "default:latest",
-					IdleTTL:        "10m0s",
 					StartupTimeout: "1m0s",
 				},
 			},
@@ -432,7 +411,6 @@ func TestMCPDiscoverySource_RoundTrip(t *testing.T) {
 	// Verify embedded template spec durations
 	require.NotNil(t, hub.Spec.MCPServerTemplate)
 	require.NotNil(t, hub.Spec.MCPServerTemplate.Spec)
-	assert.Equal(t, durationPtr(10*time.Minute), hub.Spec.MCPServerTemplate.Spec.IdleTTL)
 	assert.Equal(t, durationPtr(1*time.Minute), hub.Spec.MCPServerTemplate.Spec.StartupTimeout)
 
 	roundTripped := &MCPDiscoverySource{}
@@ -452,7 +430,6 @@ func TestMCPDiscoverySource_RoundTrip(t *testing.T) {
 	assert.Equal(t, original.Spec.MCPServerTemplate.Metadata, roundTripped.Spec.MCPServerTemplate.Metadata)
 	require.NotNil(t, roundTripped.Spec.MCPServerTemplate.Spec)
 	assert.Equal(t, original.Spec.MCPServerTemplate.Spec.Image, roundTripped.Spec.MCPServerTemplate.Spec.Image)
-	assert.Equal(t, original.Spec.MCPServerTemplate.Spec.IdleTTL, roundTripped.Spec.MCPServerTemplate.Spec.IdleTTL)
 	assert.Equal(t, original.Spec.MCPServerTemplate.Spec.StartupTimeout, roundTripped.Spec.MCPServerTemplate.Spec.StartupTimeout)
 
 	assert.Equal(t, original.Spec.Filters, roundTripped.Spec.Filters)
@@ -702,7 +679,6 @@ func TestMCPServer_RoundTrip_CanonicalDurationsNoDrift(t *testing.T) {
 		Spec: MCPServerSpec{
 			Mode:                MCPServerModeContainer,
 			Image:               "example/provider:latest",
-			IdleTTL:             "5m0s",
 			StartupTimeout:      "30s",
 			ShutdownGracePeriod: "1m30s",
 		},
@@ -712,7 +688,6 @@ func TestMCPServer_RoundTrip_CanonicalDurationsNoDrift(t *testing.T) {
 	roundTripped := &MCPServer{}
 	require.NoError(t, roundTripped.ConvertFrom(hub))
 
-	assert.Equal(t, original.Spec.IdleTTL, roundTripped.Spec.IdleTTL)
 	assert.Equal(t, original.Spec.StartupTimeout, roundTripped.Spec.StartupTimeout)
 	assert.Equal(t, original.Spec.ShutdownGracePeriod, roundTripped.Spec.ShutdownGracePeriod)
 }
