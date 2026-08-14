@@ -8,11 +8,11 @@
 
 ## Features
 
-- **MCPProvider CRD**: Declarative management of MCP tool providers
-- **MCPProviderGroup CRD**: Load balancing and high availability for provider groups
-- **MCPDiscoverySource CRD**: Automatic provider discovery from namespaces
+- **MCPServer CRD**: Declarative management of MCP tool servers
+- **MCPServerGroup CRD**: Label-selected aggregation of `MCPServer` state against a `healthPolicy`
+- **MCPDiscoverySource CRD**: Automatic server discovery from namespaces
 - **State Machine**: Automatic lifecycle management (Cold → Initializing → Ready → Degraded → Dead)
-- **Health Checks**: Configurable health monitoring with circuit breaker
+- **Health**: Hangar's health endpoint for `remote` servers and pod phase for `container`, on the reconcile interval
 - **Metrics**: Prometheus metrics for monitoring
 - **Secure by Default**: Pod security contexts, non-root, read-only filesystem
 - **Policy Enforcement**: Opt-in namespaces get default-deny egress, admission-time registration, and image-pin coupling (see [Enforcement](#enforcement))
@@ -40,11 +40,11 @@ helm install mcp-hangar-operator oci://ghcr.io/mcp-hangar/charts/mcp-hangar-oper
   --create-namespace
 ```
 
-### Create Your First Provider
+### Create Your First Server
 
 ```yaml
-apiVersion: mcp-hangar.io/v1alpha1
-kind: MCPProvider
+apiVersion: mcp-hangar.io/v1alpha2
+kind: MCPServer
 metadata:
   name: my-tools
   namespace: default
@@ -59,13 +59,19 @@ spec:
 ```
 
 ```bash
-kubectl apply -f my-provider.yaml
-kubectl get mcpproviders
+kubectl apply -f my-server.yaml
+kubectl get mcpservers
 ```
 
 ## CRD Reference
 
-### MCPProvider
+The operator is the **deploy-time admission plane**, not Hangar's control plane.
+Idle stop, circuit breaking and tool allow-lists are core settings
+(`config.yaml` / the REST API) and are not `MCPServer` fields — a cluster server
+discovered by Hangar takes core's own `idle_ttl_s` default. The tables below
+list what the operator actually reads.
+
+### MCPServer
 
 | Field | Description | Default |
 |-------|-------------|---------|
@@ -73,19 +79,23 @@ kubectl get mcpproviders
 | `spec.image` | Container image (for container mode) | Required for container |
 | `spec.endpoint` | HTTP endpoint (for remote mode) | Required for remote |
 | `spec.replicas` | Number of replicas (0 = cold start) | `1` |
-| `spec.idleTTL` | Idle timeout before shutdown | `5m` |
-| `spec.healthCheck.enabled` | Enable health checks | `true` |
-| `spec.healthCheck.interval` | Health check interval | `30s` |
-| `spec.circuitBreaker.enabled` | Enable circuit breaker | `true` |
+| `spec.startupTimeout` | How long to wait for the server to come up | `30s` |
+| `spec.shutdownGracePeriod` | Pod termination grace period | `30s` |
+| `spec.capabilities.network` | Egress the server declares; feeds the generated `NetworkPolicy` | — |
+| `spec.capabilities.tools` | `maxCount` / `expectedTools`; drives capability-violation events | — |
+| `spec.capabilities.enforcementMode` | What a violation does (`audit` / `block`) | — |
 
-### MCPProviderGroup
+### MCPServerGroup
+
+A **status aggregator**, not a load balancer: it selects `MCPServer`s, counts
+their states, and reports Ready/Degraded/Available against a `healthPolicy`.
+Traffic is not routed through it.
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| `spec.selector` | Label selector for providers | Required |
-| `spec.strategy` | Load balancing: RoundRobin, LeastConnections, Random, Failover | `RoundRobin` |
-| `spec.failover.maxRetries` | Maximum retry attempts | `2` |
-| `spec.healthPolicy.minHealthyPercentage` | Minimum healthy providers | `50` |
+| `spec.selector` | Label selector for member servers | Required |
+| `spec.healthPolicy.minHealthyPercentage` | Minimum healthy members | `50` |
+| `spec.healthPolicy.minHealthyCount` | Minimum healthy members, absolute | — |
 
 ### MCPDiscoverySource
 
@@ -124,8 +134,8 @@ Cilium/Tetragon backstop (ADR-006).
 See [`config/samples/`](config/samples/) for complete, runnable examples:
 
 - [`mcp-hangar_v1alpha2_mcpserver.yaml`](config/samples/mcp-hangar_v1alpha2_mcpserver.yaml) - Basic container-mode `MCPServer`. For an external endpoint provider, set `spec.mode: remote` and `spec.endpoint` instead of `spec.image`; for Secret-backed config, add `spec.env`/`spec.volumes` referencing a `Secret` (both fields are part of the `MCPServer` spec).
-- [`mcp-hangar_v1alpha2_mcpservergroup.yaml`](config/samples/mcp-hangar_v1alpha2_mcpservergroup.yaml) - High-availability group of `MCPServer`s load-balanced with the `RoundRobin` strategy.
-- [`mcp-hangar_v1alpha2_mcpdiscoverysource.yaml`](config/samples/mcp-hangar_v1alpha2_mcpdiscoverysource.yaml) - Automatic provider discovery from a namespace.
+- [`mcp-hangar_v1alpha2_mcpservergroup.yaml`](config/samples/mcp-hangar_v1alpha2_mcpservergroup.yaml) - Group of `MCPServer`s selected by label, with a `healthPolicy` the group reports against.
+- [`mcp-hangar_v1alpha2_mcpdiscoverysource.yaml`](config/samples/mcp-hangar_v1alpha2_mcpdiscoverysource.yaml) - Automatic server discovery from a namespace.
 
 Apply all samples at once:
 
