@@ -71,10 +71,6 @@ func (src *MCPServer) ConvertTo(dstRaw conversion.Hub) error {
 
 	dst.Spec.Tolerations = convertTolerationsTo(src.Spec.Tolerations)
 
-	if src.Spec.Observability != nil {
-		dst.Spec.Observability = convertObservabilityTo(src.Spec.Observability)
-	}
-
 	if src.Spec.Capabilities != nil {
 		dst.Spec.Capabilities = convertMCPServerCapabilitiesTo(src.Spec.Capabilities)
 	}
@@ -150,10 +146,6 @@ func (dst *MCPServer) ConvertFrom(srcRaw conversion.Hub) error {
 	}
 
 	dst.Spec.Tolerations = convertTolerationsFrom(src.Spec.Tolerations)
-
-	if src.Spec.Observability != nil {
-		dst.Spec.Observability = convertObservabilityFrom(src.Spec.Observability)
-	}
 
 	if src.Spec.Capabilities != nil {
 		dst.Spec.Capabilities = convertMCPServerCapabilitiesFrom(src.Spec.Capabilities)
@@ -804,28 +796,6 @@ func convertTolerationsFrom(src []v1alpha2.Toleration) []Toleration {
 	return dst
 }
 
-func convertObservabilityTo(src *ObservabilityConfig) *v1alpha2.ObservabilityConfig {
-	dst := &v1alpha2.ObservabilityConfig{}
-	if src.Tracing != nil {
-		dst.Tracing = &v1alpha2.TracingConfig{Enabled: src.Tracing.Enabled, SamplingRate: src.Tracing.SamplingRate}
-	}
-	if src.Metrics != nil {
-		dst.Metrics = &v1alpha2.MetricsConfig{Enabled: src.Metrics.Enabled, Port: src.Metrics.Port}
-	}
-	return dst
-}
-
-func convertObservabilityFrom(src *v1alpha2.ObservabilityConfig) *ObservabilityConfig {
-	dst := &ObservabilityConfig{}
-	if src.Tracing != nil {
-		dst.Tracing = &TracingConfig{Enabled: src.Tracing.Enabled, SamplingRate: src.Tracing.SamplingRate}
-	}
-	if src.Metrics != nil {
-		dst.Metrics = &MetricsConfig{Enabled: src.Metrics.Enabled, Port: src.Metrics.Port}
-	}
-	return dst
-}
-
 func convertMCPServerCapabilitiesTo(src *MCPServerCapabilities) *v1alpha2.MCPServerCapabilities {
 	dst := &v1alpha2.MCPServerCapabilities{
 		EnforcementMode: src.EnforcementMode,
@@ -841,24 +811,9 @@ func convertMCPServerCapabilitiesTo(src *MCPServerCapabilities) *v1alpha2.MCPSer
 			})
 		}
 	}
-	if src.Filesystem != nil {
-		dst.Filesystem = &v1alpha2.FilesystemCapabilitiesSpec{
-			ReadPaths: src.Filesystem.ReadPaths, WritePaths: src.Filesystem.WritePaths, TempAllowed: src.Filesystem.TempAllowed,
-		}
-	}
-	if src.Environment != nil {
-		dst.Environment = &v1alpha2.EnvironmentCapabilitiesSpec{
-			Required: src.Environment.Required, Optional: src.Environment.Optional,
-		}
-	}
 	if src.Tools != nil {
 		dst.Tools = &v1alpha2.ToolCapabilitiesSpec{
 			MaxCount: src.Tools.MaxCount, SchemaDriftAlert: src.Tools.SchemaDriftAlert, ExpectedTools: src.Tools.ExpectedTools,
-		}
-	}
-	if src.Resources != nil {
-		dst.Resources = &v1alpha2.ResourceCapabilitiesSpec{
-			MaxMemoryMB: src.Resources.MaxMemoryMB, MaxCPUPercent: src.Resources.MaxCPUPercent,
 		}
 	}
 	return dst
@@ -879,24 +834,9 @@ func convertMCPServerCapabilitiesFrom(src *v1alpha2.MCPServerCapabilities) *MCPS
 			})
 		}
 	}
-	if src.Filesystem != nil {
-		dst.Filesystem = &FilesystemCapabilitiesSpec{
-			ReadPaths: src.Filesystem.ReadPaths, WritePaths: src.Filesystem.WritePaths, TempAllowed: src.Filesystem.TempAllowed,
-		}
-	}
-	if src.Environment != nil {
-		dst.Environment = &EnvironmentCapabilitiesSpec{
-			Required: src.Environment.Required, Optional: src.Environment.Optional,
-		}
-	}
 	if src.Tools != nil {
 		dst.Tools = &ToolCapabilitiesSpec{
 			MaxCount: src.Tools.MaxCount, SchemaDriftAlert: src.Tools.SchemaDriftAlert, ExpectedTools: src.Tools.ExpectedTools,
-		}
-	}
-	if src.Resources != nil {
-		dst.Resources = &ResourceCapabilitiesSpec{
-			MaxMemoryMB: src.Resources.MaxMemoryMB, MaxCPUPercent: src.Resources.MaxCPUPercent,
 		}
 	}
 	return dst

@@ -1157,44 +1157,6 @@ spec:
                             - block
                             - quarantine
                             type: string
-                          environment:
-                            description: Environment defines required/optional environment
-                              variables
-                            properties:
-                              optional:
-                                description: Optional lists environment variables
-                                  the provider may use
-                                items:
-                                  type: string
-                                type: array
-                              required:
-                                description: Required lists environment variables
-                                  the provider must have
-                                items:
-                                  type: string
-                                type: array
-                            type: object
-                          filesystem:
-                            description: Filesystem defines allowed filesystem access
-                            properties:
-                              readPaths:
-                                description: ReadPaths lists allowed read-only mount
-                                  paths
-                                items:
-                                  type: string
-                                type: array
-                              tempAllowed:
-                                default: true
-                                description: TempAllowed controls whether /tmp writes
-                                  are permitted
-                                type: boolean
-                              writePaths:
-                                description: WritePaths lists allowed read-write mount
-                                  paths
-                                items:
-                                  type: string
-                                type: array
-                            type: object
                           network:
                             description: Network defines allowed network access
                             properties:
@@ -1245,21 +1207,6 @@ spec:
                                 description: LoopbackAllowed controls whether localhost
                                   connections are permitted
                                 type: boolean
-                            type: object
-                          resources:
-                            description: Resources defines resource consumption expectations
-                              (soft limits for behavioral profiling)
-                            properties:
-                              maxCPUPercent:
-                                description: MaxCPUPercent is the maximum expected
-                                  CPU utilization percent (0 = unlimited)
-                                type: string
-                              maxMemoryMB:
-                                description: MaxMemoryMB is the maximum expected memory
-                                  usage in MiB (0 = unlimited)
-                                format: int32
-                                minimum: 0
-                                type: integer
                             type: object
                           tools:
                             description: Tools defines tool schema constraints
@@ -1374,34 +1321,6 @@ spec:
                         additionalProperties:
                           type: string
                         description: NodeSelector for pod scheduling
-                        type: object
-                      observability:
-                        description: Observability configures observability features
-                        properties:
-                          metrics:
-                            description: MetricsConfig defines metrics settings
-                            properties:
-                              enabled:
-                                type: boolean
-                              port:
-                                description: Port is the TCP port the metrics endpoint
-                                  listens on.
-                                format: int32
-                                maximum: 65535
-                                minimum: 1
-                                type: integer
-                            type: object
-                          tracing:
-                            description: TracingConfig defines tracing settings
-                            properties:
-                              enabled:
-                                type: boolean
-                              samplingRate:
-                                description: SamplingRate as string (e.g., "0.1" for
-                                  10%)
-                                pattern: ^[0-9]*\.?[0-9]+$
-                                type: string
-                            type: object
                         type: object
                       priorityClassName:
                         description: PriorityClassName for pod scheduling priority
@@ -2858,44 +2777,6 @@ spec:
                             - block
                             - quarantine
                             type: string
-                          environment:
-                            description: Environment defines required/optional environment
-                              variables
-                            properties:
-                              optional:
-                                description: Optional lists environment variables
-                                  the provider may use
-                                items:
-                                  type: string
-                                type: array
-                              required:
-                                description: Required lists environment variables
-                                  the provider must have
-                                items:
-                                  type: string
-                                type: array
-                            type: object
-                          filesystem:
-                            description: Filesystem defines allowed filesystem access
-                            properties:
-                              readPaths:
-                                description: ReadPaths lists allowed read-only mount
-                                  paths
-                                items:
-                                  type: string
-                                type: array
-                              tempAllowed:
-                                default: true
-                                description: TempAllowed controls whether /tmp writes
-                                  are permitted
-                                type: boolean
-                              writePaths:
-                                description: WritePaths lists allowed read-write mount
-                                  paths
-                                items:
-                                  type: string
-                                type: array
-                            type: object
                           network:
                             description: Network defines allowed network access
                             properties:
@@ -2946,21 +2827,6 @@ spec:
                                 description: LoopbackAllowed controls whether localhost
                                   connections are permitted
                                 type: boolean
-                            type: object
-                          resources:
-                            description: Resources defines resource consumption expectations
-                              (soft limits for behavioral profiling)
-                            properties:
-                              maxCPUPercent:
-                                description: MaxCPUPercent is the maximum expected
-                                  CPU utilization percent (0 = unlimited)
-                                type: string
-                              maxMemoryMB:
-                                description: MaxMemoryMB is the maximum expected memory
-                                  usage in MiB (0 = unlimited)
-                                format: int32
-                                minimum: 0
-                                type: integer
                             type: object
                           tools:
                             description: Tools defines tool schema constraints
@@ -3075,34 +2941,6 @@ spec:
                         additionalProperties:
                           type: string
                         description: NodeSelector for pod scheduling
-                        type: object
-                      observability:
-                        description: Observability configures observability features
-                        properties:
-                          metrics:
-                            description: MetricsConfig defines metrics settings
-                            properties:
-                              enabled:
-                                type: boolean
-                              port:
-                                description: Port is the TCP port the metrics endpoint
-                                  listens on.
-                                format: int32
-                                maximum: 65535
-                                minimum: 1
-                                type: integer
-                            type: object
-                          tracing:
-                            description: TracingConfig defines tracing settings
-                            properties:
-                              enabled:
-                                type: boolean
-                              samplingRate:
-                                description: SamplingRate as string (e.g., "0.1" for
-                                  10%)
-                                pattern: ^[0-9]*\.?[0-9]+$
-                                type: string
-                            type: object
                         type: object
                       priorityClassName:
                         description: PriorityClassName for pod scheduling priority

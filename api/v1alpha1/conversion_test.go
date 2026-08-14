@@ -109,10 +109,6 @@ func TestMCPServer_RoundTrip_FullSpec(t *testing.T) {
 			Tolerations: []Toleration{
 				{Key: "dedicated", Operator: "Equal", Value: "mcp", Effect: "NoSchedule", TolerationSeconds: int64Ptr(300)},
 			},
-			Observability: &ObservabilityConfig{
-				Tracing: &TracingConfig{Enabled: true, SamplingRate: "0.1"},
-				Metrics: &MetricsConfig{Enabled: true, Port: 9090},
-			},
 			Capabilities: &MCPServerCapabilities{
 				EnforcementMode: "block",
 				Network: &NetworkCapabilitiesSpec{
@@ -120,17 +116,8 @@ func TestMCPServer_RoundTrip_FullSpec(t *testing.T) {
 					DNSAllowed:      boolPtr(true),
 					LoopbackAllowed: boolPtr(false),
 				},
-				Filesystem: &FilesystemCapabilitiesSpec{
-					ReadPaths: []string{"/data"}, WritePaths: []string{"/tmp"}, TempAllowed: boolPtr(true),
-				},
-				Environment: &EnvironmentCapabilitiesSpec{
-					Required: []string{"API_KEY"}, Optional: []string{"DEBUG"},
-				},
 				Tools: &ToolCapabilitiesSpec{
 					MaxCount: 10, SchemaDriftAlert: boolPtr(true), ExpectedTools: []string{"calculate"},
-				},
-				Resources: &ResourceCapabilitiesSpec{
-					MaxMemoryMB: 512, MaxCPUPercent: "80",
 				},
 			},
 		},
