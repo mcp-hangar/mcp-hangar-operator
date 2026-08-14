@@ -117,10 +117,6 @@ func TestMCPServer_RoundTrip_FullSpec(t *testing.T) {
 			Tolerations: []Toleration{
 				{Key: "dedicated", Operator: "Equal", Value: "mcp", Effect: "NoSchedule", TolerationSeconds: int64Ptr(300)},
 			},
-			Tools: &ToolsConfig{
-				AllowList: []string{"calculate", "format"},
-				RateLimit: &RateLimitConfig{RequestsPerMinute: 60, BurstSize: 10},
-			},
 			CircuitBreaker: &CircuitBreakerConfig{
 				Enabled:          boolPtr(true),
 				FailureThreshold: 5,

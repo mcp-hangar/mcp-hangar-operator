@@ -111,11 +111,6 @@ func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 		}
 	}
 
-	// Tools: allowList and denyList are mutually exclusive.
-	if p.Spec.Tools != nil && len(p.Spec.Tools.AllowList) > 0 && len(p.Spec.Tools.DenyList) > 0 {
-		errs = append(errs, "spec.tools.allowList and spec.tools.denyList are mutually exclusive")
-	}
-
 	// Capabilities validation.
 	if p.Spec.Capabilities != nil {
 		capErrs, capWarnings := validateCapabilitiesV2(p.Spec.Capabilities)

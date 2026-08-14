@@ -88,10 +88,6 @@ func (src *MCPServer) ConvertTo(dstRaw conversion.Hub) error {
 
 	dst.Spec.Tolerations = convertTolerationsTo(src.Spec.Tolerations)
 
-	if src.Spec.Tools != nil {
-		dst.Spec.Tools = convertToolsConfigTo(src.Spec.Tools)
-	}
-
 	if src.Spec.CircuitBreaker != nil {
 		dst.Spec.CircuitBreaker = &v1alpha2.CircuitBreakerConfig{
 			Enabled:          src.Spec.CircuitBreaker.Enabled,
@@ -194,10 +190,6 @@ func (dst *MCPServer) ConvertFrom(srcRaw conversion.Hub) error {
 	}
 
 	dst.Spec.Tolerations = convertTolerationsFrom(src.Spec.Tolerations)
-
-	if src.Spec.Tools != nil {
-		dst.Spec.Tools = convertToolsConfigFrom(src.Spec.Tools)
-	}
 
 	if src.Spec.CircuitBreaker != nil {
 		dst.Spec.CircuitBreaker = &CircuitBreakerConfig{
@@ -925,34 +917,6 @@ func convertTolerationsFrom(src []v1alpha2.Toleration) []Toleration {
 	for i, t := range src {
 		dst[i] = Toleration{
 			Key: t.Key, Operator: t.Operator, Value: t.Value, Effect: t.Effect, TolerationSeconds: t.TolerationSeconds,
-		}
-	}
-	return dst
-}
-
-func convertToolsConfigTo(src *ToolsConfig) *v1alpha2.ToolsConfig {
-	dst := &v1alpha2.ToolsConfig{
-		AllowList: src.AllowList,
-		DenyList:  src.DenyList,
-	}
-	if src.RateLimit != nil {
-		dst.RateLimit = &v1alpha2.RateLimitConfig{
-			RequestsPerMinute: src.RateLimit.RequestsPerMinute,
-			BurstSize:         src.RateLimit.BurstSize,
-		}
-	}
-	return dst
-}
-
-func convertToolsConfigFrom(src *v1alpha2.ToolsConfig) *ToolsConfig {
-	dst := &ToolsConfig{
-		AllowList: src.AllowList,
-		DenyList:  src.DenyList,
-	}
-	if src.RateLimit != nil {
-		dst.RateLimit = &RateLimitConfig{
-			RequestsPerMinute: src.RateLimit.RequestsPerMinute,
-			BurstSize:         src.RateLimit.BurstSize,
 		}
 	}
 	return dst
