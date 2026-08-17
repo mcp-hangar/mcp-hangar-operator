@@ -23,7 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/metrics"
 )
 
@@ -55,7 +55,7 @@ func (r *MCPServerGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}()
 
 	// Fetch the MCPServerGroup instance
-	group := &mcpv1alpha1.MCPServerGroup{}
+	group := &mcpv1alpha2.MCPServerGroup{}
 	if err := r.Get(ctx, req.NamespacedName, group); err != nil {
 		if errors.IsNotFound(err) {
 			logger.Info("MCPServerGroup resource not found, ignoring")
@@ -98,7 +98,7 @@ func (r *MCPServerGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 }
 
 // reconcileNormal handles normal (non-deletion) reconciliation for groups
-func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *mcpv1alpha1.MCPServerGroup) (ctrl.Result, error) {
+func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *mcpv1alpha2.MCPServerGroup) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	// original snapshots the object exactly as read from the cache, before
@@ -139,7 +139,7 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 	// via +kubebuilder:validation:Required, so a persisted group always has a
 	// non-nil selector. Kept as a guard against direct-cache manipulation.
 	if group.Spec.Selector == nil {
-		group.Status.SetCondition(ConditionReady, metav1.ConditionUnknown, "NoSelector", "No label selector defined")
+		setGroupCondition(group, ConditionReady, metav1.ConditionUnknown, "NoSelector", "No label selector defined")
 		if err := r.updateStatus(ctx, group, original); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -149,7 +149,7 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 	selector, err := metav1.LabelSelectorAsSelector(group.Spec.Selector)
 	if err != nil {
 		logger.Error(err, "Failed to parse label selector")
-		group.Status.SetCondition(ConditionReady, metav1.ConditionFalse, "InvalidSelector", fmt.Sprintf("Invalid label selector: %v", err))
+		setGroupCondition(group, ConditionReady, metav1.ConditionFalse, "InvalidSelector", fmt.Sprintf("Invalid label selector: %v", err))
 		if err := r.updateStatus(ctx, group, original); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -157,7 +157,7 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 	}
 
 	// List MCPServers matching selector in same namespace
-	providerList := &mcpv1alpha1.MCPServerList{}
+	providerList := &mcpv1alpha2.MCPServerList{}
 	listOpts := &client.ListOptions{
 		Namespace:     group.Namespace,
 		LabelSelector: selector,
@@ -169,11 +169,11 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 
 	// Aggregate status counts
 	var readyCount, degradedCount, coldCount, deadCount int32
-	memberStatuses := make([]mcpv1alpha1.MCPServerMemberStatus, 0, len(providerList.Items))
+	memberStatuses := make([]mcpv1alpha2.MCPServerMemberStatus, 0, len(providerList.Items))
 
 	for i := range providerList.Items {
 		p := &providerList.Items[i]
-		member := mcpv1alpha1.MCPServerMemberStatus{
+		member := mcpv1alpha2.MCPServerMemberStatus{
 			Name:            p.Name,
 			Namespace:       p.Namespace,
 			State:           string(p.Status.State),
@@ -182,13 +182,13 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 		memberStatuses = append(memberStatuses, member)
 
 		switch p.Status.State {
-		case mcpv1alpha1.MCPServerStateReady:
+		case mcpv1alpha2.MCPServerStateReady:
 			readyCount++
-		case mcpv1alpha1.MCPServerStateDegraded:
+		case mcpv1alpha2.MCPServerStateDegraded:
 			degradedCount++
-		case mcpv1alpha1.MCPServerStateCold:
+		case mcpv1alpha2.MCPServerStateCold:
 			coldCount++
-		case mcpv1alpha1.MCPServerStateDead:
+		case mcpv1alpha2.MCPServerStateDead:
 			deadCount++
 		default:
 			// Initializing or empty state treated as cold
@@ -260,7 +260,7 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 // counted below and the reconcile requeues with a fresh read. The write-skip in
 // updateStatus is what keeps those conflicts rare -- it is the part that fixed
 // the #32 storm, and it is untouched.
-func (r *MCPServerGroupReconciler) updateStatus(ctx context.Context, group *mcpv1alpha1.MCPServerGroup, original *mcpv1alpha1.MCPServerGroup) error {
+func (r *MCPServerGroupReconciler) updateStatus(ctx context.Context, group *mcpv1alpha2.MCPServerGroup, original *mcpv1alpha2.MCPServerGroup) error {
 	logger := log.FromContext(ctx)
 
 	if apiequality.Semantic.DeepEqual(original.Status, group.Status) {
@@ -284,46 +284,46 @@ func (r *MCPServerGroupReconciler) updateStatus(ctx context.Context, group *mcpv
 
 // evaluateConditions sets Ready, Degraded, and Available conditions based on
 // provider counts and health policy thresholds.
-func (r *MCPServerGroupReconciler) evaluateConditions(group *mcpv1alpha1.MCPServerGroup) {
+func (r *MCPServerGroupReconciler) evaluateConditions(group *mcpv1alpha2.MCPServerGroup) {
 	status := &group.Status
 
 	// Zero-member groups
 	if status.ProviderCount == 0 {
-		status.SetCondition(ConditionReady, metav1.ConditionUnknown, "NoProviders", "No providers match selector")
-		status.SetCondition(ConditionAvailable, metav1.ConditionFalse, "NoProviders", "No providers match selector")
-		status.SetCondition(ConditionDegraded, metav1.ConditionFalse, "NoProviders", "No providers match selector")
+		setGroupCondition(group, ConditionReady, metav1.ConditionUnknown, "NoProviders", "No providers match selector")
+		setGroupCondition(group, ConditionAvailable, metav1.ConditionFalse, "NoProviders", "No providers match selector")
+		setGroupCondition(group, ConditionDegraded, metav1.ConditionFalse, "NoProviders", "No providers match selector")
 		return
 	}
 
 	// Available: at least 1 ready provider can serve traffic
 	if status.ReadyCount > 0 {
-		status.SetCondition(ConditionAvailable, metav1.ConditionTrue, "ProvidersAvailable",
+		setGroupCondition(group, ConditionAvailable, metav1.ConditionTrue, "ProvidersAvailable",
 			fmt.Sprintf("%d provider(s) available", status.ReadyCount))
 	} else {
-		status.SetCondition(ConditionAvailable, metav1.ConditionFalse, "NoReadyProviders", "No ready providers")
+		setGroupCondition(group, ConditionAvailable, metav1.ConditionFalse, "NoReadyProviders", "No ready providers")
 	}
 
 	// Ready: health policy threshold met via IsHealthy helper
 	if status.IsHealthy(group.Spec.HealthPolicy) {
-		status.SetCondition(ConditionReady, metav1.ConditionTrue, "HealthyThresholdMet",
+		setGroupCondition(group, ConditionReady, metav1.ConditionTrue, "HealthyThresholdMet",
 			fmt.Sprintf("%d/%d providers ready", status.ReadyCount, status.ProviderCount))
 	} else {
-		status.SetCondition(ConditionReady, metav1.ConditionFalse, "HealthyThresholdNotMet",
+		setGroupCondition(group, ConditionReady, metav1.ConditionFalse, "HealthyThresholdNotMet",
 			fmt.Sprintf("%d/%d providers ready, threshold not met", status.ReadyCount, status.ProviderCount))
 	}
 
 	// Degraded: any unhealthy providers exist (can coexist with Ready)
 	unhealthyCount := status.DegradedCount + status.DeadCount
 	if unhealthyCount > 0 {
-		status.SetCondition(ConditionDegraded, metav1.ConditionTrue, "UnhealthyProviders",
+		setGroupCondition(group, ConditionDegraded, metav1.ConditionTrue, "UnhealthyProviders",
 			fmt.Sprintf("%d provider(s) unhealthy (%d degraded, %d dead)", unhealthyCount, status.DegradedCount, status.DeadCount))
 	} else {
-		status.SetCondition(ConditionDegraded, metav1.ConditionFalse, "AllHealthy", "All providers healthy")
+		setGroupCondition(group, ConditionDegraded, metav1.ConditionFalse, "AllHealthy", "All providers healthy")
 	}
 }
 
 // reconcileDelete handles group deletion by cleaning up the finalizer and metrics
-func (r *MCPServerGroupReconciler) reconcileDelete(ctx context.Context, group *mcpv1alpha1.MCPServerGroup) (ctrl.Result, error) {
+func (r *MCPServerGroupReconciler) reconcileDelete(ctx context.Context, group *mcpv1alpha2.MCPServerGroup) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("Handling deletion for MCPServerGroup")
 
@@ -348,13 +348,13 @@ func (r *MCPServerGroupReconciler) reconcileDelete(ctx context.Context, group *m
 func (r *MCPServerGroupReconciler) findGroupsForMCPServer(ctx context.Context, obj client.Object) []reconcile.Request {
 	logger := log.FromContext(ctx)
 
-	provider, ok := obj.(*mcpv1alpha1.MCPServer)
+	provider, ok := obj.(*mcpv1alpha2.MCPServer)
 	if !ok {
 		return nil
 	}
 
 	// List all groups in the provider's namespace
-	groupList := &mcpv1alpha1.MCPServerGroupList{}
+	groupList := &mcpv1alpha2.MCPServerGroupList{}
 	if err := r.List(ctx, groupList, client.InNamespace(provider.Namespace)); err != nil {
 		logger.Error(err, "Failed to list MCPServerGroups for provider mapping")
 		return nil
@@ -419,11 +419,11 @@ var groupSelfWatchPredicate = predicate.Or(
 func (r *MCPServerGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(
-			&mcpv1alpha1.MCPServerGroup{},
+			&mcpv1alpha2.MCPServerGroup{},
 			builder.WithPredicates(groupSelfWatchPredicate),
 		).
 		Watches(
-			&mcpv1alpha1.MCPServer{},
+			&mcpv1alpha2.MCPServer{},
 			handler.EnqueueRequestsFromMapFunc(r.findGroupsForMCPServer),
 		).
 		Complete(r)

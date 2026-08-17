@@ -19,7 +19,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/hangar"
 	"github.com/mcp-hangar/operator/pkg/provider"
 )
@@ -28,12 +28,12 @@ import (
 func newMCPServerReconciler(objs ...runtime.Object) *MCPServerReconciler {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = mcpv1alpha1.AddToScheme(scheme)
+	_ = mcpv1alpha2.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithRuntimeObjects(objs...).
-		WithStatusSubresource(&mcpv1alpha1.MCPServer{}).
+		WithStatusSubresource(&mcpv1alpha2.MCPServer{}).
 		Build()
 
 	return &MCPServerReconciler{
@@ -52,18 +52,18 @@ func reconcileMCPServer(t *testing.T, r *MCPServerReconciler, name, namespace st
 	return result
 }
 
-func getMCPServer(t *testing.T, r *MCPServerReconciler, name, namespace string) *mcpv1alpha1.MCPServer {
+func getMCPServer(t *testing.T, r *MCPServerReconciler, name, namespace string) *mcpv1alpha2.MCPServer {
 	t.Helper()
-	p := &mcpv1alpha1.MCPServer{}
+	p := &mcpv1alpha2.MCPServer{}
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: name, Namespace: namespace}, p))
 	return p
 }
 
 func TestMCPServer_ContainerMode_CreatesPod(t *testing.T) {
-	p := &mcpv1alpha1.MCPServer{
+	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-container", Namespace: "default", UID: "uid-1"},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:  mcpv1alpha1.MCPServerModeContainer,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:  mcpv1alpha2.MCPServerModeContainer,
 			Image: "busybox:latest",
 		},
 	}
@@ -88,16 +88,16 @@ func TestMCPServer_ContainerMode_CreatesPod(t *testing.T) {
 
 	// Verify provider status
 	result := getMCPServer(t, r, "test-container", "default")
-	assert.Equal(t, mcpv1alpha1.MCPServerStateInitializing, result.Status.State)
+	assert.Equal(t, mcpv1alpha2.MCPServerStateInitializing, result.Status.State)
 	assert.Equal(t, "mcp-provider-test-container", result.Status.PodName)
 }
 
 func TestMCPServer_ContainerMode_NoImage_MarksDead(t *testing.T) {
-	p := &mcpv1alpha1.MCPServer{
+	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "no-image", Namespace: "default", UID: "uid-2",
 			Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode: mcpv1alpha1.MCPServerModeContainer,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode: mcpv1alpha2.MCPServerModeContainer,
 		},
 	}
 	r := newMCPServerReconciler(p)
@@ -105,19 +105,19 @@ func TestMCPServer_ContainerMode_NoImage_MarksDead(t *testing.T) {
 	reconcileMCPServer(t, r, "no-image", "default")
 
 	result := getMCPServer(t, r, "no-image", "default")
-	assert.Equal(t, mcpv1alpha1.MCPServerStateDead, result.Status.State)
-	cond := result.Status.GetCondition(ConditionReady)
+	assert.Equal(t, mcpv1alpha2.MCPServerStateDead, result.Status.State)
+	cond := getCondition(result.Status.Conditions, ConditionReady)
 	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
 }
 
 func TestMCPServer_ColdStart_ReplicasZero(t *testing.T) {
 	replicas := int32(0)
-	p := &mcpv1alpha1.MCPServer{
+	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "cold-provider", Namespace: "default", UID: "uid-3",
 			Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:     mcpv1alpha1.MCPServerModeContainer,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:     mcpv1alpha2.MCPServerModeContainer,
 			Image:    "busybox:latest",
 			Replicas: &replicas,
 		},
@@ -127,7 +127,7 @@ func TestMCPServer_ColdStart_ReplicasZero(t *testing.T) {
 	reconcileMCPServer(t, r, "cold-provider", "default")
 
 	result := getMCPServer(t, r, "cold-provider", "default")
-	assert.Equal(t, mcpv1alpha1.MCPServerStateCold, result.Status.State)
+	assert.Equal(t, mcpv1alpha2.MCPServerStateCold, result.Status.State)
 	assert.Equal(t, int32(0), result.Status.ReadyReplicas)
 
 	// Verify no Pod created
@@ -137,11 +137,11 @@ func TestMCPServer_ColdStart_ReplicasZero(t *testing.T) {
 }
 
 func TestMCPServer_RemoteMode_NoEndpoint_MarksDead(t *testing.T) {
-	p := &mcpv1alpha1.MCPServer{
+	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "remote-no-ep", Namespace: "default", UID: "uid-4",
 			Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode: mcpv1alpha1.MCPServerModeRemote,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode: mcpv1alpha2.MCPServerModeRemote,
 		},
 	}
 	r := newMCPServerReconciler(p)
@@ -149,15 +149,15 @@ func TestMCPServer_RemoteMode_NoEndpoint_MarksDead(t *testing.T) {
 	reconcileMCPServer(t, r, "remote-no-ep", "default")
 
 	result := getMCPServer(t, r, "remote-no-ep", "default")
-	assert.Equal(t, mcpv1alpha1.MCPServerStateDead, result.Status.State)
+	assert.Equal(t, mcpv1alpha2.MCPServerStateDead, result.Status.State)
 }
 
 func TestMCPServer_RemoteMode_WithEndpoint_AssumedReady(t *testing.T) {
-	p := &mcpv1alpha1.MCPServer{
+	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "remote-ok", Namespace: "default", UID: "uid-5",
 			Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:     mcpv1alpha1.MCPServerModeRemote,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:     mcpv1alpha2.MCPServerModeRemote,
 			Endpoint: "http://example.com:8080",
 		},
 	}
@@ -166,7 +166,7 @@ func TestMCPServer_RemoteMode_WithEndpoint_AssumedReady(t *testing.T) {
 	reconcileMCPServer(t, r, "remote-ok", "default")
 
 	result := getMCPServer(t, r, "remote-ok", "default")
-	assert.Equal(t, mcpv1alpha1.MCPServerStateReady, result.Status.State)
+	assert.Equal(t, mcpv1alpha2.MCPServerStateReady, result.Status.State)
 	assert.Equal(t, "http://example.com:8080", result.Status.Endpoint)
 }
 
@@ -185,11 +185,11 @@ func TestMCPServer_RemoteMode_Unhealthy_RequeuesFast(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := &mcpv1alpha1.MCPServer{
+	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "remote-unhealthy", Namespace: "default", UID: "uid-fast-1",
 			Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:     mcpv1alpha1.MCPServerModeRemote,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:     mcpv1alpha2.MCPServerModeRemote,
 			Endpoint: "http://example.com:8080",
 		},
 	}
@@ -204,7 +204,7 @@ func TestMCPServer_RemoteMode_Unhealthy_RequeuesFast(t *testing.T) {
 		"unhealthy remote should requeue on the fast (error) cadence")
 
 	got := getMCPServer(t, r, "remote-unhealthy", "default")
-	assert.Equal(t, mcpv1alpha1.MCPServerStateDegraded, got.Status.State)
+	assert.Equal(t, mcpv1alpha2.MCPServerStateDegraded, got.Status.State)
 }
 
 func TestMCPServer_RemoteMode_HealthCheckError_RequeuesFast(t *testing.T) {
@@ -216,11 +216,11 @@ func TestMCPServer_RemoteMode_HealthCheckError_RequeuesFast(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := &mcpv1alpha1.MCPServer{
+	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "remote-err", Namespace: "default", UID: "uid-fast-2",
 			Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:     mcpv1alpha1.MCPServerModeRemote,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:     mcpv1alpha2.MCPServerModeRemote,
 			Endpoint: "http://example.com:8080",
 		},
 	}
@@ -233,7 +233,7 @@ func TestMCPServer_RemoteMode_HealthCheckError_RequeuesFast(t *testing.T) {
 		"failed remote health check should requeue on the fast (error) cadence")
 
 	got := getMCPServer(t, r, "remote-err", "default")
-	assert.Equal(t, mcpv1alpha1.MCPServerStateDegraded, got.Status.State)
+	assert.Equal(t, mcpv1alpha2.MCPServerStateDegraded, got.Status.State)
 }
 
 func TestMCPServer_RemoteMode_Healthy_RequeuesSlow(t *testing.T) {
@@ -244,11 +244,11 @@ func TestMCPServer_RemoteMode_Healthy_RequeuesSlow(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := &mcpv1alpha1.MCPServer{
+	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "remote-healthy", Namespace: "default", UID: "uid-fast-3",
 			Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:     mcpv1alpha1.MCPServerModeRemote,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:     mcpv1alpha2.MCPServerModeRemote,
 			Endpoint: "http://example.com:8080",
 		},
 	}
@@ -261,15 +261,15 @@ func TestMCPServer_RemoteMode_Healthy_RequeuesSlow(t *testing.T) {
 		"healthy remote should keep the slow (ready) cadence")
 
 	got := getMCPServer(t, r, "remote-healthy", "default")
-	assert.Equal(t, mcpv1alpha1.MCPServerStateReady, got.Status.State)
+	assert.Equal(t, mcpv1alpha2.MCPServerStateReady, got.Status.State)
 }
 
 func TestMCPServer_SpecDrift_RecreatesPod(t *testing.T) {
-	p := &mcpv1alpha1.MCPServer{
+	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "drift-test", Namespace: "default", UID: "uid-6",
 			Generation: 1, Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:  mcpv1alpha1.MCPServerModeContainer,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:  mcpv1alpha2.MCPServerModeContainer,
 			Image: "busybox:1.0",
 		},
 	}
@@ -304,13 +304,13 @@ func TestMCPServer_SpecDrift_RecreatesPod(t *testing.T) {
 }
 
 func TestMCPServer_Deletion_CleansPodAndFinalizer(t *testing.T) {
-	p := &mcpv1alpha1.MCPServer{
+	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "del-test", Namespace: "default", UID: "uid-7",
 			Finalizers: []string{finalizerName},
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:  mcpv1alpha1.MCPServerModeContainer,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:  mcpv1alpha2.MCPServerModeContainer,
 			Image: "busybox:latest",
 		},
 	}
@@ -338,15 +338,15 @@ func TestMCPServer_Deletion_CleansPodAndFinalizer(t *testing.T) {
 }
 
 func TestMCPServer_CapabilitiesPropagatedToStatus(t *testing.T) {
-	p := &mcpv1alpha1.MCPServer{
+	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "caps-test", Namespace: "default", UID: "uid-8",
 			Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:     mcpv1alpha1.MCPServerModeRemote,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:     mcpv1alpha2.MCPServerModeRemote,
 			Endpoint: "http://example.com:8080",
-			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-					Egress: []mcpv1alpha1.EgressRuleSpec{
+			Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+				Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+					Egress: []mcpv1alpha2.EgressRuleSpec{
 						{Host: "db.internal", Port: 5432, Protocol: "tcp", CIDR: "10.0.0.0/8"},
 					},
 				},
@@ -367,10 +367,10 @@ func TestMCPServer_CapabilitiesPropagatedToStatus(t *testing.T) {
 }
 
 func TestMCPServer_Finalizer_Added(t *testing.T) {
-	p := &mcpv1alpha1.MCPServer{
+	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "fin-test", Namespace: "default", UID: "uid-9"},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:  mcpv1alpha1.MCPServerModeContainer,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:  mcpv1alpha2.MCPServerModeContainer,
 			Image: "busybox:latest",
 		},
 	}
@@ -383,11 +383,11 @@ func TestMCPServer_Finalizer_Added(t *testing.T) {
 }
 
 func TestMCPServer_ObservedGeneration_Updated(t *testing.T) {
-	p := &mcpv1alpha1.MCPServer{
+	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "obsgen-test", Namespace: "default", UID: "uid-10",
 			Generation: 3, Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:     mcpv1alpha1.MCPServerModeRemote,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:     mcpv1alpha2.MCPServerModeRemote,
 			Endpoint: "http://example.com:8080",
 		},
 	}
@@ -401,11 +401,11 @@ func TestMCPServer_ObservedGeneration_Updated(t *testing.T) {
 }
 
 func TestMCPServer_PodRunning_SetsReady(t *testing.T) {
-	p := &mcpv1alpha1.MCPServer{
+	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "running-test", Namespace: "default", UID: "uid-11",
 			Generation: 1, Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:  mcpv1alpha1.MCPServerModeContainer,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:  mcpv1alpha2.MCPServerModeContainer,
 			Image: "busybox:latest",
 		},
 	}
@@ -435,21 +435,21 @@ func TestMCPServer_PodRunning_SetsReady(t *testing.T) {
 	reconcileMCPServer(t, r, "running-test", "default")
 
 	result := getMCPServer(t, r, "running-test", "default")
-	assert.Equal(t, mcpv1alpha1.MCPServerStateReady, result.Status.State)
+	assert.Equal(t, mcpv1alpha2.MCPServerStateReady, result.Status.State)
 	assert.Equal(t, int32(1), result.Status.ReadyReplicas)
 	assert.Equal(t, int32(0), result.Status.ConsecutiveFailures)
 
-	cond := result.Status.GetCondition(ConditionReady)
+	cond := getCondition(result.Status.Conditions, ConditionReady)
 	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionTrue, cond.Status)
 }
 
 func TestMCPServer_PodFailed_SetsDeadWithBackoff(t *testing.T) {
-	p := &mcpv1alpha1.MCPServer{
+	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "failed-test", Namespace: "default", UID: "uid-12",
 			Generation: 1, Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:  mcpv1alpha1.MCPServerModeContainer,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:  mcpv1alpha2.MCPServerModeContainer,
 			Image: "busybox:latest",
 		},
 	}
@@ -482,7 +482,7 @@ func TestMCPServer_PodFailed_SetsDeadWithBackoff(t *testing.T) {
 	reconcileMCPServer(t, r, "failed-test", "default")
 
 	result := getMCPServer(t, r, "failed-test", "default")
-	assert.Equal(t, mcpv1alpha1.MCPServerStateDead, result.Status.State)
+	assert.Equal(t, mcpv1alpha2.MCPServerStateDead, result.Status.State)
 	assert.Equal(t, int32(1), result.Status.ConsecutiveFailures)
 	assert.Equal(t, int32(0), result.Status.ReadyReplicas)
 }

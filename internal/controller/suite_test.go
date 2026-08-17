@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	networkingv1 "k8s.io/api/networking/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -68,7 +68,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// Register CRD scheme
-	if err := mcpv1alpha1.AddToScheme(scheme.Scheme); err != nil {
+	if err := mcpv1alpha2.AddToScheme(scheme.Scheme); err != nil {
 		panic("failed to add CRD scheme: " + err.Error())
 	}
 	// Ensure networking API is in scheme (required for NetworkPolicy Owns() watch)

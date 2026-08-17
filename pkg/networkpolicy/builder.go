@@ -14,7 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
 
@@ -63,7 +62,7 @@ func NetworkPolicyName(providerName string) string {
 // This is a pure function with no side effects -- it reads from the provider
 // struct and returns a new NetworkPolicy. The reconciler is responsible for
 // creating/updating the resource in the cluster.
-func BuildNetworkPolicy(provider *mcpv1alpha1.MCPServer) *networkingv1.NetworkPolicy {
+func BuildNetworkPolicy(provider *mcpv1alpha2.MCPServer) *networkingv1.NetworkPolicy {
 	if provider.Spec.Capabilities == nil || provider.Spec.Capabilities.Network == nil {
 		return nil
 	}
@@ -301,7 +300,7 @@ func asCIDR(host string) (cidr string, ok bool) {
 }
 
 // buildLabels returns standard labels for the NetworkPolicy resource.
-func buildLabels(provider *mcpv1alpha1.MCPServer) map[string]string {
+func buildLabels(provider *mcpv1alpha2.MCPServer) map[string]string {
 	return map[string]string{
 		LabelManagedBy: DefaultManagerName,
 		LabelProvider:  provider.Name,
@@ -312,7 +311,7 @@ func buildLabels(provider *mcpv1alpha1.MCPServer) map[string]string {
 // buildEgressRules constructs the full list of egress rules from the network
 // capabilities spec. Order: DNS (if allowed), loopback (if allowed), then
 // declared egress rules in declaration order.
-func buildEgressRules(caps *mcpv1alpha1.NetworkCapabilitiesSpec) []networkingv1.NetworkPolicyEgressRule {
+func buildEgressRules(caps *mcpv1alpha2.NetworkCapabilitiesSpec) []networkingv1.NetworkPolicyEgressRule {
 	var rules []networkingv1.NetworkPolicyEgressRule
 
 	// DNS: default-allow unless explicitly disabled
@@ -352,7 +351,7 @@ func buildEgressRules(caps *mcpv1alpha1.NetworkCapabilitiesSpec) []networkingv1.
 // (ADR-006 v1.5).
 //
 // Port 0 means "any port" and omits the Ports field entirely.
-func translateEgressRule(rule mcpv1alpha1.EgressRuleSpec) (networkingv1.NetworkPolicyEgressRule, bool) {
+func translateEgressRule(rule mcpv1alpha2.EgressRuleSpec) (networkingv1.NetworkPolicyEgressRule, bool) {
 	// Fail closed: host/FQDN-only rules (no CIDR) cannot be enforced by
 	// NetworkPolicy. Do not emit a permissive port-only rule.
 	if rule.CIDR == "" {
@@ -480,7 +479,7 @@ func loopbackEgressRule() networkingv1.NetworkPolicyEgressRule {
 
 // hostWarnings returns a comma-separated list of host-only egress rules (those
 // without CIDR) that cannot be enforced at the network level.
-func hostWarnings(caps *mcpv1alpha1.NetworkCapabilitiesSpec) string {
+func hostWarnings(caps *mcpv1alpha2.NetworkCapabilitiesSpec) string {
 	var warnings []string
 	for _, rule := range caps.Egress {
 		if rule.CIDR == "" && rule.Host != "" {

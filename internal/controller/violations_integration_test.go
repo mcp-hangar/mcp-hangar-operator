@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/metrics"
 )
 
@@ -50,9 +50,9 @@ func newViolationTestReconciler(objs ...runtime.Object) (*MCPServerReconciler, *
 // declaring network capabilities without a NetworkPolicyApplied=True condition
 // gets a capability_drift ViolationRecord in CRD status plus a K8s Warning event.
 func TestViolationDetection_FullReconcile_NetworkDrift(t *testing.T) {
-	provider := newTestProvider("vio-net-drift", "default", &mcpv1alpha1.MCPServerCapabilities{
-		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-			Egress: []mcpv1alpha1.EgressRuleSpec{
+	provider := newTestProvider("vio-net-drift", "default", &mcpv1alpha2.MCPServerCapabilities{
+		Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+			Egress: []mcpv1alpha2.EgressRuleSpec{
 				{Host: "api.example.com", Port: 443, Protocol: "https"},
 			},
 		},
@@ -76,7 +76,7 @@ func TestViolationDetection_FullReconcile_NetworkDrift(t *testing.T) {
 	assert.Contains(t, v.Detail, "NetworkPolicy not applied")
 
 	// ViolationDetected condition set to True
-	cond := provider.Status.GetCondition(ConditionViolationDetected)
+	cond := getCondition(provider.Status.Conditions, ConditionViolationDetected)
 	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionTrue, cond.Status)
 	assert.Equal(t, "ViolationsFound", cond.Reason)
@@ -90,8 +90,8 @@ func TestViolationDetection_FullReconcile_NetworkDrift(t *testing.T) {
 // TestViolationDetection_FullReconcile_ToolDrift verifies that a provider with
 // more tools than declared maximum gets an undeclared_tool ViolationRecord.
 func TestViolationDetection_FullReconcile_ToolDrift(t *testing.T) {
-	provider := newTestProvider("vio-tool-drift", "default", &mcpv1alpha1.MCPServerCapabilities{
-		Tools: &mcpv1alpha1.ToolCapabilitiesSpec{
+	provider := newTestProvider("vio-tool-drift", "default", &mcpv1alpha2.MCPServerCapabilities{
+		Tools: &mcpv1alpha2.ToolCapabilitiesSpec{
 			MaxCount: 3,
 		},
 	})
@@ -114,7 +114,7 @@ func TestViolationDetection_FullReconcile_ToolDrift(t *testing.T) {
 	assert.Contains(t, v.Detail, "max declared is 3")
 
 	// ViolationDetected condition
-	cond := provider.Status.GetCondition(ConditionViolationDetected)
+	cond := getCondition(provider.Status.Conditions, ConditionViolationDetected)
 	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionTrue, cond.Status)
 
@@ -127,9 +127,9 @@ func TestViolationDetection_FullReconcile_ToolDrift(t *testing.T) {
 // previously-violating provider becomes compliant, the ViolationDetected
 // condition is cleared to False and a ViolationCleared event is emitted.
 func TestViolationDetection_ComplianceClearsCondition(t *testing.T) {
-	provider := newTestProvider("vio-compliance", "default", &mcpv1alpha1.MCPServerCapabilities{
-		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-			Egress: []mcpv1alpha1.EgressRuleSpec{
+	provider := newTestProvider("vio-compliance", "default", &mcpv1alpha2.MCPServerCapabilities{
+		Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+			Egress: []mcpv1alpha2.EgressRuleSpec{
 				{Host: "api.example.com", Port: 443, Protocol: "https"},
 			},
 		},
@@ -143,12 +143,12 @@ func TestViolationDetection_ComplianceClearsCondition(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, provider.Status.Violations, 1)
 
-	cond := provider.Status.GetCondition(ConditionViolationDetected)
+	cond := getCondition(provider.Status.Conditions, ConditionViolationDetected)
 	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionTrue, cond.Status)
 
 	// Now simulate compliance: set NetworkPolicyApplied=True
-	provider.Status.SetCondition(ConditionNetworkPolicyApplied, metav1.ConditionTrue,
+	setServerCondition(provider, ConditionNetworkPolicyApplied, metav1.ConditionTrue,
 		"PolicyApplied", "NetworkPolicy applied successfully")
 
 	// Reset recorder to capture only the clearing event
@@ -158,7 +158,7 @@ func TestViolationDetection_ComplianceClearsCondition(t *testing.T) {
 	err = r.reconcileViolationDetection(ctx, provider)
 	require.NoError(t, err)
 
-	cond = provider.Status.GetCondition(ConditionViolationDetected)
+	cond = getCondition(provider.Status.Conditions, ConditionViolationDetected)
 	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
 	assert.Equal(t, "NoViolations", cond.Reason)
@@ -171,13 +171,13 @@ func TestViolationDetection_ComplianceClearsCondition(t *testing.T) {
 // TestViolationDetection_AccumulatesAcrossCycles verifies that violations
 // from multiple reconcile cycles accumulate in CRD status.Violations.
 func TestViolationDetection_AccumulatesAcrossCycles(t *testing.T) {
-	provider := newTestProvider("vio-accumulate", "default", &mcpv1alpha1.MCPServerCapabilities{
-		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-			Egress: []mcpv1alpha1.EgressRuleSpec{
+	provider := newTestProvider("vio-accumulate", "default", &mcpv1alpha2.MCPServerCapabilities{
+		Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+			Egress: []mcpv1alpha2.EgressRuleSpec{
 				{Host: "api.example.com", Port: 443, Protocol: "https"},
 			},
 		},
-		Tools: &mcpv1alpha1.ToolCapabilitiesSpec{
+		Tools: &mcpv1alpha2.ToolCapabilitiesSpec{
 			MaxCount: 5,
 		},
 	})
@@ -221,9 +221,9 @@ func TestViolationDetection_EnforcementModePropagatesToAction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider := newTestProvider("vio-enforce", "default", &mcpv1alpha1.MCPServerCapabilities{
-				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-					Egress: []mcpv1alpha1.EgressRuleSpec{
+			provider := newTestProvider("vio-enforce", "default", &mcpv1alpha2.MCPServerCapabilities{
+				Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+					Egress: []mcpv1alpha2.EgressRuleSpec{
 						{Host: "api.example.com", Port: 443, Protocol: "https"},
 					},
 				},
@@ -244,17 +244,17 @@ func TestViolationDetection_EnforcementModePropagatesToAction(t *testing.T) {
 // TestViolationDetection_MaxViolationsCapped verifies that violations are capped
 // at MaxViolationRecords, with oldest entries evicted first.
 func TestViolationDetection_MaxViolationsCapped(t *testing.T) {
-	provider := newTestProvider("vio-cap", "default", &mcpv1alpha1.MCPServerCapabilities{
-		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-			Egress: []mcpv1alpha1.EgressRuleSpec{
+	provider := newTestProvider("vio-cap", "default", &mcpv1alpha2.MCPServerCapabilities{
+		Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+			Egress: []mcpv1alpha2.EgressRuleSpec{
 				{Host: "api.example.com", Port: 443, Protocol: "https"},
 			},
 		},
 	})
 
 	// Pre-fill with MaxViolationRecords - 1 entries
-	for i := 0; i < mcpv1alpha1.MaxViolationRecords-1; i++ {
-		provider.Status.Violations = append(provider.Status.Violations, mcpv1alpha1.ViolationRecord{
+	for i := 0; i < mcpv1alpha2.MaxViolationRecords-1; i++ {
+		provider.Status.Violations = append(provider.Status.Violations, mcpv1alpha2.ViolationRecord{
 			Type:      "old_violation",
 			Detail:    fmt.Sprintf("pre-existing-%d", i),
 			Severity:  "low",
@@ -269,12 +269,12 @@ func TestViolationDetection_MaxViolationsCapped(t *testing.T) {
 	// One more reconcile adds 1 violation -> exactly at cap
 	err := r.reconcileViolationDetection(ctx, provider)
 	require.NoError(t, err)
-	assert.Len(t, provider.Status.Violations, mcpv1alpha1.MaxViolationRecords)
+	assert.Len(t, provider.Status.Violations, mcpv1alpha2.MaxViolationRecords)
 
 	// Another reconcile pushes over cap -> oldest evicted
 	err = r.reconcileViolationDetection(ctx, provider)
 	require.NoError(t, err)
-	assert.Len(t, provider.Status.Violations, mcpv1alpha1.MaxViolationRecords)
+	assert.Len(t, provider.Status.Violations, mcpv1alpha2.MaxViolationRecords)
 
 	// Most recent entry should be capability_drift, not old_violation
 	last := provider.Status.Violations[len(provider.Status.Violations)-1]
@@ -292,6 +292,6 @@ func TestViolationDetection_NilCapabilities_Noop(t *testing.T) {
 	err := r.reconcileViolationDetection(ctx, provider)
 	require.NoError(t, err)
 	assert.Empty(t, provider.Status.Violations)
-	assert.Nil(t, provider.Status.GetCondition(ConditionViolationDetected))
+	assert.Nil(t, getCondition(provider.Status.Conditions, ConditionViolationDetected))
 	assert.Empty(t, fakeRec.events, "no events should be emitted")
 }

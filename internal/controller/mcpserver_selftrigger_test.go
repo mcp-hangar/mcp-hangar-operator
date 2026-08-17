@@ -11,7 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
 
 // A controller that writes status to the resource it watches re-triggers itself
@@ -40,13 +40,13 @@ func unreachableCore(t *testing.T) *httptest.Server {
 func TestMCPServer_RemoteMode_FailedHealthCheck_LeavesTheStatusUnchanged(t *testing.T) {
 	srv := unreachableCore(t)
 
-	p := &mcpv1alpha1.MCPServer{
+	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "remote-stable", Namespace: "default", UID: "uid-stable",
 			Finalizers: []string{finalizerName},
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:     mcpv1alpha1.MCPServerModeRemote,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:     mcpv1alpha2.MCPServerModeRemote,
 			Endpoint: "http://example.com:8080",
 		},
 	}
@@ -61,7 +61,7 @@ func TestMCPServer_RemoteMode_FailedHealthCheck_LeavesTheStatusUnchanged(t *test
 	}
 	after := getMCPServer(t, r, "remote-stable", "default").Status.DeepCopy()
 
-	require.Equal(t, mcpv1alpha1.MCPServerStateDegraded, after.State,
+	require.Equal(t, mcpv1alpha2.MCPServerStateDegraded, after.State,
 		"the server is still degraded; that part must not change")
 	assert.Equal(t, first, after,
 		"a repeated failed health check must not change the status: a status that "+
@@ -75,13 +75,13 @@ func TestMCPServer_RemoteMode_ConsecutiveFailuresMirrorsCoreOnly(t *testing.T) {
 	// is nothing to mirror and nothing to increment.
 	srv := unreachableCore(t)
 
-	p := &mcpv1alpha1.MCPServer{
+	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "remote-counter", Namespace: "default", UID: "uid-counter",
 			Finalizers: []string{finalizerName},
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:     mcpv1alpha1.MCPServerModeRemote,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:     mcpv1alpha2.MCPServerModeRemote,
 			Endpoint: "http://example.com:8080",
 		},
 	}
@@ -107,8 +107,8 @@ func TestMCPServerWatchPredicate(t *testing.T) {
 		predicate.AnnotationChangedPredicate{},
 	)
 
-	base := func() *mcpv1alpha1.MCPServer {
-		return &mcpv1alpha1.MCPServer{
+	base := func() *mcpv1alpha2.MCPServer {
+		return &mcpv1alpha2.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "srv", Namespace: "default", Generation: 1,
 				Labels:      map[string]string{"app": "srv"},
@@ -119,7 +119,7 @@ func TestMCPServerWatchPredicate(t *testing.T) {
 
 	t.Run("a status-only update does not wake the controller", func(t *testing.T) {
 		old, updated := base(), base()
-		updated.Status.State = mcpv1alpha1.MCPServerStateDegraded
+		updated.Status.State = mcpv1alpha2.MCPServerStateDegraded
 		updated.Status.ConsecutiveFailures = 3
 
 		assert.False(t, p.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: updated}),
