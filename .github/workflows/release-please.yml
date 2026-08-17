@@ -1,0 +1,48 @@
+# Maintains the release PR and cuts tags from Conventional Commits, same
+# setup as mcp-hangar / helm-charts / docs. Merging the release PR creates
+# the vX.Y.Z tag and GitHub Release; the existing tag-triggered release.yml
+# then builds and signs the image.
+#
+# The tag-push trigger only fires by itself when the tag was created with a
+# GitHub App token (same app-token pattern as the other repos). On the
+# GITHUB_TOKEN fallback, events caused by the default token do not cascade,
+# so this workflow dispatches release.yml on the fresh tag explicitly --
+# gated to the fallback path to avoid running the image build twice.
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write   # dispatch release.yml on the GITHUB_TOKEN fallback path
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_BOT_APP_ID: ${{ secrets.RELEASE_BOT_APP_ID }}
+    steps:
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        if: ${{ env.RELEASE_BOT_APP_ID != '' }}
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+
+      - name: Dispatch release.yml (GITHUB_TOKEN fallback only)
+        if: ${{ steps.release.outputs.release_created == 'true' && steps.app-token.outputs.token == '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "${{ steps.release.outputs.tag_name }}"
