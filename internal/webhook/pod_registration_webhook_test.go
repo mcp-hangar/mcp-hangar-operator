@@ -15,7 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/internal/webhook"
 )
 
@@ -23,7 +23,7 @@ func podRegScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(s))
-	require.NoError(t, mcpv1alpha1.AddToScheme(s))
+	require.NoError(t, mcpv1alpha2.AddToScheme(s))
 	return s
 }
 
@@ -66,7 +66,7 @@ func TestPodRegistration_UnregisteredProvider_Denied(t *testing.T) {
 }
 
 func TestPodRegistration_RegisteredProvider_Allowed(t *testing.T) {
-	server := &mcpv1alpha1.MCPServer{ObjectMeta: metav1.ObjectMeta{Name: "known", Namespace: "demo"}}
+	server := &mcpv1alpha2.MCPServer{ObjectMeta: metav1.ObjectMeta{Name: "known", Namespace: "demo"}}
 	v := newValidator(t, server)
 	resp := v.Handle(context.Background(), podRequest(t, providerPod("worker", "demo", "known")))
 	assert.True(t, resp.Allowed, "a provider pod backed by an MCPServer is admitted")
@@ -74,7 +74,7 @@ func TestPodRegistration_RegisteredProvider_Allowed(t *testing.T) {
 
 func TestPodRegistration_RegisteredInOtherNamespace_Denied(t *testing.T) {
 	// MCPServer "known" exists but in a different namespace -> still denied.
-	server := &mcpv1alpha1.MCPServer{ObjectMeta: metav1.ObjectMeta{Name: "known", Namespace: "other"}}
+	server := &mcpv1alpha2.MCPServer{ObjectMeta: metav1.ObjectMeta{Name: "known", Namespace: "other"}}
 	v := newValidator(t, server)
 	resp := v.Handle(context.Background(), podRequest(t, providerPod("worker", "demo", "known")))
 	require.False(t, resp.Allowed, "registration is per-namespace")

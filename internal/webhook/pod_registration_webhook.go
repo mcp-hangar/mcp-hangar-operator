@@ -11,7 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/networkpolicy"
 )
 
@@ -43,7 +43,7 @@ func (v *PodRegistrationValidator) Handle(ctx context.Context, req admission.Req
 		return admission.Allowed("not an MCP-server pod")
 	}
 
-	var server mcpv1alpha1.MCPServer
+	var server mcpv1alpha2.MCPServer
 	key := types.NamespacedName{Namespace: req.Namespace, Name: provider}
 	if err := v.Client.Get(ctx, key, &server); err != nil {
 		if apierrors.IsNotFound(err) {
