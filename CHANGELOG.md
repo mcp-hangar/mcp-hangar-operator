@@ -11,6 +11,10 @@
 
 * **api:** stop serving v1alpha1 ([#136](https://github.com/mcp-hangar/mcp-hangar-operator/issues/136)) ([89c3a82](https://github.com/mcp-hangar/mcp-hangar-operator/commit/89c3a82db938cf7c32048ea4ad15c6278798de7e))
 
+### Fixed
+
+* **api:** delete the unserved v1alpha1 API, and port the wildcard-egress guard it was hiding ([#137](https://github.com/mcp-hangar/mcp-hangar-operator/issues/137)) ([f5c2041](https://github.com/mcp-hangar/mcp-hangar-operator/commit/f5c2041)) -- merged ahead of the release cut, so it ships in 0.16.0, not a follow-up
+
 
 ### Fixed
 

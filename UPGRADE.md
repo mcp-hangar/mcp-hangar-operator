@@ -18,5 +18,8 @@ speak v1alpha2, 2026-08-17) to this release. Rollback, if something in your
 cluster still applies v1alpha1: pin the operator image and chart back to
 0.15.3 — v1alpha1 is served there.
 
-The v1alpha1 Go types and the conversion webhook are deleted in the next
-release; nothing user-visible changes at that point.
+The v1alpha1 Go types, validators and the conversion webhook are deleted in
+this same release (the deletion PR merged ahead of the release cut); nothing
+user-visible changes beyond the unserve itself. The wildcard-egress opt-in
+guard moved to the v1alpha2 validator on the way -- it had lived only in the
+v1alpha1 one.
