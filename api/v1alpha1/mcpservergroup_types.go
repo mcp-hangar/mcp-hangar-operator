@@ -77,6 +77,7 @@ type MCPServerMemberStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:unservedversion
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Providers",type=integer,JSONPath=`.status.providerCount`
 // +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyCount`
