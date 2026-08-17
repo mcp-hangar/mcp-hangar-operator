@@ -8,6 +8,10 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  # Dispatched by release-please on the GITHUB_TOKEN fallback path (a tag
+  # created by the default token does not fire the push trigger above). Run
+  # it on the tag ref so GITHUB_REF_NAME is the version tag either way.
+  workflow_dispatch:
 
 permissions:
   contents: write   # create the GitHub Release
