@@ -9,7 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
 
 // ---------------------------------------------------------------------------
@@ -27,13 +27,13 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestAdmission_Envtest_NoCapsCreated(t *testing.T) {
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "envtest-no-caps",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:  mcpv1alpha1.MCPServerModeContainer,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:  mcpv1alpha2.MCPServerModeContainer,
 			Image: "test:latest",
 		},
 	}
@@ -55,13 +55,13 @@ func TestAdmission_Envtest_NoCapsCreated(t *testing.T) {
 // spec.replicas carries Minimum=0 / Maximum=10 and is live.
 func TestAdmission_Envtest_ReplicasOutOfRangeRejected(t *testing.T) {
 	tooMany := int32(11)
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "envtest-bad-replicas",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:     mcpv1alpha1.MCPServerModeContainer,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:     mcpv1alpha2.MCPServerModeContainer,
 			Image:    "test:latest",
 			Replicas: &tooMany,
 		},
@@ -74,13 +74,13 @@ func TestAdmission_Envtest_ReplicasOutOfRangeRejected(t *testing.T) {
 
 func TestAdmission_Envtest_ReplicasInRangeAccepted(t *testing.T) {
 	inRange := int32(3)
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "envtest-good-replicas",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:     mcpv1alpha1.MCPServerModeContainer,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:     mcpv1alpha2.MCPServerModeContainer,
 			Image:    "test:latest",
 			Replicas: &inRange,
 		},
@@ -96,9 +96,9 @@ func TestAdmission_Envtest_ReplicasInRangeAccepted(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReconcileEgressAudit_WildcardOverrideEmitsWarning(t *testing.T) {
-	provider := newTestProvider("egress-audit-wildcard", "default", &mcpv1alpha1.MCPServerCapabilities{
-		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-			Egress: []mcpv1alpha1.EgressRuleSpec{
+	provider := newTestProvider("egress-audit-wildcard", "default", &mcpv1alpha2.MCPServerCapabilities{
+		Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+			Egress: []mcpv1alpha2.EgressRuleSpec{
 				{Host: "*", Port: 443, Protocol: "https"},
 			},
 		},
@@ -118,9 +118,9 @@ func TestReconcileEgressAudit_WildcardOverrideEmitsWarning(t *testing.T) {
 }
 
 func TestReconcileEgressAudit_NoWildcardNoEvent(t *testing.T) {
-	provider := newTestProvider("egress-audit-specific", "default", &mcpv1alpha1.MCPServerCapabilities{
-		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-			Egress: []mcpv1alpha1.EgressRuleSpec{
+	provider := newTestProvider("egress-audit-specific", "default", &mcpv1alpha2.MCPServerCapabilities{
+		Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+			Egress: []mcpv1alpha2.EgressRuleSpec{
 				{Host: "api.example.com", Port: 443, Protocol: "https"},
 			},
 		},

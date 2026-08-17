@@ -18,13 +18,13 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
 
-func containerServer(name string) *mcpv1alpha1.MCPServer {
-	return &mcpv1alpha1.MCPServer{
+func containerServer(name string) *mcpv1alpha2.MCPServer {
+	return &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "mcp-servers", Generation: 3},
-		Spec:       mcpv1alpha1.MCPServerSpec{Mode: mcpv1alpha1.MCPServerModeContainer, Image: "img:1"},
+		Spec:       mcpv1alpha2.MCPServerSpec{Mode: mcpv1alpha2.MCPServerModeContainer, Image: "img:1"},
 	}
 }
 

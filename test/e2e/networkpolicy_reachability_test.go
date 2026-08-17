@@ -35,7 +35,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/networkpolicy"
 )
 
@@ -186,12 +186,12 @@ func applyPolicy(t *testing.T, cs *kubernetes.Clientset, np *networkingv1.Networ
 	time.Sleep(policySettle)
 }
 
-func serverWithEgress(name, ns string, egress []mcpv1alpha1.EgressRuleSpec) *mcpv1alpha1.MCPServer {
-	return &mcpv1alpha1.MCPServer{
+func serverWithEgress(name, ns string, egress []mcpv1alpha2.EgressRuleSpec) *mcpv1alpha2.MCPServer {
+	return &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{Egress: egress},
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+				Network: &mcpv1alpha2.NetworkCapabilitiesSpec{Egress: egress},
 			},
 		},
 	}
@@ -208,7 +208,7 @@ func TestCIDRRuleAllowsAndOtherDestinationsAreBlocked(t *testing.T) {
 	denied := runningPod(t, cs, ns, "denied-target",
 		map[string]string{"role": "denied"}, []string{"nc -lk -p 8080 -e /bin/true"})
 
-	server := serverWithEgress("srv", ns, []mcpv1alpha1.EgressRuleSpec{
+	server := serverWithEgress("srv", ns, []mcpv1alpha2.EgressRuleSpec{
 		{Host: "allowed", CIDR: allowed.Status.PodIP + "/32", Port: 8080},
 	})
 	applyPolicy(t, cs, networkpolicy.BuildNetworkPolicy(server))
@@ -237,7 +237,7 @@ func TestHostOnlyRuleFailsClosed(t *testing.T) {
 	target := runningPod(t, cs, ns, "fqdn-target",
 		map[string]string{"role": "target"}, []string{"nc -lk -p 8080 -e /bin/true"})
 
-	server := serverWithEgress("srv", ns, []mcpv1alpha1.EgressRuleSpec{
+	server := serverWithEgress("srv", ns, []mcpv1alpha2.EgressRuleSpec{
 		{Host: "api.example.com", Port: 8080},
 	})
 	np := networkpolicy.BuildNetworkPolicy(server)

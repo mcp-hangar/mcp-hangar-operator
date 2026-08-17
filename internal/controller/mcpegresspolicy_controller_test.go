@@ -16,7 +16,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/networkpolicy"
 )
@@ -24,7 +23,7 @@ import (
 func newEgressReconciler(objs ...runtime.Object) *MCPEgressPolicyReconciler {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = mcpv1alpha1.AddToScheme(scheme)
+	_ = mcpv1alpha2.AddToScheme(scheme)
 	_ = mcpv1alpha2.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().

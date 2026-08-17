@@ -22,7 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/internal/webhook"
 	"github.com/mcp-hangar/operator/pkg/hangar"
 	"github.com/mcp-hangar/operator/pkg/metrics"
@@ -126,7 +126,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}()
 
 	// Fetch the MCPServer instance
-	mcpServer := &mcpv1alpha1.MCPServer{}
+	mcpServer := &mcpv1alpha2.MCPServer{}
 	if err := r.Get(ctx, req.NamespacedName, mcpServer); err != nil {
 		if errors.IsNotFound(err) {
 			logger.Info("MCPServer resource not found, ignoring")
@@ -169,20 +169,20 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 }
 
 // reconcileNormal handles normal (non-deletion) reconciliation
-func (r *MCPServerReconciler) reconcileNormal(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) (ctrl.Result, error) {
+func (r *MCPServerReconciler) reconcileNormal(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	// Update observed generation
 	if mcpServer.Status.ObservedGeneration != mcpServer.Generation {
 		mcpServer.Status.ObservedGeneration = mcpServer.Generation
-		mcpServer.Status.SetCondition(ConditionProgressing, metav1.ConditionTrue, "Reconciling", "Processing spec changes")
+		setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "Reconciling", "Processing spec changes")
 	}
 
 	// Route based on mode
 	switch mcpServer.Spec.Mode {
-	case mcpv1alpha1.MCPServerModeContainer:
+	case mcpv1alpha2.MCPServerModeContainer:
 		return r.reconcileContainerProvider(ctx, mcpServer)
-	case mcpv1alpha1.MCPServerModeRemote:
+	case mcpv1alpha2.MCPServerModeRemote:
 		return r.reconcileRemoteProvider(ctx, mcpServer)
 	default:
 		// defense-in-depth: unreachable while the CRD schema enforces
@@ -190,7 +190,7 @@ func (r *MCPServerReconciler) reconcileNormal(ctx context.Context, mcpServer *mc
 		// persisted object can never carry an unknown mode. Kept as a guard
 		// against future enum additions or direct-cache manipulation.
 		logger.Error(nil, "Unknown provider mode", "mode", mcpServer.Spec.Mode)
-		mcpServer.Status.SetCondition(ConditionReady, metav1.ConditionFalse, "InvalidMode", "Unknown provider mode")
+		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "InvalidMode", "Unknown provider mode")
 		if err := r.Status().Update(ctx, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -199,13 +199,13 @@ func (r *MCPServerReconciler) reconcileNormal(ctx context.Context, mcpServer *mc
 }
 
 // reconcileContainerProvider handles container-mode providers
-func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) (ctrl.Result, error) {
+func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	// Validate image is specified
 	if mcpServer.Spec.Image == "" {
-		mcpServer.Status.SetCondition(ConditionReady, metav1.ConditionFalse, "InvalidSpec", "Container mode requires image")
-		mcpServer.Status.State = mcpv1alpha1.MCPServerStateDead
+		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "InvalidSpec", "Container mode requires image")
+		mcpServer.Status.State = mcpv1alpha2.MCPServerStateDead
 		if err := r.Status().Update(ctx, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -236,7 +236,7 @@ func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mc
 	desiredPod, err := provider.BuildPodForMCPServer(mcpServer)
 	if err != nil {
 		logger.Error(err, "Failed to build Pod spec")
-		mcpServer.Status.SetCondition(ConditionReady, metav1.ConditionFalse, "PodBuildFailed", err.Error())
+		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "PodBuildFailed", err.Error())
 		if err := r.Status().Update(ctx, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -269,8 +269,8 @@ func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mc
 		if err := r.Delete(ctx, existingPod); err != nil && !errors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
-		mcpServer.Status.State = mcpv1alpha1.MCPServerStateInitializing
-		mcpServer.Status.SetCondition(ConditionProgressing, metav1.ConditionTrue, "SpecChanged", "Provider spec changed, recreating Pod")
+		mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
+		setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "SpecChanged", "Provider spec changed, recreating Pod")
 		if err := r.Status().Update(ctx, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -284,24 +284,24 @@ func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mc
 }
 
 // handlePodNotFound handles the case when the provider Pod doesn't exist
-func (r *MCPServerReconciler) handlePodNotFound(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, desiredPod *corev1.Pod) (ctrl.Result, error) {
+func (r *MCPServerReconciler) handlePodNotFound(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer, desiredPod *corev1.Pod) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	// Check if we should create (replicas > 0)
 	if mcpServer.IsCold() {
 		// Cold state - don't create pod
 		logger.Info("Provider is cold (replicas=0), not creating Pod")
-		mcpServer.Status.State = mcpv1alpha1.MCPServerStateCold
+		mcpServer.Status.State = mcpv1alpha2.MCPServerStateCold
 		mcpServer.Status.ReadyReplicas = 0
 		mcpServer.Status.AvailableReplicas = 0
-		mcpServer.Status.SetCondition(ConditionReady, metav1.ConditionFalse, "Cold", "Provider is cold, will start on demand")
-		mcpServer.Status.SetCondition(ConditionAvailable, metav1.ConditionFalse, "Cold", "No replicas requested")
+		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "Cold", "Provider is cold, will start on demand")
+		setServerCondition(mcpServer, ConditionAvailable, metav1.ConditionFalse, "Cold", "No replicas requested")
 
 		if err := r.Status().Update(ctx, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
 
-		metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, string(mcpv1alpha1.MCPServerStateCold))
+		metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, string(mcpv1alpha2.MCPServerStateCold))
 		return ctrl.Result{RequeueAfter: coldRequeueAfter}, nil
 	}
 
@@ -309,8 +309,8 @@ func (r *MCPServerReconciler) handlePodNotFound(ctx context.Context, mcpServer *
 	logger.Info("Creating Pod for provider", "pod", desiredPod.Name)
 	if err := r.Create(ctx, desiredPod); err != nil {
 		logger.Error(err, "Failed to create Pod")
-		mcpServer.Status.SetCondition(ConditionReady, metav1.ConditionFalse, "PodCreateFailed", err.Error())
-		mcpServer.Status.State = mcpv1alpha1.MCPServerStateDead
+		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "PodCreateFailed", err.Error())
+		mcpServer.Status.State = mcpv1alpha2.MCPServerStateDead
 		if err := r.Status().Update(ctx, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -319,24 +319,24 @@ func (r *MCPServerReconciler) handlePodNotFound(ctx context.Context, mcpServer *
 	}
 
 	// Update status
-	mcpServer.Status.State = mcpv1alpha1.MCPServerStateInitializing
+	mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
 	mcpServer.Status.PodName = desiredPod.Name
 	now := metav1.Now()
 	mcpServer.Status.LastStartedAt = &now
-	mcpServer.Status.SetCondition(ConditionProgressing, metav1.ConditionTrue, "PodCreated", "Pod created, waiting for ready")
+	setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "PodCreated", "Pod created, waiting for ready")
 
 	if err := r.Status().Update(ctx, mcpServer); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	r.Recorder.Event(mcpServer, corev1.EventTypeNormal, ReasonStarting, "Creating provider Pod")
-	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, string(mcpv1alpha1.MCPServerStateInitializing))
+	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, string(mcpv1alpha2.MCPServerStateInitializing))
 
 	return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
 }
 
 // syncPodStatus synchronizes MCPServer status with Pod status
-func (r *MCPServerReconciler) syncPodStatus(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, pod *corev1.Pod) (ctrl.Result, error) {
+func (r *MCPServerReconciler) syncPodStatus(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer, pod *corev1.Pod) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	requeueAfter := defaultRequeueAfter
 
@@ -346,9 +346,9 @@ func (r *MCPServerReconciler) syncPodStatus(ctx context.Context, mcpServer *mcpv
 		requeueAfter = r.handlePodRunning(ctx, mcpServer, pod)
 
 	case corev1.PodPending:
-		mcpServer.Status.State = mcpv1alpha1.MCPServerStateInitializing
+		mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
 		mcpServer.Status.ReadyReplicas = 0
-		mcpServer.Status.SetCondition(ConditionProgressing, metav1.ConditionTrue, "PodPending", "Pod is pending")
+		setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "PodPending", "Pod is pending")
 		metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Initializing")
 
 	case corev1.PodFailed:
@@ -357,7 +357,7 @@ func (r *MCPServerReconciler) syncPodStatus(ctx context.Context, mcpServer *mcpv
 	case corev1.PodSucceeded:
 		// Container exited cleanly - this is unusual, restart it
 		logger.Info("Pod succeeded (exited cleanly), restarting")
-		mcpServer.Status.State = mcpv1alpha1.MCPServerStateCold
+		mcpServer.Status.State = mcpv1alpha2.MCPServerStateCold
 		now := metav1.Now()
 		mcpServer.Status.LastStoppedAt = &now
 
@@ -389,7 +389,7 @@ func (r *MCPServerReconciler) syncPodStatus(ctx context.Context, mcpServer *mcpv
 }
 
 // handlePodRunning handles a running Pod
-func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, pod *corev1.Pod) time.Duration {
+func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer, pod *corev1.Pod) time.Duration {
 	logger := log.FromContext(ctx)
 
 	// Check if all containers are ready
@@ -402,9 +402,9 @@ func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *m
 	}
 
 	if !allReady {
-		mcpServer.Status.State = mcpv1alpha1.MCPServerStateInitializing
+		mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
 		mcpServer.Status.ReadyReplicas = 0
-		mcpServer.Status.SetCondition(ConditionProgressing, metav1.ConditionTrue, "ContainersStarting", "Waiting for containers to be ready")
+		setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "ContainersStarting", "Waiting for containers to be ready")
 		metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Initializing")
 		return defaultRequeueAfter
 	}
@@ -414,13 +414,13 @@ func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *m
 		tools, err := r.HangarClient.GetMCPServerTools(ctx, mcpServer.Name, mcpServer.Namespace)
 		if err != nil {
 			logger.Error(err, "Failed to get provider tools from Hangar")
-			mcpServer.Status.State = mcpv1alpha1.MCPServerStateDegraded
+			mcpServer.Status.State = mcpv1alpha2.MCPServerStateDegraded
 			// Cap the counter (mirrors handlePodFailed) so a long-unreachable
 			// Hangar cannot grow ConsecutiveFailures without bound.
 			if mcpServer.Status.ConsecutiveFailures < maxConsecutiveFailures {
 				mcpServer.Status.ConsecutiveFailures++
 			}
-			mcpServer.Status.SetCondition(ConditionDegraded, metav1.ConditionTrue, "ToolsFetchFailed", err.Error())
+			setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, "ToolsFetchFailed", err.Error())
 			metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Degraded")
 			metrics.MCPServerHealthCheckFailures.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Inc()
 			return defaultRequeueAfter
@@ -432,17 +432,17 @@ func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *m
 	}
 
 	// Provider is ready
-	mcpServer.Status.State = mcpv1alpha1.MCPServerStateReady
+	mcpServer.Status.State = mcpv1alpha2.MCPServerStateReady
 	mcpServer.Status.ReadyReplicas = 1
 	mcpServer.Status.AvailableReplicas = 1
 	mcpServer.Status.ConsecutiveFailures = 0
 	now := metav1.Now()
 	mcpServer.Status.LastHealthCheck = &now
 
-	mcpServer.Status.SetCondition(ConditionReady, metav1.ConditionTrue, "ProviderReady", "Provider is ready")
-	mcpServer.Status.SetCondition(ConditionProgressing, metav1.ConditionFalse, "Reconciled", "")
-	mcpServer.Status.SetCondition(ConditionDegraded, metav1.ConditionFalse, "", "")
-	mcpServer.Status.SetCondition(ConditionAvailable, metav1.ConditionTrue, "Available", "Provider is available")
+	setServerCondition(mcpServer, ConditionReady, metav1.ConditionTrue, "ProviderReady", "Provider is ready")
+	setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionFalse, "Reconciled", "")
+	setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionFalse, "", "")
+	setServerCondition(mcpServer, ConditionAvailable, metav1.ConditionTrue, "Available", "Provider is available")
 
 	r.Recorder.Event(mcpServer, corev1.EventTypeNormal, ReasonReady, "Provider is ready")
 	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Ready")
@@ -451,10 +451,10 @@ func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *m
 }
 
 // handlePodFailed handles a failed Pod
-func (r *MCPServerReconciler) handlePodFailed(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, pod *corev1.Pod) time.Duration {
+func (r *MCPServerReconciler) handlePodFailed(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer, pod *corev1.Pod) time.Duration {
 	logger := log.FromContext(ctx)
 
-	mcpServer.Status.State = mcpv1alpha1.MCPServerStateDead
+	mcpServer.Status.State = mcpv1alpha2.MCPServerStateDead
 	mcpServer.Status.ConsecutiveFailures++
 	mcpServer.Status.ReadyReplicas = 0
 	mcpServer.Status.AvailableReplicas = 0
@@ -471,8 +471,8 @@ func (r *MCPServerReconciler) handlePodFailed(ctx context.Context, mcpServer *mc
 		}
 	}
 
-	mcpServer.Status.SetCondition(ConditionReady, metav1.ConditionFalse, "PodFailed", reason)
-	mcpServer.Status.SetCondition(ConditionDegraded, metav1.ConditionTrue, "PodFailed", reason)
+	setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "PodFailed", reason)
+	setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, "PodFailed", reason)
 	r.Recorder.Event(mcpServer, corev1.EventTypeWarning, ReasonFailed, fmt.Sprintf("Pod failed: %s", reason))
 	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Dead")
 
@@ -498,14 +498,14 @@ func (r *MCPServerReconciler) handlePodFailed(ctx context.Context, mcpServer *mc
 
 // reconcileRemoteProvider handles remote-mode providers
 // Note: NetworkPolicy is not reconciled for remote providers (no pods to target)
-func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) (ctrl.Result, error) {
+func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	// Validate endpoint
 	endpoint := mcpServer.Spec.Endpoint
 	if endpoint == "" {
-		mcpServer.Status.SetCondition(ConditionReady, metav1.ConditionFalse, "NoEndpoint", "Remote provider requires endpoint")
-		mcpServer.Status.State = mcpv1alpha1.MCPServerStateDead
+		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "NoEndpoint", "Remote provider requires endpoint")
+		mcpServer.Status.State = mcpv1alpha2.MCPServerStateDead
 		if err := r.Status().Update(ctx, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -524,7 +524,7 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 		health, err := r.HangarClient.GetMCPServerHealth(ctx, mcpServer.Name, mcpServer.Namespace)
 		if err != nil {
 			logger.Error(err, "Could not read health from Hangar core")
-			mcpServer.Status.State = mcpv1alpha1.MCPServerStateDegraded
+			mcpServer.Status.State = mcpv1alpha2.MCPServerStateDegraded
 			// ConsecutiveFailures is deliberately NOT touched here. It mirrors
 			// what core observed against the upstream -- the branch below says
 			// so -- and this branch is the one where core could not be asked at
@@ -537,17 +537,17 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 			// server core did not know: 168 failures per second and 1.8 million
 			// on the counter. `errorRequeueAfter` is 10s and was never reached,
 			// because the watch event always arrived first.
-			mcpServer.Status.SetCondition(ConditionDegraded, metav1.ConditionTrue, "HealthCheckFailed", err.Error())
+			setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, "HealthCheckFailed", err.Error())
 			r.Recorder.Event(mcpServer, corev1.EventTypeWarning, ReasonUnhealthy, fmt.Sprintf("Health check failed: %v", err))
 			metrics.MCPServerHealthCheckFailures.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Inc()
 			// Re-probe soon so recovery is detected fast, not after the full readyRequeueAfter window.
 			requeueAfter = errorRequeueAfter
 		} else if health.ConsecutiveFailures == 0 {
-			mcpServer.Status.State = mcpv1alpha1.MCPServerStateReady
+			mcpServer.Status.State = mcpv1alpha2.MCPServerStateReady
 			mcpServer.Status.ConsecutiveFailures = 0
 			now := metav1.Now()
 			mcpServer.Status.LastHealthCheck = &now
-			mcpServer.Status.SetCondition(ConditionReady, metav1.ConditionTrue, "EndpointHealthy", "Remote endpoint is healthy")
+			setServerCondition(mcpServer, ConditionReady, metav1.ConditionTrue, "EndpointHealthy", "Remote endpoint is healthy")
 			r.Recorder.Event(mcpServer, corev1.EventTypeNormal, ReasonHealthy, "Remote endpoint is healthy")
 
 			// Tools come from the read model, which is the right source for a
@@ -564,9 +564,9 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 			// Mirror core's counter rather than keeping our own. Ours counted
 			// probe attempts; this counts what core actually observed against
 			// the upstream, which is the number an operator wants to see.
-			mcpServer.Status.State = mcpv1alpha1.MCPServerStateDegraded
+			mcpServer.Status.State = mcpv1alpha2.MCPServerStateDegraded
 			mcpServer.Status.ConsecutiveFailures = int32(health.ConsecutiveFailures)
-			mcpServer.Status.SetCondition(ConditionDegraded, metav1.ConditionTrue, "EndpointUnhealthy",
+			setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, "EndpointUnhealthy",
 				fmt.Sprintf("Core reports %d consecutive failures (success rate %.2f)", health.ConsecutiveFailures, health.SuccessRate))
 			r.Recorder.Event(mcpServer, corev1.EventTypeWarning, ReasonUnhealthy, "Remote endpoint unhealthy")
 			// Re-probe soon so recovery is detected fast, not after the full readyRequeueAfter window.
@@ -574,8 +574,8 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 		}
 	} else {
 		// No Hangar client - just mark as ready (assume healthy)
-		mcpServer.Status.State = mcpv1alpha1.MCPServerStateReady
-		mcpServer.Status.SetCondition(ConditionReady, metav1.ConditionTrue, "Assumed", "No Hangar client, assuming healthy")
+		mcpServer.Status.State = mcpv1alpha2.MCPServerStateReady
+		setServerCondition(mcpServer, ConditionReady, metav1.ConditionTrue, "Assumed", "No Hangar client, assuming healthy")
 	}
 
 	mcpServer.Status.Endpoint = endpoint
@@ -598,7 +598,7 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 
 // reconcileNetworkPolicy ensures the NetworkPolicy for a provider matches its capabilities.
 // Creates, updates, or deletes the NetworkPolicy as needed.
-func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
+func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) error {
 	logger := log.FromContext(ctx)
 
 	// Pin-coupling (#51/#52): in a namespace opted into egress enforcement, a
@@ -623,7 +623,7 @@ func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpSer
 			r.Recorder.Event(mcpServer, corev1.EventTypeWarning, "EgressWithheld",
 				"egress not opened: spec.image is not digest-pinned in an enforce-egress namespace; "+
 					"pin the image (image@sha256:...) or set annotation hangar.io/allow-mutable-image=\"true\" (#51/#52)")
-			mcpServer.Status.SetCondition(ConditionNetworkPolicyApplied, metav1.ConditionFalse,
+			setServerCondition(mcpServer, ConditionNetworkPolicyApplied, metav1.ConditionFalse,
 				"EgressWithheldUnpinnedImage",
 				"Egress withheld: image not digest-pinned in an enforce-egress namespace")
 			return nil
@@ -637,7 +637,7 @@ func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpSer
 		if err := r.deleteNetworkPolicyIfExists(ctx, mcpServer); err != nil {
 			return err
 		}
-		mcpServer.Status.SetCondition(ConditionNetworkPolicyApplied, metav1.ConditionFalse,
+		setServerCondition(mcpServer, ConditionNetworkPolicyApplied, metav1.ConditionFalse,
 			"NoPolicyNeeded", "No network capabilities declared")
 		return nil
 	}
@@ -661,7 +661,7 @@ func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpSer
 		}
 		r.Recorder.Event(mcpServer, corev1.EventTypeNormal, "NetworkPolicyCreated",
 			fmt.Sprintf("Created NetworkPolicy %s", desired.Name))
-		mcpServer.Status.SetCondition(ConditionNetworkPolicyApplied, metav1.ConditionTrue,
+		setServerCondition(mcpServer, ConditionNetworkPolicyApplied, metav1.ConditionTrue,
 			"PolicyApplied", fmt.Sprintf("NetworkPolicy %s created", desired.Name))
 		return nil
 	} else if err != nil {
@@ -682,7 +682,7 @@ func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpSer
 			fmt.Sprintf("Updated NetworkPolicy %s", desired.Name))
 	}
 
-	mcpServer.Status.SetCondition(ConditionNetworkPolicyApplied, metav1.ConditionTrue,
+	setServerCondition(mcpServer, ConditionNetworkPolicyApplied, metav1.ConditionTrue,
 		"PolicyApplied", fmt.Sprintf("NetworkPolicy %s applied", desired.Name))
 	return nil
 }
@@ -690,7 +690,7 @@ func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpSer
 // reconcileViolationDetection checks for capability violations and records them.
 // Violations are appended to status.Violations (capped at MaxViolationRecords).
 // Does not call Status().Update() -- caller handles that.
-func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
+func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) error {
 	if mcpServer.Spec.Capabilities == nil {
 		return nil
 	}
@@ -702,14 +702,14 @@ func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, m
 		enforcementMode = "alert"
 	}
 
-	var newViolations []mcpv1alpha1.ViolationRecord
+	var newViolations []mcpv1alpha2.ViolationRecord
 
 	// Detection 1: NetworkPolicy drift -- capabilities declare network egress
 	// but NetworkPolicyApplied condition is not True
 	if mcpServer.Spec.Capabilities.Network != nil && len(mcpServer.Spec.Capabilities.Network.Egress) > 0 {
-		npCond := mcpServer.Status.GetCondition(ConditionNetworkPolicyApplied)
+		npCond := getCondition(mcpServer.Status.Conditions, ConditionNetworkPolicyApplied)
 		if npCond == nil || npCond.Status != metav1.ConditionTrue {
-			newViolations = append(newViolations, mcpv1alpha1.ViolationRecord{
+			newViolations = append(newViolations, mcpv1alpha2.ViolationRecord{
 				Type:      "capability_drift",
 				Detail:    "Network capabilities declared but NetworkPolicy not applied",
 				Severity:  "high",
@@ -722,7 +722,7 @@ func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, m
 	// Detection 2: Tool count drift -- more tools than declared maximum
 	if mcpServer.Spec.Capabilities.Tools != nil && mcpServer.Spec.Capabilities.Tools.MaxCount > 0 {
 		if mcpServer.Status.ToolsCount > mcpServer.Spec.Capabilities.Tools.MaxCount {
-			newViolations = append(newViolations, mcpv1alpha1.ViolationRecord{
+			newViolations = append(newViolations, mcpv1alpha2.ViolationRecord{
 				Type:      "undeclared_tool",
 				Detail:    fmt.Sprintf("Provider exposes %d tools but max declared is %d", mcpServer.Status.ToolsCount, mcpServer.Spec.Capabilities.Tools.MaxCount),
 				Severity:  "medium",
@@ -734,9 +734,9 @@ func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, m
 
 	if len(newViolations) == 0 {
 		// Clear condition if it was previously set
-		cond := mcpServer.Status.GetCondition(ConditionViolationDetected)
+		cond := getCondition(mcpServer.Status.Conditions, ConditionViolationDetected)
 		if cond != nil && cond.Status == metav1.ConditionTrue {
-			mcpServer.Status.SetCondition(ConditionViolationDetected, metav1.ConditionFalse,
+			setServerCondition(mcpServer, ConditionViolationDetected, metav1.ConditionFalse,
 				"NoViolations", "No capability violations detected")
 			r.Recorder.Event(mcpServer, corev1.EventTypeNormal, ReasonViolationCleared,
 				"No capability violations detected")
@@ -760,13 +760,13 @@ func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, m
 
 	// Append to status, cap at MaxViolationRecords
 	mcpServer.Status.Violations = append(mcpServer.Status.Violations, newViolations...)
-	if len(mcpServer.Status.Violations) > mcpv1alpha1.MaxViolationRecords {
-		overflow := len(mcpServer.Status.Violations) - mcpv1alpha1.MaxViolationRecords
+	if len(mcpServer.Status.Violations) > mcpv1alpha2.MaxViolationRecords {
+		overflow := len(mcpServer.Status.Violations) - mcpv1alpha2.MaxViolationRecords
 		mcpServer.Status.Violations = mcpServer.Status.Violations[overflow:]
 	}
 
 	// Set condition
-	mcpServer.Status.SetCondition(ConditionViolationDetected, metav1.ConditionTrue,
+	setServerCondition(mcpServer, ConditionViolationDetected, metav1.ConditionTrue,
 		"ViolationsFound", fmt.Sprintf("%d new violation(s) detected", len(newViolations)))
 
 	return nil
@@ -775,7 +775,7 @@ func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, m
 // reconcileEgressAudit emits a Warning event when a provider uses wildcard egress
 // with the explicit override annotation. This provides an audit trail without
 // blocking admission (the CEL rule handles rejection; this covers the allowed override case).
-func (r *MCPServerReconciler) reconcileEgressAudit(_ context.Context, mcpServer *mcpv1alpha1.MCPServer) {
+func (r *MCPServerReconciler) reconcileEgressAudit(_ context.Context, mcpServer *mcpv1alpha2.MCPServer) {
 	if mcpServer.Spec.Capabilities == nil ||
 		mcpServer.Spec.Capabilities.Network == nil {
 		return
@@ -810,7 +810,7 @@ func (r *MCPServerReconciler) namespaceEnforcesEgress(ctx context.Context, name 
 }
 
 // deleteNetworkPolicyIfExists deletes the NetworkPolicy for a provider if it exists.
-func (r *MCPServerReconciler) deleteNetworkPolicyIfExists(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
+func (r *MCPServerReconciler) deleteNetworkPolicyIfExists(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) error {
 	npName := networkpolicy.NetworkPolicyName(mcpServer.Name)
 	existing := &networkingv1.NetworkPolicy{}
 	npKey := types.NamespacedName{Name: npName, Namespace: mcpServer.Namespace}
@@ -829,7 +829,7 @@ func (r *MCPServerReconciler) deleteNetworkPolicyIfExists(ctx context.Context, m
 // provider spec (detected via the generation annotation set by the Pod builder).
 // In Kubernetes, .metadata.generation is only incremented when .spec changes,
 // so finalizer or status updates do not trigger false drift.
-func (r *MCPServerReconciler) podSpecDrifted(mcpServer *mcpv1alpha1.MCPServer, pod *corev1.Pod) bool {
+func (r *MCPServerReconciler) podSpecDrifted(mcpServer *mcpv1alpha2.MCPServer, pod *corev1.Pod) bool {
 	actual, ok := pod.Annotations[provider.AnnotationGeneration]
 	if !ok {
 		// Pod has no generation annotation -- was created before drift detection
@@ -841,7 +841,7 @@ func (r *MCPServerReconciler) podSpecDrifted(mcpServer *mcpv1alpha1.MCPServer, p
 }
 
 // reconcileDelete handles provider deletion
-func (r *MCPServerReconciler) reconcileDelete(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) (ctrl.Result, error) {
+func (r *MCPServerReconciler) reconcileDelete(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("Handling deletion for MCPServer")
 
@@ -896,7 +896,7 @@ func (r *MCPServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// exactly that. Spec, labels and annotations still wake it; a status-only
 		// update does not, and the RequeueAfter this reconciler already returns
 		// is what paces the polling.
-		For(&mcpv1alpha1.MCPServer{}, builder.WithPredicates(predicate.Or(
+		For(&mcpv1alpha2.MCPServer{}, builder.WithPredicates(predicate.Or(
 			predicate.GenerationChangedPredicate{},
 			predicate.LabelChangedPredicate{},
 			predicate.AnnotationChangedPredicate{},

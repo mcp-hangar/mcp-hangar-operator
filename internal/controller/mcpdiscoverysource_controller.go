@@ -10,6 +10,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -20,7 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/yaml"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/hangar"
 	"github.com/mcp-hangar/operator/pkg/metrics"
 )
@@ -69,7 +70,7 @@ type DiscoveredMCPServerInfo struct {
 	Name     string
 	Source   string
 	Endpoint string
-	Mode     mcpv1alpha1.MCPServerMode
+	Mode     mcpv1alpha2.MCPServerMode
 	Labels   map[string]string
 }
 
@@ -112,7 +113,7 @@ func (r *MCPDiscoverySourceReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}()
 
 	// Fetch the MCPDiscoverySource instance
-	source := &mcpv1alpha1.MCPDiscoverySource{}
+	source := &mcpv1alpha2.MCPDiscoverySource{}
 	if err := r.Get(ctx, req.NamespacedName, source); err != nil {
 		if errors.IsNotFound(err) {
 			logger.Info("MCPDiscoverySource resource not found, ignoring")
@@ -155,14 +156,14 @@ func (r *MCPDiscoverySourceReconciler) Reconcile(ctx context.Context, req ctrl.R
 }
 
 // reconcileNormal handles normal (non-deletion) reconciliation
-func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource) (ctrl.Result, error) {
+func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, source *mcpv1alpha2.MCPDiscoverySource) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	// Paused check FIRST -- if paused, freeze all operations
 	if source.IsPaused() {
 		logger.Info("MCPDiscoverySource is paused, skipping sync")
-		source.Status.SetCondition(ConditionPaused, metav1.ConditionTrue, "Paused", "Discovery is paused")
-		source.Status.SetCondition(ConditionSynced, metav1.ConditionUnknown, "Paused", "Sync suspended while paused")
+		setCondition(source, ConditionPaused, metav1.ConditionTrue, "Paused", "Discovery is paused")
+		setCondition(source, ConditionSynced, metav1.ConditionUnknown, "Paused", "Sync suspended while paused")
 		if err := r.Status().Update(ctx, source); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -170,20 +171,15 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 	}
 
 	// Clear paused condition
-	source.Status.SetCondition(ConditionPaused, metav1.ConditionFalse, "Active", "Discovery is active")
+	setCondition(source, ConditionPaused, metav1.ConditionFalse, "Active", "Discovery is active")
 
 	// Update ObservedGeneration
 	source.Status.ObservedGeneration = source.Generation
 
-	// Parse refresh interval
+	// v1alpha2 carries the interval pre-parsed; non-positive falls back.
 	refreshInterval := defaultRefreshInterval
-	if source.Spec.RefreshInterval != "" {
-		parsed, err := time.ParseDuration(source.Spec.RefreshInterval)
-		if err != nil {
-			logger.Error(err, "Failed to parse refreshInterval, using default", "refreshInterval", source.Spec.RefreshInterval)
-		} else {
-			refreshInterval = parsed
-		}
+	if source.Spec.RefreshInterval != nil && source.Spec.RefreshInterval.Duration > 0 {
+		refreshInterval = source.Spec.RefreshInterval.Duration
 	}
 
 	// Start sync timer
@@ -195,8 +191,8 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 	if err != nil {
 		logger.Error(err, "Discovery failed completely")
 		source.Status.LastSyncError = err.Error()
-		source.Status.SetCondition(ConditionSynced, metav1.ConditionFalse, "DiscoveryFailed", err.Error())
-		source.Status.SetCondition(ConditionReady, metav1.ConditionFalse, "DiscoveryFailed", err.Error())
+		setCondition(source, ConditionSynced, metav1.ConditionFalse, "DiscoveryFailed", err.Error())
+		setCondition(source, ConditionReady, metav1.ConditionFalse, "DiscoveryFailed", err.Error())
 		if statusErr := r.Status().Update(ctx, source); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
@@ -210,10 +206,10 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 	// Create or update providers
 	var createErrors []string
 	managedCount := int32(0)
-	discoveredProviderStatuses := make([]mcpv1alpha1.DiscoveredMCPServer, 0, len(discovered))
+	discoveredProviderStatuses := make([]mcpv1alpha2.DiscoveredMCPServer, 0, len(discovered))
 
 	for name, info := range discovered {
-		dp := mcpv1alpha1.DiscoveredMCPServer{
+		dp := mcpv1alpha2.DiscoveredMCPServer{
 			Name:         name,
 			Source:       info.Source,
 			DiscoveredAt: metav1.Now(),
@@ -247,7 +243,7 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 	source.Status.DiscoveredCount = int32(len(discovered))
 	source.Status.ManagedCount = managedCount
 	source.Status.LastSyncTime = &now
-	source.Status.LastSyncDuration = syncDuration.String()
+	source.Status.LastSyncDuration = &metav1.Duration{Duration: syncDuration}
 	source.Status.NextSyncTime = &nextSync
 	source.Status.DiscoveredMCPServers = discoveredProviderStatuses
 
@@ -255,17 +251,17 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 	allErrors := append(scanErrors, createErrors...)
 	if len(allErrors) > 0 {
 		source.Status.LastSyncError = strings.Join(allErrors, "; ")
-		source.Status.SetCondition(ConditionSynced, metav1.ConditionFalse, "PartialFailure", source.Status.LastSyncError)
+		setCondition(source, ConditionSynced, metav1.ConditionFalse, "PartialFailure", source.Status.LastSyncError)
 	} else {
 		source.Status.LastSyncError = ""
-		source.Status.SetCondition(ConditionSynced, metav1.ConditionTrue, "SyncCompleted", fmt.Sprintf("Discovered %d providers", len(discovered)))
+		setCondition(source, ConditionSynced, metav1.ConditionTrue, "SyncCompleted", fmt.Sprintf("Discovered %d providers", len(discovered)))
 	}
 
 	// Ready condition: True if sync succeeded even partially (providers were discovered)
 	if len(discovered) > 0 || len(allErrors) == 0 {
-		source.Status.SetCondition(ConditionReady, metav1.ConditionTrue, "Ready", fmt.Sprintf("Managing %d providers", managedCount))
+		setCondition(source, ConditionReady, metav1.ConditionTrue, "Ready", fmt.Sprintf("Managing %d providers", managedCount))
 	} else {
-		source.Status.SetCondition(ConditionReady, metav1.ConditionFalse, "NoProviders", "No providers discovered")
+		setCondition(source, ConditionReady, metav1.ConditionFalse, "NoProviders", "No providers discovered")
 	}
 
 	// Update metrics
@@ -283,15 +279,15 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 }
 
 // discoverProviders routes to the appropriate discovery method based on type
-func (r *MCPDiscoverySourceReconciler) discoverProviders(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource) (map[string]DiscoveredMCPServerInfo, []string, error) {
+func (r *MCPDiscoverySourceReconciler) discoverProviders(ctx context.Context, source *mcpv1alpha2.MCPDiscoverySource) (map[string]DiscoveredMCPServerInfo, []string, error) {
 	switch source.Spec.Type {
-	case mcpv1alpha1.DiscoveryTypeNamespace:
+	case mcpv1alpha2.DiscoveryTypeNamespace:
 		return r.discoverNamespace(ctx, source)
-	case mcpv1alpha1.DiscoveryTypeConfigMap:
+	case mcpv1alpha2.DiscoveryTypeConfigMap:
 		return r.discoverConfigMap(ctx, source)
-	case mcpv1alpha1.DiscoveryTypeAnnotations:
+	case mcpv1alpha2.DiscoveryTypeAnnotations:
 		return r.discoverAnnotations(ctx, source)
-	case mcpv1alpha1.DiscoveryTypeServiceDiscovery:
+	case mcpv1alpha2.DiscoveryTypeServiceDiscovery:
 		return r.discoverServices(ctx, source)
 	default:
 		// defense-in-depth: unreachable while the CRD schema enforces spec.type
@@ -303,7 +299,7 @@ func (r *MCPDiscoverySourceReconciler) discoverProviders(ctx context.Context, so
 }
 
 // discoverNamespace discovers providers by scanning namespaces matching labels
-func (r *MCPDiscoverySourceReconciler) discoverNamespace(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource) (map[string]DiscoveredMCPServerInfo, []string, error) {
+func (r *MCPDiscoverySourceReconciler) discoverNamespace(ctx context.Context, source *mcpv1alpha2.MCPDiscoverySource) (map[string]DiscoveredMCPServerInfo, []string, error) {
 	logger := log.FromContext(ctx)
 	discovered := make(map[string]DiscoveredMCPServerInfo)
 	var scanErrors []string
@@ -365,7 +361,7 @@ func (r *MCPDiscoverySourceReconciler) discoverNamespace(ctx context.Context, so
 		discovered[providerName] = DiscoveredMCPServerInfo{
 			Name:   providerName,
 			Source: fmt.Sprintf("namespace/%s", ns.Name),
-			Mode:   mcpv1alpha1.MCPServerModeRemote,
+			Mode:   mcpv1alpha2.MCPServerModeRemote,
 			Labels: map[string]string{
 				"discovery-namespace": ns.Name,
 			},
@@ -377,7 +373,7 @@ func (r *MCPDiscoverySourceReconciler) discoverNamespace(ctx context.Context, so
 }
 
 // discoverConfigMap discovers providers from a ConfigMap containing YAML definitions
-func (r *MCPDiscoverySourceReconciler) discoverConfigMap(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource) (map[string]DiscoveredMCPServerInfo, []string, error) {
+func (r *MCPDiscoverySourceReconciler) discoverConfigMap(ctx context.Context, source *mcpv1alpha2.MCPDiscoverySource) (map[string]DiscoveredMCPServerInfo, []string, error) {
 	logger := log.FromContext(ctx)
 	discovered := make(map[string]DiscoveredMCPServerInfo)
 
@@ -418,9 +414,9 @@ func (r *MCPDiscoverySourceReconciler) discoverConfigMap(ctx context.Context, so
 
 	for name, entry := range entries {
 		providerName := fmt.Sprintf("%s-%s", source.Name, name)
-		mode := mcpv1alpha1.MCPServerModeRemote
+		mode := mcpv1alpha2.MCPServerModeRemote
 		if entry.Mode == "container" {
-			mode = mcpv1alpha1.MCPServerModeContainer
+			mode = mcpv1alpha2.MCPServerModeContainer
 		}
 
 		discovered[providerName] = DiscoveredMCPServerInfo{
@@ -440,7 +436,7 @@ func (r *MCPDiscoverySourceReconciler) discoverConfigMap(ctx context.Context, so
 }
 
 // discoverAnnotations discovers providers from annotated Pods and Services
-func (r *MCPDiscoverySourceReconciler) discoverAnnotations(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource) (map[string]DiscoveredMCPServerInfo, []string, error) {
+func (r *MCPDiscoverySourceReconciler) discoverAnnotations(ctx context.Context, source *mcpv1alpha2.MCPDiscoverySource) (map[string]DiscoveredMCPServerInfo, []string, error) {
 	logger := log.FromContext(ctx)
 	discovered := make(map[string]DiscoveredMCPServerInfo)
 	var scanErrors []string
@@ -493,7 +489,7 @@ func (r *MCPDiscoverySourceReconciler) discoverAnnotations(ctx context.Context, 
 					Name:     fullName,
 					Source:   fmt.Sprintf("annotation/Pod/%s", pod.Name),
 					Endpoint: endpoint,
-					Mode:     mcpv1alpha1.MCPServerModeRemote,
+					Mode:     mcpv1alpha2.MCPServerModeRemote,
 					Labels: map[string]string{
 						"discovery-kind":     "Pod",
 						"discovery-resource": pod.Name,
@@ -541,7 +537,7 @@ func (r *MCPDiscoverySourceReconciler) discoverAnnotations(ctx context.Context, 
 					Name:     fullName,
 					Source:   fmt.Sprintf("annotation/Service/%s", svc.Name),
 					Endpoint: endpoint,
-					Mode:     mcpv1alpha1.MCPServerModeRemote,
+					Mode:     mcpv1alpha2.MCPServerModeRemote,
 					Labels: map[string]string{
 						"discovery-kind":     "Service",
 						"discovery-resource": svc.Name,
@@ -556,7 +552,7 @@ func (r *MCPDiscoverySourceReconciler) discoverAnnotations(ctx context.Context, 
 }
 
 // discoverServices discovers providers from Kubernetes Services matching a label selector
-func (r *MCPDiscoverySourceReconciler) discoverServices(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource) (map[string]DiscoveredMCPServerInfo, []string, error) {
+func (r *MCPDiscoverySourceReconciler) discoverServices(ctx context.Context, source *mcpv1alpha2.MCPDiscoverySource) (map[string]DiscoveredMCPServerInfo, []string, error) {
 	logger := log.FromContext(ctx)
 	discovered := make(map[string]DiscoveredMCPServerInfo)
 
@@ -610,7 +606,7 @@ func (r *MCPDiscoverySourceReconciler) discoverServices(ctx context.Context, sou
 			Name:     providerName,
 			Source:   fmt.Sprintf("service/%s", svc.Name),
 			Endpoint: endpoint,
-			Mode:     mcpv1alpha1.MCPServerModeRemote,
+			Mode:     mcpv1alpha2.MCPServerModeRemote,
 			Labels: map[string]string{
 				"discovery-service": svc.Name,
 			},
@@ -622,8 +618,8 @@ func (r *MCPDiscoverySourceReconciler) discoverServices(ctx context.Context, sou
 }
 
 // createOrUpdateMCPServer creates or updates an MCPServer CR for a discovered provider
-func (r *MCPDiscoverySourceReconciler) createOrUpdateMCPServer(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource, info DiscoveredMCPServerInfo) error {
-	provider := &mcpv1alpha1.MCPServer{
+func (r *MCPDiscoverySourceReconciler) createOrUpdateMCPServer(ctx context.Context, source *mcpv1alpha2.MCPDiscoverySource, info DiscoveredMCPServerInfo) error {
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      info.Name,
 			Namespace: source.Namespace,
@@ -684,12 +680,12 @@ func (r *MCPDiscoverySourceReconciler) createOrUpdateMCPServer(ctx context.Conte
 }
 
 // authoritativeSync deletes MCPServers that are no longer discovered (scoped to successfully-scanned sources only)
-func (r *MCPDiscoverySourceReconciler) authoritativeSync(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource, discovered map[string]DiscoveredMCPServerInfo) []string {
+func (r *MCPDiscoverySourceReconciler) authoritativeSync(ctx context.Context, source *mcpv1alpha2.MCPDiscoverySource, discovered map[string]DiscoveredMCPServerInfo) []string {
 	logger := log.FromContext(ctx)
 	var deleteErrors []string
 
 	// List all MCPServers managed by this source
-	providerList := &mcpv1alpha1.MCPServerList{}
+	providerList := &mcpv1alpha2.MCPServerList{}
 	if err := r.List(ctx, providerList,
 		client.InNamespace(source.Namespace),
 		client.MatchingLabels{LabelDiscoveryManagedBy: source.Name},
@@ -717,7 +713,7 @@ func (r *MCPDiscoverySourceReconciler) authoritativeSync(ctx context.Context, so
 }
 
 // applyFilters applies include/exclude patterns and max provider count to discovered providers
-func (r *MCPDiscoverySourceReconciler) applyFilters(source *mcpv1alpha1.MCPDiscoverySource, discovered map[string]DiscoveredMCPServerInfo) map[string]DiscoveredMCPServerInfo {
+func (r *MCPDiscoverySourceReconciler) applyFilters(source *mcpv1alpha2.MCPDiscoverySource, discovered map[string]DiscoveredMCPServerInfo) map[string]DiscoveredMCPServerInfo {
 	if source.Spec.Filters == nil {
 		return discovered
 	}
@@ -776,12 +772,12 @@ func (r *MCPDiscoverySourceReconciler) applyFilters(source *mcpv1alpha1.MCPDisco
 }
 
 // reconcileDelete handles discovery source deletion
-func (r *MCPDiscoverySourceReconciler) reconcileDelete(ctx context.Context, source *mcpv1alpha1.MCPDiscoverySource) (ctrl.Result, error) {
+func (r *MCPDiscoverySourceReconciler) reconcileDelete(ctx context.Context, source *mcpv1alpha2.MCPDiscoverySource) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("Handling deletion for MCPDiscoverySource")
 
 	// Delete all MCPServers managed by this source
-	providerList := &mcpv1alpha1.MCPServerList{}
+	providerList := &mcpv1alpha2.MCPServerList{}
 	if err := r.List(ctx, providerList,
 		client.InNamespace(source.Namespace),
 		client.MatchingLabels{LabelDiscoveryManagedBy: source.Name},
@@ -815,8 +811,8 @@ func (r *MCPDiscoverySourceReconciler) reconcileDelete(ctx context.Context, sour
 // SetupWithManager sets up the controller with the Manager
 func (r *MCPDiscoverySourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&mcpv1alpha1.MCPDiscoverySource{}).
-		Owns(&mcpv1alpha1.MCPServer{}).
+		For(&mcpv1alpha2.MCPDiscoverySource{}).
+		Owns(&mcpv1alpha2.MCPServer{}).
 		Complete(r)
 }
 
@@ -831,4 +827,18 @@ func hasRequiredAnnotations(annotations map[string]string, required []string) bo
 		}
 	}
 	return true
+}
+
+// setCondition sets or updates a standard metav1.Condition on the source's
+// status. v1alpha1 statuses carried their own Condition type with a
+// SetCondition method; v1alpha2 uses []metav1.Condition, so the shared
+// apimachinery helper does the transition-time bookkeeping.
+func setCondition(source *mcpv1alpha2.MCPDiscoverySource, condType string, status metav1.ConditionStatus, reason, message string) {
+	apimeta.SetStatusCondition(&source.Status.Conditions, metav1.Condition{
+		Type:               condType,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: source.Generation,
+	})
 }

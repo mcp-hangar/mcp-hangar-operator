@@ -12,14 +12,14 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
 
 // waitForDiscoveryCondition polls until the specified condition reaches the expected status on an MCPDiscoverySource.
 func waitForDiscoveryCondition(t *testing.T, name, namespace, condType string, status metav1.ConditionStatus) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		source := &mcpv1alpha1.MCPDiscoverySource{}
+		source := &mcpv1alpha2.MCPDiscoverySource{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, source); err != nil {
 			return false
 		}
@@ -36,7 +36,7 @@ func waitForDiscoveryCondition(t *testing.T, name, namespace, condType string, s
 func waitForManagedProviderCount(t *testing.T, sourceName, namespace string, count int) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		providerList := &mcpv1alpha1.MCPServerList{}
+		providerList := &mcpv1alpha2.MCPServerList{}
 		if err := k8sClient.List(ctx, providerList,
 			client.InNamespace(namespace),
 			client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},
@@ -64,17 +64,17 @@ func createConfigMap(t *testing.T, name, namespace, yamlData string) *corev1.Con
 }
 
 // createDiscoverySource creates an MCPDiscoverySource with ConfigMap type.
-func createDiscoverySource(t *testing.T, name, namespace, configMapName string, mode mcpv1alpha1.DiscoveryMode) *mcpv1alpha1.MCPDiscoverySource {
+func createDiscoverySource(t *testing.T, name, namespace, configMapName string, mode mcpv1alpha2.DiscoveryMode) *mcpv1alpha2.MCPDiscoverySource {
 	t.Helper()
-	source := &mcpv1alpha1.MCPDiscoverySource{
+	source := &mcpv1alpha2.MCPDiscoverySource{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Spec: mcpv1alpha1.MCPDiscoverySourceSpec{
-			Type: mcpv1alpha1.DiscoveryTypeConfigMap,
+		Spec: mcpv1alpha2.MCPDiscoverySourceSpec{
+			Type: mcpv1alpha2.DiscoveryTypeConfigMap,
 			Mode: mode,
-			ConfigMapRef: &mcpv1alpha1.ConfigMapReference{
+			ConfigMapRef: &mcpv1alpha2.ConfigMapReference{
 				Name: configMapName,
 			},
 		},
@@ -118,7 +118,7 @@ func TestMCPDiscoverySource_ConfigMapDiscovery(t *testing.T) {
 	cmName := "providers-cm"
 
 	createConfigMap(t, cmName, ns.Name, twoProviderYAML)
-	createDiscoverySource(t, sourceName, ns.Name, cmName, mcpv1alpha1.DiscoveryModeAdditive)
+	createDiscoverySource(t, sourceName, ns.Name, cmName, mcpv1alpha2.DiscoveryModeAdditive)
 
 	// Wait for Synced=True
 	waitForDiscoveryCondition(t, sourceName, ns.Name, ConditionSynced, metav1.ConditionTrue)
@@ -127,7 +127,7 @@ func TestMCPDiscoverySource_ConfigMapDiscovery(t *testing.T) {
 	waitForManagedProviderCount(t, sourceName, ns.Name, 2)
 
 	// Verify providers have correct labels and owner references
-	providerList := &mcpv1alpha1.MCPServerList{}
+	providerList := &mcpv1alpha2.MCPServerList{}
 	require.NoError(t, k8sClient.List(ctx, providerList,
 		client.InNamespace(ns.Name),
 		client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},
@@ -146,7 +146,7 @@ func TestMCPDiscoverySource_ConfigMapDiscovery(t *testing.T) {
 	}
 
 	// Verify DiscoveredCount in status
-	source := &mcpv1alpha1.MCPDiscoverySource{}
+	source := &mcpv1alpha2.MCPDiscoverySource{}
 	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: sourceName, Namespace: ns.Name}, source))
 	assert.Equal(t, int32(2), source.Status.DiscoveredCount)
 }
@@ -159,7 +159,7 @@ func TestMCPDiscoverySource_AdditiveNeverDeletes(t *testing.T) {
 	cmName := "additive-cm"
 
 	cm := createConfigMap(t, cmName, ns.Name, twoProviderYAML)
-	createDiscoverySource(t, sourceName, ns.Name, cmName, mcpv1alpha1.DiscoveryModeAdditive)
+	createDiscoverySource(t, sourceName, ns.Name, cmName, mcpv1alpha2.DiscoveryModeAdditive)
 
 	// Wait for 2 providers
 	waitForManagedProviderCount(t, sourceName, ns.Name, 2)
@@ -170,7 +170,7 @@ func TestMCPDiscoverySource_AdditiveNeverDeletes(t *testing.T) {
 
 	// Trigger reconcile by annotating the source (retry on conflict)
 	require.Eventually(t, func() bool {
-		source := &mcpv1alpha1.MCPDiscoverySource{}
+		source := &mcpv1alpha2.MCPDiscoverySource{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: sourceName, Namespace: ns.Name}, source); err != nil {
 			return false
 		}
@@ -185,7 +185,7 @@ func TestMCPDiscoverySource_AdditiveNeverDeletes(t *testing.T) {
 	// Additive mode: 2 providers should still exist (never deletes)
 	// Give enough time for at least 2 reconcile cycles, then verify
 	require.Eventually(t, func() bool {
-		providerList := &mcpv1alpha1.MCPServerList{}
+		providerList := &mcpv1alpha2.MCPServerList{}
 		if err := k8sClient.List(ctx, providerList,
 			client.InNamespace(ns.Name),
 			client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},
@@ -197,7 +197,7 @@ func TestMCPDiscoverySource_AdditiveNeverDeletes(t *testing.T) {
 	}, 10*time.Second, 500*time.Millisecond, "additive mode should never delete providers")
 
 	// Final assertion for clarity
-	providerList := &mcpv1alpha1.MCPServerList{}
+	providerList := &mcpv1alpha2.MCPServerList{}
 	require.NoError(t, k8sClient.List(ctx, providerList,
 		client.InNamespace(ns.Name),
 		client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},
@@ -213,7 +213,7 @@ func TestMCPDiscoverySource_AuthoritativeDeletes(t *testing.T) {
 	cmName := "auth-cm"
 
 	cm := createConfigMap(t, cmName, ns.Name, twoProviderYAML)
-	createDiscoverySource(t, sourceName, ns.Name, cmName, mcpv1alpha1.DiscoveryModeAuthoritative)
+	createDiscoverySource(t, sourceName, ns.Name, cmName, mcpv1alpha2.DiscoveryModeAuthoritative)
 
 	// Wait for 2 providers
 	waitForManagedProviderCount(t, sourceName, ns.Name, 2)
@@ -224,7 +224,7 @@ func TestMCPDiscoverySource_AuthoritativeDeletes(t *testing.T) {
 
 	// Trigger reconcile by annotating the source (retry on conflict)
 	require.Eventually(t, func() bool {
-		source := &mcpv1alpha1.MCPDiscoverySource{}
+		source := &mcpv1alpha2.MCPDiscoverySource{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: sourceName, Namespace: ns.Name}, source); err != nil {
 			return false
 		}
@@ -239,7 +239,7 @@ func TestMCPDiscoverySource_AuthoritativeDeletes(t *testing.T) {
 	waitForManagedProviderCount(t, sourceName, ns.Name, 1)
 
 	// Verify only provider-a remains
-	providerList := &mcpv1alpha1.MCPServerList{}
+	providerList := &mcpv1alpha2.MCPServerList{}
 	require.NoError(t, k8sClient.List(ctx, providerList,
 		client.InNamespace(ns.Name),
 		client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},
@@ -258,13 +258,13 @@ func TestMCPDiscoverySource_OwnerReferences(t *testing.T) {
 	cmName := "owner-cm"
 
 	createConfigMap(t, cmName, ns.Name, twoProviderYAML)
-	source := createDiscoverySource(t, sourceName, ns.Name, cmName, mcpv1alpha1.DiscoveryModeAdditive)
+	source := createDiscoverySource(t, sourceName, ns.Name, cmName, mcpv1alpha2.DiscoveryModeAdditive)
 
 	// Wait for providers
 	waitForManagedProviderCount(t, sourceName, ns.Name, 2)
 
 	// Verify owner references on each provider
-	providerList := &mcpv1alpha1.MCPServerList{}
+	providerList := &mcpv1alpha2.MCPServerList{}
 	require.NoError(t, k8sClient.List(ctx, providerList,
 		client.InNamespace(ns.Name),
 		client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},
@@ -287,13 +287,13 @@ func TestMCPDiscoverySource_OwnerReferences(t *testing.T) {
 
 	// Wait for source to be fully deleted
 	require.Eventually(t, func() bool {
-		err := k8sClient.Get(ctx, types.NamespacedName{Name: sourceName, Namespace: ns.Name}, &mcpv1alpha1.MCPDiscoverySource{})
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: sourceName, Namespace: ns.Name}, &mcpv1alpha2.MCPDiscoverySource{})
 		return err != nil
 	}, 15*time.Second, 250*time.Millisecond, "source should be deleted")
 
 	// Providers should be cleaned up (by finalizer or GC)
 	require.Eventually(t, func() bool {
-		list := &mcpv1alpha1.MCPServerList{}
+		list := &mcpv1alpha2.MCPServerList{}
 		if err := k8sClient.List(ctx, list,
 			client.InNamespace(ns.Name),
 			client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},
@@ -312,14 +312,14 @@ func TestMCPDiscoverySource_PausedFreeze(t *testing.T) {
 	cmName := "paused-cm"
 
 	cm := createConfigMap(t, cmName, ns.Name, twoProviderYAML)
-	createDiscoverySource(t, sourceName, ns.Name, cmName, mcpv1alpha1.DiscoveryModeAdditive)
+	createDiscoverySource(t, sourceName, ns.Name, cmName, mcpv1alpha2.DiscoveryModeAdditive)
 
 	// Wait for initial 2 providers
 	waitForManagedProviderCount(t, sourceName, ns.Name, 2)
 
 	// Set paused=true (retry on conflict -- controller may update status concurrently)
 	require.Eventually(t, func() bool {
-		source := &mcpv1alpha1.MCPDiscoverySource{}
+		source := &mcpv1alpha2.MCPDiscoverySource{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: sourceName, Namespace: ns.Name}, source); err != nil {
 			return false
 		}
@@ -337,7 +337,7 @@ func TestMCPDiscoverySource_PausedFreeze(t *testing.T) {
 	// Wait enough time for at least one requeue cycle, then verify
 	// No new provider-c should be created while paused
 	require.Eventually(t, func() bool {
-		providerList := &mcpv1alpha1.MCPServerList{}
+		providerList := &mcpv1alpha2.MCPServerList{}
 		if err := k8sClient.List(ctx, providerList,
 			client.InNamespace(ns.Name),
 			client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},
@@ -350,7 +350,7 @@ func TestMCPDiscoverySource_PausedFreeze(t *testing.T) {
 
 	// Unpause (retry on conflict -- controller may update status concurrently)
 	require.Eventually(t, func() bool {
-		source := &mcpv1alpha1.MCPDiscoverySource{}
+		source := &mcpv1alpha2.MCPDiscoverySource{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: sourceName, Namespace: ns.Name}, source); err != nil {
 			return false
 		}
@@ -370,7 +370,7 @@ func TestMCPDiscoverySource_Deletion(t *testing.T) {
 	cmName := "del-cm"
 
 	createConfigMap(t, cmName, ns.Name, twoProviderYAML)
-	source := createDiscoverySource(t, sourceName, ns.Name, cmName, mcpv1alpha1.DiscoveryModeAdditive)
+	source := createDiscoverySource(t, sourceName, ns.Name, cmName, mcpv1alpha2.DiscoveryModeAdditive)
 
 	// Wait for providers
 	waitForManagedProviderCount(t, sourceName, ns.Name, 2)
@@ -380,13 +380,13 @@ func TestMCPDiscoverySource_Deletion(t *testing.T) {
 
 	// Wait for source to be fully removed (finalizer cleanup)
 	require.Eventually(t, func() bool {
-		err := k8sClient.Get(ctx, types.NamespacedName{Name: sourceName, Namespace: ns.Name}, &mcpv1alpha1.MCPDiscoverySource{})
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: sourceName, Namespace: ns.Name}, &mcpv1alpha2.MCPDiscoverySource{})
 		return err != nil
 	}, 15*time.Second, 250*time.Millisecond, "source should be deleted after finalizer cleanup")
 
 	// Managed providers should be cleaned up
 	require.Eventually(t, func() bool {
-		list := &mcpv1alpha1.MCPServerList{}
+		list := &mcpv1alpha2.MCPServerList{}
 		if err := k8sClient.List(ctx, list,
 			client.InNamespace(ns.Name),
 			client.MatchingLabels{LabelDiscoveryManagedBy: sourceName},

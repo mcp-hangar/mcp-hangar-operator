@@ -9,7 +9,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
 
 func boolPtr(b bool) *bool { return &b }
@@ -47,17 +47,17 @@ func TestNetworkPolicyName(t *testing.T) {
 func TestBuildNetworkPolicy(t *testing.T) {
 	tests := []struct {
 		name     string
-		provider *mcpv1alpha1.MCPServer
+		provider *mcpv1alpha2.MCPServer
 		validate func(t *testing.T, np *networkingv1.NetworkPolicy)
 	}{
 		{
 			name: "nil_capabilities",
-			provider: &mcpv1alpha1.MCPServer{
+			provider: &mcpv1alpha2.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPServerSpec{
+				Spec: mcpv1alpha2.MCPServerSpec{
 					Capabilities: nil,
 				},
 			},
@@ -67,13 +67,13 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "nil_network",
-			provider: &mcpv1alpha1.MCPServer{
+			provider: &mcpv1alpha2.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
+				Spec: mcpv1alpha2.MCPServerSpec{
+					Capabilities: &mcpv1alpha2.MCPServerCapabilities{
 						Network: nil,
 					},
 				},
@@ -84,15 +84,15 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "empty_egress_dns_allowed",
-			provider: &mcpv1alpha1.MCPServer{
+			provider: &mcpv1alpha2.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-							Egress:     []mcpv1alpha1.EgressRuleSpec{},
+				Spec: mcpv1alpha2.MCPServerSpec{
+					Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+						Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+							Egress:     []mcpv1alpha2.EgressRuleSpec{},
 							DNSAllowed: boolPtr(true),
 						},
 					},
@@ -110,15 +110,15 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "empty_egress_dns_default_nil",
-			provider: &mcpv1alpha1.MCPServer{
+			provider: &mcpv1alpha2.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-							Egress:     []mcpv1alpha1.EgressRuleSpec{},
+				Spec: mcpv1alpha2.MCPServerSpec{
+					Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+						Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+							Egress:     []mcpv1alpha2.EgressRuleSpec{},
 							DNSAllowed: nil, // default is true
 						},
 					},
@@ -133,15 +133,15 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "cidr_rule_with_port",
-			provider: &mcpv1alpha1.MCPServer{
+			provider: &mcpv1alpha2.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-							Egress: []mcpv1alpha1.EgressRuleSpec{
+				Spec: mcpv1alpha2.MCPServerSpec{
+					Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+						Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+							Egress: []mcpv1alpha2.EgressRuleSpec{
 								{
 									Host:     "api.example.com",
 									Port:     443,
@@ -173,15 +173,15 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "host_only_rule",
-			provider: &mcpv1alpha1.MCPServer{
+			provider: &mcpv1alpha2.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-							Egress: []mcpv1alpha1.EgressRuleSpec{
+				Spec: mcpv1alpha2.MCPServerSpec{
+					Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+						Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+							Egress: []mcpv1alpha2.EgressRuleSpec{
 								{
 									Host:     "api.example.com",
 									Port:     8080,
@@ -214,15 +214,15 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "port_zero_any_port",
-			provider: &mcpv1alpha1.MCPServer{
+			provider: &mcpv1alpha2.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-							Egress: []mcpv1alpha1.EgressRuleSpec{
+				Spec: mcpv1alpha2.MCPServerSpec{
+					Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+						Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+							Egress: []mcpv1alpha2.EgressRuleSpec{
 								{
 									Host:     "internal-service",
 									Port:     0, // any port
@@ -249,15 +249,15 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "dns_disabled",
-			provider: &mcpv1alpha1.MCPServer{
+			provider: &mcpv1alpha2.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-							Egress: []mcpv1alpha1.EgressRuleSpec{
+				Spec: mcpv1alpha2.MCPServerSpec{
+					Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+						Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+							Egress: []mcpv1alpha2.EgressRuleSpec{
 								{
 									Host:     "internal",
 									Port:     443,
@@ -281,15 +281,15 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "loopback_allowed",
-			provider: &mcpv1alpha1.MCPServer{
+			provider: &mcpv1alpha2.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-							Egress:          []mcpv1alpha1.EgressRuleSpec{},
+				Spec: mcpv1alpha2.MCPServerSpec{
+					Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+						Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+							Egress:          []mcpv1alpha2.EgressRuleSpec{},
 							DNSAllowed:      boolPtr(true),
 							LoopbackAllowed: boolPtr(true),
 						},
@@ -309,15 +309,15 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "multiple_rules",
-			provider: &mcpv1alpha1.MCPServer{
+			provider: &mcpv1alpha2.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "multi-provider",
 					Namespace: "production",
 				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-							Egress: []mcpv1alpha1.EgressRuleSpec{
+				Spec: mcpv1alpha2.MCPServerSpec{
+					Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+						Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+							Egress: []mcpv1alpha2.EgressRuleSpec{
 								{
 									Host:     "api.example.com",
 									Port:     443,
@@ -355,15 +355,15 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "protocol_mapping_https_to_tcp",
-			provider: &mcpv1alpha1.MCPServer{
+			provider: &mcpv1alpha2.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-							Egress: []mcpv1alpha1.EgressRuleSpec{
+				Spec: mcpv1alpha2.MCPServerSpec{
+					Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+						Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+							Egress: []mcpv1alpha2.EgressRuleSpec{
 								{Host: "a", Port: 443, Protocol: "https", CIDR: "10.0.0.1/32"},
 							},
 							DNSAllowed: boolPtr(false),
@@ -380,15 +380,15 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "protocol_mapping_any_omits_protocol",
-			provider: &mcpv1alpha1.MCPServer{
+			provider: &mcpv1alpha2.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-							Egress: []mcpv1alpha1.EgressRuleSpec{
+				Spec: mcpv1alpha2.MCPServerSpec{
+					Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+						Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+							Egress: []mcpv1alpha2.EgressRuleSpec{
 								{Host: "a", Port: 8080, Protocol: "any", CIDR: "10.0.0.1/32"},
 							},
 							DNSAllowed: boolPtr(false),
@@ -405,15 +405,15 @@ func TestBuildNetworkPolicy(t *testing.T) {
 		},
 		{
 			name: "protocol_mapping_http_grpc_tcp",
-			provider: &mcpv1alpha1.MCPServer{
+			provider: &mcpv1alpha2.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-provider",
 					Namespace: "default",
 				},
-				Spec: mcpv1alpha1.MCPServerSpec{
-					Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-						Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-							Egress: []mcpv1alpha1.EgressRuleSpec{
+				Spec: mcpv1alpha2.MCPServerSpec{
+					Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+						Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+							Egress: []mcpv1alpha2.EgressRuleSpec{
 								{Host: "a", Port: 80, Protocol: "http", CIDR: "10.0.0.1/32"},
 								{Host: "b", Port: 50051, Protocol: "grpc", CIDR: "10.0.0.2/32"},
 								{Host: "c", Port: 9090, Protocol: "tcp", CIDR: "10.0.0.3/32"},
@@ -446,14 +446,14 @@ func TestBuildNetworkPolicy(t *testing.T) {
 // --- Labels ---
 
 func TestBuildNetworkPolicy_Labels(t *testing.T) {
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+				Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
 					DNSAllowed: boolPtr(true),
 				},
 			},
@@ -471,14 +471,14 @@ func TestBuildNetworkPolicy_Labels(t *testing.T) {
 // --- PodSelector ---
 
 func TestBuildNetworkPolicy_PodSelector(t *testing.T) {
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "math-provider",
 			Namespace: "mcp-hangar",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+				Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
 					DNSAllowed: boolPtr(true),
 				},
 			},
@@ -522,11 +522,11 @@ func assertDNSPorts(t *testing.T, ports []networkingv1.NetworkPolicyPort) {
 // egress-scoped pod reach :53 on any host -- a DNS-tunnel exfiltration channel the
 // allow-list does not constrain).
 func TestBuildNetworkPolicy_DNSScopedToKubeDNS(t *testing.T) {
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "dns-scope", Namespace: "demo"},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{DNSAllowed: boolPtr(true)},
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+				Network: &mcpv1alpha2.NetworkCapabilitiesSpec{DNSAllowed: boolPtr(true)},
 			},
 		},
 	}
@@ -554,11 +554,11 @@ func TestBuildNetworkPolicy_DNSExtraPeers(t *testing.T) {
 	require.NoError(t, SetExtraDNSCIDRs([]string{"169.254.20.10/32"}))
 	defer func() { ExtraDNSEgressPeers = nil }()
 
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "dns-extra", Namespace: "demo"},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{DNSAllowed: boolPtr(true)},
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+				Network: &mcpv1alpha2.NetworkCapabilitiesSpec{DNSAllowed: boolPtr(true)},
 			},
 		},
 	}
@@ -611,15 +611,15 @@ func TestBuildNetworkPolicy_FQDNFailClosed(t *testing.T) {
 	// A mix of an enforceable CIDR rule and an unenforceable host/FQDN-only
 	// rule. The CIDR rule must be emitted exactly; the host-only rule must be
 	// dropped (failed closed) and never open its port to all destinations.
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "mixed-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Capabilities: &mcpv1alpha1.MCPServerCapabilities{
-				Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-					Egress: []mcpv1alpha1.EgressRuleSpec{
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Capabilities: &mcpv1alpha2.MCPServerCapabilities{
+				Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+					Egress: []mcpv1alpha2.EgressRuleSpec{
 						{Host: "api.internal.example", Port: 443, Protocol: "https"}, // no CIDR -> fail closed
 						{Host: "db.example", Port: 5432, Protocol: "tcp", CIDR: "10.0.0.0/8"},
 					},

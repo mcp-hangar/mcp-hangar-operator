@@ -9,17 +9,17 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
 
 func TestBuildPodForMCPServer_BasicContainer(t *testing.T) {
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 			UID:       "test-uid-123",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
+		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
 		},
@@ -36,12 +36,12 @@ func TestBuildPodForMCPServer_BasicContainer(t *testing.T) {
 }
 
 func TestBuildPodForMCPServer_NoImage(t *testing.T) {
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
+		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode: "container",
 			// No image specified
 		},
@@ -55,20 +55,20 @@ func TestBuildPodForMCPServer_NoImage(t *testing.T) {
 }
 
 func TestBuildPodForMCPServer_WithResources(t *testing.T) {
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
+		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
-			Resources: &mcpv1alpha1.ResourceRequirements{
-				Requests: &mcpv1alpha1.ResourceList{
+			Resources: &mcpv1alpha2.ResourceRequirements{
+				Requests: &mcpv1alpha2.ResourceList{
 					CPU:    "100m",
 					Memory: "128Mi",
 				},
-				Limits: &mcpv1alpha1.ResourceList{
+				Limits: &mcpv1alpha2.ResourceList{
 					CPU:    "500m",
 					Memory: "512Mi",
 				},
@@ -88,23 +88,23 @@ func TestBuildPodForMCPServer_WithResources(t *testing.T) {
 }
 
 func TestBuildPodForMCPServer_WithEnvVars(t *testing.T) {
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
+		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
-			Env: []mcpv1alpha1.EnvVar{
+			Env: []mcpv1alpha2.EnvVar{
 				{
 					Name:  "CUSTOM_VAR",
 					Value: "custom-value",
 				},
 				{
 					Name: "SECRET_VAR",
-					ValueFrom: &mcpv1alpha1.EnvVarSource{
-						SecretKeyRef: &mcpv1alpha1.SecretKeySelector{
+					ValueFrom: &mcpv1alpha2.EnvVarSource{
+						SecretKeyRef: &mcpv1alpha2.SecretKeySelector{
 							Name: "my-secret",
 							Key:  "password",
 						},
@@ -140,20 +140,20 @@ func TestBuildPodForMCPServer_WithEnvVars(t *testing.T) {
 }
 
 func TestBuildPodForMCPServer_WithVolumes(t *testing.T) {
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
+		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
-			Volumes: []mcpv1alpha1.Volume{
+			Volumes: []mcpv1alpha2.Volume{
 				{
 					Name:      "data",
 					MountPath: "/data",
 					ReadOnly:  false,
-					PersistentVolumeClaim: &mcpv1alpha1.PVCVolumeSource{
+					PersistentVolumeClaim: &mcpv1alpha2.PVCVolumeSource{
 						ClaimName: "data-pvc",
 					},
 				},
@@ -161,7 +161,7 @@ func TestBuildPodForMCPServer_WithVolumes(t *testing.T) {
 					Name:      "config",
 					MountPath: "/config",
 					ReadOnly:  true,
-					ConfigMap: &mcpv1alpha1.ConfigMapVolumeSource{
+					ConfigMap: &mcpv1alpha2.ConfigMapVolumeSource{
 						Name: "provider-config",
 					},
 				},
@@ -205,20 +205,20 @@ func TestBuildPodForMCPServer_WithSecurityContext(t *testing.T) {
 	readOnlyRootFilesystem := true
 	allowPrivilegeEscalation := false
 
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
+		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
-			SecurityContext: &mcpv1alpha1.SecurityContext{
+			SecurityContext: &mcpv1alpha2.SecurityContext{
 				RunAsUser:                &runAsUser,
 				RunAsNonRoot:             &runAsNonRoot,
 				ReadOnlyRootFilesystem:   &readOnlyRootFilesystem,
 				AllowPrivilegeEscalation: &allowPrivilegeEscalation,
-				Capabilities: &mcpv1alpha1.Capabilities{
+				Capabilities: &mcpv1alpha2.Capabilities{
 					Drop: []string{"ALL"},
 					Add:  []string{"NET_BIND_SERVICE"},
 				},
@@ -243,12 +243,12 @@ func TestBuildPodForMCPServer_WithSecurityContext(t *testing.T) {
 }
 
 func TestBuildPodForMCPServer_WithDefaultSecurityContext(t *testing.T) {
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
+		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
 			// No security context specified
@@ -271,12 +271,12 @@ func TestBuildPodForMCPServer_WithDefaultSecurityContext(t *testing.T) {
 }
 
 func TestBuildPodForMCPServer_WithCommandAndArgs(t *testing.T) {
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
+		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode:    "container",
 			Image:   "test-image:latest",
 			Command: []string{"/app/provider"},
@@ -294,12 +294,12 @@ func TestBuildPodForMCPServer_WithCommandAndArgs(t *testing.T) {
 }
 
 func TestBuildPodForMCPServer_WithNodeSelector(t *testing.T) {
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
+		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
 			NodeSelector: map[string]string{
@@ -317,15 +317,15 @@ func TestBuildPodForMCPServer_WithNodeSelector(t *testing.T) {
 }
 
 func TestBuildPodForMCPServer_WithTolerations(t *testing.T) {
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
+		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
-			Tolerations: []mcpv1alpha1.Toleration{
+			Tolerations: []mcpv1alpha2.Toleration{
 				{
 					Key:      "key1",
 					Operator: "Equal",
@@ -347,12 +347,12 @@ func TestBuildPodForMCPServer_WithTolerations(t *testing.T) {
 }
 
 func TestBuildPodForMCPServer_WithServiceAccount(t *testing.T) {
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
+		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode:               "container",
 			Image:              "test-image:latest",
 			ServiceAccountName: "custom-sa",
@@ -366,7 +366,7 @@ func TestBuildPodForMCPServer_WithServiceAccount(t *testing.T) {
 }
 
 func TestBuildLabels(t *testing.T) {
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-provider",
 			Namespace: "default",
@@ -386,12 +386,12 @@ func TestBuildLabels(t *testing.T) {
 }
 
 func TestBuildResourceRequirements(t *testing.T) {
-	spec := &mcpv1alpha1.ResourceRequirements{
-		Requests: &mcpv1alpha1.ResourceList{
+	spec := &mcpv1alpha2.ResourceRequirements{
+		Requests: &mcpv1alpha2.ResourceList{
 			CPU:    "100m",
 			Memory: "128Mi",
 		},
-		Limits: &mcpv1alpha1.ResourceList{
+		Limits: &mcpv1alpha2.ResourceList{
 			CPU:    "1",
 			Memory: "1Gi",
 		},
@@ -407,8 +407,8 @@ func TestBuildResourceRequirements(t *testing.T) {
 
 func TestBuildResourceRequirements_Partial(t *testing.T) {
 	// Only requests, no limits
-	spec := &mcpv1alpha1.ResourceRequirements{
-		Requests: &mcpv1alpha1.ResourceList{
+	spec := &mcpv1alpha2.ResourceRequirements{
+		Requests: &mcpv1alpha2.ResourceList{
 			CPU: "100m",
 		},
 	}

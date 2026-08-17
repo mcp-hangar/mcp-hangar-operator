@@ -13,7 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/metrics"
 )
 
@@ -21,7 +21,7 @@ import (
 func waitForGroupCondition(t *testing.T, name, namespace, condType string, status metav1.ConditionStatus) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		group := &mcpv1alpha1.MCPServerGroup{}
+		group := &mcpv1alpha2.MCPServerGroup{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, group); err != nil {
 			return false
 		}
@@ -48,7 +48,7 @@ func waitForGroupCondition(t *testing.T, name, namespace, condType string, statu
 func waitForGroupMCPServerCount(t *testing.T, name, namespace string, count int32) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		group := &mcpv1alpha1.MCPServerGroup{}
+		group := &mcpv1alpha2.MCPServerGroup{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, group); err != nil {
 			return false
 		}
@@ -65,7 +65,7 @@ type groupCounts struct {
 	Cold     int32
 }
 
-func countsOf(group *mcpv1alpha1.MCPServerGroup) groupCounts {
+func countsOf(group *mcpv1alpha2.MCPServerGroup) groupCounts {
 	return groupCounts{
 		Provider: group.Status.ProviderCount,
 		Ready:    group.Status.ReadyCount,
@@ -87,13 +87,13 @@ func countsOf(group *mcpv1alpha1.MCPServerGroup) groupCounts {
 // response body, and decoding into a reused struct leaves the previous poll's
 // value sitting there. A helper that reused one object reported counters that
 // could only ever rise -- which reads exactly like a controller bug, and is not.
-func waitForGroupCounts(t *testing.T, name, namespace string, want groupCounts) *mcpv1alpha1.MCPServerGroup {
+func waitForGroupCounts(t *testing.T, name, namespace string, want groupCounts) *mcpv1alpha2.MCPServerGroup {
 	t.Helper()
-	var settled *mcpv1alpha1.MCPServerGroup
+	var settled *mcpv1alpha2.MCPServerGroup
 	var last groupCounts
-	var lastMembers []mcpv1alpha1.MCPServerMemberStatus
+	var lastMembers []mcpv1alpha2.MCPServerMemberStatus
 	require.Eventually(t, func() bool {
-		group := &mcpv1alpha1.MCPServerGroup{}
+		group := &mcpv1alpha2.MCPServerGroup{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, group); err != nil {
 			return false
 		}
@@ -120,23 +120,23 @@ func waitForGroupCounts(t *testing.T, name, namespace string, want groupCounts) 
 // be here said the opposite, and cost an investigation before the real race was
 // found; the retry below is for ordinary optimistic-lock conflicts, not for a
 // second controller fighting over the field.
-func createMCPServer(t *testing.T, name, namespace string, state mcpv1alpha1.MCPServerState, labels map[string]string) *mcpv1alpha1.MCPServer {
+func createMCPServer(t *testing.T, name, namespace string, state mcpv1alpha2.MCPServerState, labels map[string]string) *mcpv1alpha2.MCPServer {
 	t.Helper()
-	provider := &mcpv1alpha1.MCPServer{
+	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 			Labels:    labels,
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode: mcpv1alpha1.MCPServerModeRemote,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode: mcpv1alpha2.MCPServerModeRemote,
 		},
 	}
 	require.NoError(t, k8sClient.Create(ctx, provider))
 
 	// Update status subresource to set state (retry on conflict)
 	require.Eventually(t, func() bool {
-		p := &mcpv1alpha1.MCPServer{}
+		p := &mcpv1alpha2.MCPServer{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, p); err != nil {
 			return false
 		}
@@ -179,21 +179,21 @@ func TestMCPServerGroup_CountersReturnToZero(t *testing.T) {
 	defer k8sClient.Delete(ctx, ns)
 
 	labels := map[string]string{"tier": "zeroing"}
-	require.NoError(t, k8sClient.Create(ctx, &mcpv1alpha1.MCPServerGroup{
+	require.NoError(t, k8sClient.Create(ctx, &mcpv1alpha2.MCPServerGroup{
 		ObjectMeta: metav1.ObjectMeta{Name: "zero-group", Namespace: ns.Name},
-		Spec:       mcpv1alpha1.MCPServerGroupSpec{Selector: &metav1.LabelSelector{MatchLabels: labels}},
+		Spec:       mcpv1alpha2.MCPServerGroupSpec{Selector: &metav1.LabelSelector{MatchLabels: labels}},
 	}))
 
 	// Cold first, so the counter is genuinely non-zero before we ask it to fall.
-	member := createMCPServer(t, "settles", ns.Name, mcpv1alpha1.MCPServerStateCold, labels)
+	member := createMCPServer(t, "settles", ns.Name, mcpv1alpha2.MCPServerStateCold, labels)
 	waitForGroupCounts(t, "zero-group", ns.Name, groupCounts{Provider: 1, Cold: 1})
 
 	require.Eventually(t, func() bool {
-		p := &mcpv1alpha1.MCPServer{}
+		p := &mcpv1alpha2.MCPServer{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: member.Name, Namespace: ns.Name}, p); err != nil {
 			return false
 		}
-		p.Status.State = mcpv1alpha1.MCPServerStateReady
+		p.Status.State = mcpv1alpha2.MCPServerStateReady
 		return k8sClient.Status().Update(ctx, p) == nil
 	}, 10*time.Second, 100*time.Millisecond, "failed to move the member to Ready")
 
@@ -206,12 +206,12 @@ func TestMCPServerGroup_LabelSelection(t *testing.T) {
 	defer k8sClient.Delete(ctx, ns)
 
 	// Create group selecting app=web
-	group := &mcpv1alpha1.MCPServerGroup{
+	group := &mcpv1alpha2.MCPServerGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "label-group",
 			Namespace: ns.Name,
 		},
-		Spec: mcpv1alpha1.MCPServerGroupSpec{
+		Spec: mcpv1alpha2.MCPServerGroupSpec{
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{"app": "web"},
 			},
@@ -220,10 +220,10 @@ func TestMCPServerGroup_LabelSelection(t *testing.T) {
 	require.NoError(t, k8sClient.Create(ctx, group))
 
 	webLabels := map[string]string{"app": "web"}
-	createMCPServer(t, "web-ready", ns.Name, mcpv1alpha1.MCPServerStateReady, webLabels)
-	createMCPServer(t, "web-degraded", ns.Name, mcpv1alpha1.MCPServerStateDegraded, webLabels)
+	createMCPServer(t, "web-ready", ns.Name, mcpv1alpha2.MCPServerStateReady, webLabels)
+	createMCPServer(t, "web-degraded", ns.Name, mcpv1alpha2.MCPServerStateDegraded, webLabels)
 	// This one should NOT be selected
-	createMCPServer(t, "api-ready", ns.Name, mcpv1alpha1.MCPServerStateReady, map[string]string{"app": "api"})
+	createMCPServer(t, "api-ready", ns.Name, mcpv1alpha2.MCPServerStateReady, map[string]string{"app": "api"})
 
 	// Wait for group to reconcile with 2 providers
 	// Same latent race as the aggregation test: the selector test asserts
@@ -244,12 +244,12 @@ func TestMCPServerGroup_StatusAggregation(t *testing.T) {
 
 	groupLabels := map[string]string{"tier": "backend"}
 
-	group := &mcpv1alpha1.MCPServerGroup{
+	group := &mcpv1alpha2.MCPServerGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "agg-group",
 			Namespace: ns.Name,
 		},
-		Spec: mcpv1alpha1.MCPServerGroupSpec{
+		Spec: mcpv1alpha2.MCPServerGroupSpec{
 			Selector: &metav1.LabelSelector{
 				MatchLabels: groupLabels,
 			},
@@ -258,11 +258,11 @@ func TestMCPServerGroup_StatusAggregation(t *testing.T) {
 	require.NoError(t, k8sClient.Create(ctx, group))
 
 	// Create providers in various states
-	createMCPServer(t, "ready-1", ns.Name, mcpv1alpha1.MCPServerStateReady, groupLabels)
-	createMCPServer(t, "ready-2", ns.Name, mcpv1alpha1.MCPServerStateReady, groupLabels)
-	createMCPServer(t, "degraded-1", ns.Name, mcpv1alpha1.MCPServerStateDegraded, groupLabels)
-	createMCPServer(t, "dead-1", ns.Name, mcpv1alpha1.MCPServerStateDead, groupLabels)
-	createMCPServer(t, "cold-1", ns.Name, mcpv1alpha1.MCPServerStateCold, groupLabels)
+	createMCPServer(t, "ready-1", ns.Name, mcpv1alpha2.MCPServerStateReady, groupLabels)
+	createMCPServer(t, "ready-2", ns.Name, mcpv1alpha2.MCPServerStateReady, groupLabels)
+	createMCPServer(t, "degraded-1", ns.Name, mcpv1alpha2.MCPServerStateDegraded, groupLabels)
+	createMCPServer(t, "dead-1", ns.Name, mcpv1alpha2.MCPServerStateDead, groupLabels)
+	createMCPServer(t, "cold-1", ns.Name, mcpv1alpha2.MCPServerStateCold, groupLabels)
 
 	result := waitForGroupCounts(t, "agg-group", ns.Name, groupCounts{
 		Provider: 5, Ready: 2, Degraded: 1, Dead: 1, Cold: 1,
@@ -278,16 +278,16 @@ func TestMCPServerGroup_HealthPolicyThreshold(t *testing.T) {
 	groupLabels := map[string]string{"pool": "threshold"}
 	minPct := int32(60)
 
-	group := &mcpv1alpha1.MCPServerGroup{
+	group := &mcpv1alpha2.MCPServerGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "threshold-group",
 			Namespace: ns.Name,
 		},
-		Spec: mcpv1alpha1.MCPServerGroupSpec{
+		Spec: mcpv1alpha2.MCPServerGroupSpec{
 			Selector: &metav1.LabelSelector{
 				MatchLabels: groupLabels,
 			},
-			HealthPolicy: &mcpv1alpha1.HealthPolicy{
+			HealthPolicy: &mcpv1alpha2.HealthPolicy{
 				MinHealthyPercentage: minPct,
 			},
 		},
@@ -295,11 +295,11 @@ func TestMCPServerGroup_HealthPolicyThreshold(t *testing.T) {
 	require.NoError(t, k8sClient.Create(ctx, group))
 
 	// 3 ready + 2 dead = 60% healthy (meets threshold exactly)
-	createMCPServer(t, "h-ready-1", ns.Name, mcpv1alpha1.MCPServerStateReady, groupLabels)
-	createMCPServer(t, "h-ready-2", ns.Name, mcpv1alpha1.MCPServerStateReady, groupLabels)
-	createMCPServer(t, "h-ready-3", ns.Name, mcpv1alpha1.MCPServerStateReady, groupLabels)
-	createMCPServer(t, "h-dead-1", ns.Name, mcpv1alpha1.MCPServerStateDead, groupLabels)
-	createMCPServer(t, "h-dead-2", ns.Name, mcpv1alpha1.MCPServerStateDead, groupLabels)
+	createMCPServer(t, "h-ready-1", ns.Name, mcpv1alpha2.MCPServerStateReady, groupLabels)
+	createMCPServer(t, "h-ready-2", ns.Name, mcpv1alpha2.MCPServerStateReady, groupLabels)
+	createMCPServer(t, "h-ready-3", ns.Name, mcpv1alpha2.MCPServerStateReady, groupLabels)
+	createMCPServer(t, "h-dead-1", ns.Name, mcpv1alpha2.MCPServerStateDead, groupLabels)
+	createMCPServer(t, "h-dead-2", ns.Name, mcpv1alpha2.MCPServerStateDead, groupLabels)
 
 	// Threshold met at exactly 60%
 	waitForGroupCondition(t, "threshold-group", ns.Name, ConditionReady, metav1.ConditionTrue)
@@ -313,12 +313,12 @@ func TestMCPServerGroup_ZeroMembers(t *testing.T) {
 	ns := createNamespace(t, "test-group-zero-members")
 	defer k8sClient.Delete(ctx, ns)
 
-	group := &mcpv1alpha1.MCPServerGroup{
+	group := &mcpv1alpha2.MCPServerGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "empty-group",
 			Namespace: ns.Name,
 		},
-		Spec: mcpv1alpha1.MCPServerGroupSpec{
+		Spec: mcpv1alpha2.MCPServerGroupSpec{
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{"nonexistent": "label"},
 			},
@@ -332,7 +332,7 @@ func TestMCPServerGroup_ZeroMembers(t *testing.T) {
 	waitForGroupCondition(t, "empty-group", ns.Name, ConditionDegraded, metav1.ConditionFalse)
 
 	// Verify reason
-	result := &mcpv1alpha1.MCPServerGroup{}
+	result := &mcpv1alpha2.MCPServerGroup{}
 	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: "empty-group", Namespace: ns.Name}, result))
 	for _, c := range result.Status.Conditions {
 		if c.Type == ConditionReady {
@@ -348,16 +348,16 @@ func TestMCPServerGroup_CoexistingReadyDegraded(t *testing.T) {
 
 	groupLabels := map[string]string{"pool": "coexist"}
 
-	group := &mcpv1alpha1.MCPServerGroup{
+	group := &mcpv1alpha2.MCPServerGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "coexist-group",
 			Namespace: ns.Name,
 		},
-		Spec: mcpv1alpha1.MCPServerGroupSpec{
+		Spec: mcpv1alpha2.MCPServerGroupSpec{
 			Selector: &metav1.LabelSelector{
 				MatchLabels: groupLabels,
 			},
-			HealthPolicy: &mcpv1alpha1.HealthPolicy{
+			HealthPolicy: &mcpv1alpha2.HealthPolicy{
 				MinHealthyPercentage: 30,
 			},
 		},
@@ -365,11 +365,11 @@ func TestMCPServerGroup_CoexistingReadyDegraded(t *testing.T) {
 	require.NoError(t, k8sClient.Create(ctx, group))
 
 	// 2 ready + 3 degraded = 40% healthy (above 30% threshold)
-	createMCPServer(t, "co-ready-1", ns.Name, mcpv1alpha1.MCPServerStateReady, groupLabels)
-	createMCPServer(t, "co-ready-2", ns.Name, mcpv1alpha1.MCPServerStateReady, groupLabels)
-	createMCPServer(t, "co-deg-1", ns.Name, mcpv1alpha1.MCPServerStateDegraded, groupLabels)
-	createMCPServer(t, "co-deg-2", ns.Name, mcpv1alpha1.MCPServerStateDegraded, groupLabels)
-	createMCPServer(t, "co-deg-3", ns.Name, mcpv1alpha1.MCPServerStateDegraded, groupLabels)
+	createMCPServer(t, "co-ready-1", ns.Name, mcpv1alpha2.MCPServerStateReady, groupLabels)
+	createMCPServer(t, "co-ready-2", ns.Name, mcpv1alpha2.MCPServerStateReady, groupLabels)
+	createMCPServer(t, "co-deg-1", ns.Name, mcpv1alpha2.MCPServerStateDegraded, groupLabels)
+	createMCPServer(t, "co-deg-2", ns.Name, mcpv1alpha2.MCPServerStateDegraded, groupLabels)
+	createMCPServer(t, "co-deg-3", ns.Name, mcpv1alpha2.MCPServerStateDegraded, groupLabels)
 
 	// Both Ready=True and Degraded=True simultaneously
 	waitForGroupCondition(t, "coexist-group", ns.Name, ConditionReady, metav1.ConditionTrue)
@@ -382,12 +382,12 @@ func TestMCPServerGroup_Deletion(t *testing.T) {
 
 	groupLabels := map[string]string{"pool": "deleteme"}
 
-	group := &mcpv1alpha1.MCPServerGroup{
+	group := &mcpv1alpha2.MCPServerGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "del-group",
 			Namespace: ns.Name,
 		},
-		Spec: mcpv1alpha1.MCPServerGroupSpec{
+		Spec: mcpv1alpha2.MCPServerGroupSpec{
 			Selector: &metav1.LabelSelector{
 				MatchLabels: groupLabels,
 			},
@@ -395,8 +395,8 @@ func TestMCPServerGroup_Deletion(t *testing.T) {
 	}
 	require.NoError(t, k8sClient.Create(ctx, group))
 
-	createMCPServer(t, "del-ready-1", ns.Name, mcpv1alpha1.MCPServerStateReady, groupLabels)
-	createMCPServer(t, "del-ready-2", ns.Name, mcpv1alpha1.MCPServerStateReady, groupLabels)
+	createMCPServer(t, "del-ready-1", ns.Name, mcpv1alpha2.MCPServerStateReady, groupLabels)
+	createMCPServer(t, "del-ready-2", ns.Name, mcpv1alpha2.MCPServerStateReady, groupLabels)
 
 	// Wait for group to reconcile
 	waitForGroupMCPServerCount(t, "del-group", ns.Name, 2)
@@ -406,14 +406,14 @@ func TestMCPServerGroup_Deletion(t *testing.T) {
 
 	// Wait for group to be fully removed (finalizer cleaned up)
 	require.Eventually(t, func() bool {
-		err := k8sClient.Get(ctx, types.NamespacedName{Name: "del-group", Namespace: ns.Name}, &mcpv1alpha1.MCPServerGroup{})
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: "del-group", Namespace: ns.Name}, &mcpv1alpha2.MCPServerGroup{})
 		return err != nil // NotFound expected
 	}, 10*time.Second, 250*time.Millisecond, "group should be deleted")
 
 	// Providers should still exist (group does not own providers)
-	provider1 := &mcpv1alpha1.MCPServer{}
+	provider1 := &mcpv1alpha2.MCPServer{}
 	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: "del-ready-1", Namespace: ns.Name}, provider1))
-	provider2 := &mcpv1alpha1.MCPServer{}
+	provider2 := &mcpv1alpha2.MCPServer{}
 	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: "del-ready-2", Namespace: ns.Name}, provider2))
 }
 
@@ -446,12 +446,12 @@ func TestMCPServerGroup_StatusWriteStormBounded(t *testing.T) {
 	groupName := "storm-group"
 	groupLabels := map[string]string{"pool": "storm"}
 
-	group := &mcpv1alpha1.MCPServerGroup{
+	group := &mcpv1alpha2.MCPServerGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      groupName,
 			Namespace: ns.Name,
 		},
-		Spec: mcpv1alpha1.MCPServerGroupSpec{
+		Spec: mcpv1alpha2.MCPServerGroupSpec{
 			Selector: &metav1.LabelSelector{
 				MatchLabels: groupLabels,
 			},
@@ -464,7 +464,7 @@ func TestMCPServerGroup_StatusWriteStormBounded(t *testing.T) {
 	// update inside createMCPServer) maps to a Group reconcile via
 	// findGroupsForMCPServer.
 	for i := 0; i < memberCount; i++ {
-		createMCPServer(t, fmt.Sprintf("storm-member-%d", i), ns.Name, mcpv1alpha1.MCPServerStateReady, groupLabels)
+		createMCPServer(t, fmt.Sprintf("storm-member-%d", i), ns.Name, mcpv1alpha2.MCPServerStateReady, groupLabels)
 	}
 
 	waitForGroupMCPServerCount(t, groupName, ns.Name, memberCount)

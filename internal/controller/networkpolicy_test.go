@@ -15,7 +15,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/networkpolicy"
 )
 
@@ -23,12 +23,12 @@ import (
 func newTestReconciler(objs ...runtime.Object) *MCPServerReconciler {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = mcpv1alpha1.AddToScheme(scheme)
+	_ = mcpv1alpha2.AddToScheme(scheme)
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithRuntimeObjects(objs...).
-		WithStatusSubresource(&mcpv1alpha1.MCPServer{}).
+		WithStatusSubresource(&mcpv1alpha2.MCPServer{}).
 		Build()
 
 	return &MCPServerReconciler{
@@ -39,15 +39,15 @@ func newTestReconciler(objs ...runtime.Object) *MCPServerReconciler {
 }
 
 // newTestProvider creates an MCPServer test fixture with optional capabilities.
-func newTestProvider(name, namespace string, caps *mcpv1alpha1.MCPServerCapabilities) *mcpv1alpha1.MCPServer {
-	return &mcpv1alpha1.MCPServer{
+func newTestProvider(name, namespace string, caps *mcpv1alpha2.MCPServerCapabilities) *mcpv1alpha2.MCPServer {
+	return &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 			UID:       "test-uid-123",
 		},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Mode:         mcpv1alpha1.MCPServerModeContainer,
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:         mcpv1alpha2.MCPServerModeContainer,
 			Image:        "test:latest",
 			Capabilities: caps,
 		},
@@ -60,9 +60,9 @@ func boolPtr(b bool) *bool {
 }
 
 func TestReconcileNetworkPolicy_CreatesPolicy(t *testing.T) {
-	provider := newTestProvider("test-provider", "default", &mcpv1alpha1.MCPServerCapabilities{
-		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-			Egress: []mcpv1alpha1.EgressRuleSpec{
+	provider := newTestProvider("test-provider", "default", &mcpv1alpha2.MCPServerCapabilities{
+		Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+			Egress: []mcpv1alpha2.EgressRuleSpec{
 				{
 					Host:     "api.example.com",
 					Port:     443,
@@ -106,7 +106,7 @@ func TestReconcileNetworkPolicy_CreatesPolicy(t *testing.T) {
 	assert.Contains(t, np.Spec.PolicyTypes, networkingv1.PolicyTypeEgress)
 
 	// Verify condition set on provider status
-	cond := provider.Status.GetCondition(ConditionNetworkPolicyApplied)
+	cond := getCondition(provider.Status.Conditions, ConditionNetworkPolicyApplied)
 	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionTrue, cond.Status)
 	assert.Equal(t, "PolicyApplied", cond.Reason)
@@ -131,7 +131,7 @@ func TestReconcileNetworkPolicy_NoCapabilities_NoPolicy(t *testing.T) {
 	assert.True(t, err != nil, "NetworkPolicy should not exist")
 
 	// Verify condition is False with NoPolicyNeeded
-	cond := provider.Status.GetCondition(ConditionNetworkPolicyApplied)
+	cond := getCondition(provider.Status.Conditions, ConditionNetworkPolicyApplied)
 	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
 	assert.Equal(t, "NoPolicyNeeded", cond.Reason)
@@ -139,9 +139,9 @@ func TestReconcileNetworkPolicy_NoCapabilities_NoPolicy(t *testing.T) {
 
 func TestReconcileNetworkPolicy_UpdatesPolicy(t *testing.T) {
 	// Start with egress to port 443
-	provider := newTestProvider("update-provider", "default", &mcpv1alpha1.MCPServerCapabilities{
-		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-			Egress: []mcpv1alpha1.EgressRuleSpec{
+	provider := newTestProvider("update-provider", "default", &mcpv1alpha2.MCPServerCapabilities{
+		Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+			Egress: []mcpv1alpha2.EgressRuleSpec{
 				{
 					Host:     "api.example.com",
 					Port:     443,
@@ -171,7 +171,7 @@ func TestReconcileNetworkPolicy_UpdatesPolicy(t *testing.T) {
 
 	// Update capabilities to add port 5432
 	provider.Spec.Capabilities.Network.Egress = append(provider.Spec.Capabilities.Network.Egress,
-		mcpv1alpha1.EgressRuleSpec{
+		mcpv1alpha2.EgressRuleSpec{
 			Host:     "db.internal",
 			Port:     5432,
 			Protocol: "tcp",
@@ -191,9 +191,9 @@ func TestReconcileNetworkPolicy_UpdatesPolicy(t *testing.T) {
 
 func TestReconcileNetworkPolicy_DeletesPolicyWhenCapabilitiesRemoved(t *testing.T) {
 	// Start with capabilities
-	provider := newTestProvider("delete-provider", "default", &mcpv1alpha1.MCPServerCapabilities{
-		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-			Egress: []mcpv1alpha1.EgressRuleSpec{
+	provider := newTestProvider("delete-provider", "default", &mcpv1alpha2.MCPServerCapabilities{
+		Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+			Egress: []mcpv1alpha2.EgressRuleSpec{
 				{
 					Host:     "api.example.com",
 					Port:     443,
@@ -232,16 +232,16 @@ func TestReconcileNetworkPolicy_DeletesPolicyWhenCapabilitiesRemoved(t *testing.
 	assert.True(t, err != nil, "NetworkPolicy should have been deleted")
 
 	// Verify condition is False
-	cond := provider.Status.GetCondition(ConditionNetworkPolicyApplied)
+	cond := getCondition(provider.Status.Conditions, ConditionNetworkPolicyApplied)
 	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
 	assert.Equal(t, "NoPolicyNeeded", cond.Reason)
 }
 
 func TestReconcileNetworkPolicy_OwnerReference(t *testing.T) {
-	provider := newTestProvider("owner-provider", "default", &mcpv1alpha1.MCPServerCapabilities{
-		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-			Egress: []mcpv1alpha1.EgressRuleSpec{
+	provider := newTestProvider("owner-provider", "default", &mcpv1alpha2.MCPServerCapabilities{
+		Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+			Egress: []mcpv1alpha2.EgressRuleSpec{
 				{
 					Host:     "api.example.com",
 					Port:     443,
@@ -278,9 +278,9 @@ func TestReconcileNetworkPolicy_OwnerReference(t *testing.T) {
 
 func TestReconcileNetworkPolicy_DefaultDenyDNSOnly(t *testing.T) {
 	// Empty egress list -- should produce only DNS egress rule (default-deny baseline)
-	provider := newTestProvider("dns-only-provider", "default", &mcpv1alpha1.MCPServerCapabilities{
-		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-			Egress: []mcpv1alpha1.EgressRuleSpec{},
+	provider := newTestProvider("dns-only-provider", "default", &mcpv1alpha2.MCPServerCapabilities{
+		Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+			Egress: []mcpv1alpha2.EgressRuleSpec{},
 		},
 	})
 
@@ -310,7 +310,7 @@ func TestReconcileNetworkPolicy_DefaultDenyDNSOnly(t *testing.T) {
 	assert.Contains(t, np.Spec.PolicyTypes, networkingv1.PolicyTypeEgress)
 
 	// Verify condition
-	cond := provider.Status.GetCondition(ConditionNetworkPolicyApplied)
+	cond := getCondition(provider.Status.Conditions, ConditionNetworkPolicyApplied)
 	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionTrue, cond.Status)
 }
@@ -327,10 +327,10 @@ func governedNamespace(name string) *corev1.Namespace {
 
 // egressCaps returns a minimal capability set that would otherwise produce an
 // egress allow-policy.
-func egressCaps() *mcpv1alpha1.MCPServerCapabilities {
-	return &mcpv1alpha1.MCPServerCapabilities{
-		Network: &mcpv1alpha1.NetworkCapabilitiesSpec{
-			Egress: []mcpv1alpha1.EgressRuleSpec{
+func egressCaps() *mcpv1alpha2.MCPServerCapabilities {
+	return &mcpv1alpha2.MCPServerCapabilities{
+		Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+			Egress: []mcpv1alpha2.EgressRuleSpec{
 				{Host: "api.example.com", Port: 443, Protocol: "https", CIDR: "10.0.0.0/8"},
 			},
 		},
@@ -357,7 +357,7 @@ func TestReconcileNetworkPolicy_GovernedUnpinned_WithholdsEgress(t *testing.T) {
 	err = r.Get(ctx, npKey, np)
 	assert.True(t, err != nil, "egress allow-policy should be withheld for an unpinned image")
 
-	cond := provider.Status.GetCondition(ConditionNetworkPolicyApplied)
+	cond := getCondition(provider.Status.Conditions, ConditionNetworkPolicyApplied)
 	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
 	assert.Equal(t, "EgressWithheldUnpinnedImage", cond.Reason)
@@ -380,7 +380,7 @@ func TestReconcileNetworkPolicy_GovernedPinned_OpensEgress(t *testing.T) {
 	}
 	require.NoError(t, r.Get(ctx, npKey, np), "egress allow-policy should be created for a pinned image")
 
-	cond := provider.Status.GetCondition(ConditionNetworkPolicyApplied)
+	cond := getCondition(provider.Status.Conditions, ConditionNetworkPolicyApplied)
 	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionTrue, cond.Status)
 }

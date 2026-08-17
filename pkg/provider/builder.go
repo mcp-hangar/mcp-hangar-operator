@@ -9,7 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
 
 const (
@@ -54,7 +54,7 @@ const (
 )
 
 // BuildPodForMCPServer creates a Pod spec from MCPServer
-func BuildPodForMCPServer(provider *mcpv1alpha1.MCPServer) (*corev1.Pod, error) {
+func BuildPodForMCPServer(provider *mcpv1alpha2.MCPServer) (*corev1.Pod, error) {
 	if provider.Spec.Image == "" {
 		return nil, fmt.Errorf("container mode requires image")
 	}
@@ -110,7 +110,7 @@ func BuildPodForMCPServer(provider *mcpv1alpha1.MCPServer) (*corev1.Pod, error) 
 }
 
 // buildContainer creates the main provider container
-func buildContainer(provider *mcpv1alpha1.MCPServer) corev1.Container {
+func buildContainer(provider *mcpv1alpha2.MCPServer) corev1.Container {
 	container := corev1.Container{
 		Name:            ContainerProvider,
 		Image:           provider.Spec.Image,
@@ -162,12 +162,12 @@ func buildContainer(provider *mcpv1alpha1.MCPServer) corev1.Container {
 // discovery TTL -- how long an entry survives without being seen again -- and
 // the spec's `idleTTL` means how long an idle server stays running. Mapping one
 // onto the other because the names rhyme would quietly deregister busy servers.
-func buildAnnotations(provider *mcpv1alpha1.MCPServer) map[string]string {
+func buildAnnotations(provider *mcpv1alpha2.MCPServer) map[string]string {
 	annotations := map[string]string{
 		AnnotationGeneration: strconv.FormatInt(provider.Generation, 10),
 	}
 
-	if provider.Spec.Mode == mcpv1alpha1.MCPServerModeContainer {
+	if provider.Spec.Mode == mcpv1alpha2.MCPServerModeContainer {
 		annotations[AnnotationDiscoveryEnabled] = "true"
 		annotations[AnnotationDiscoveryName] = provider.Name
 		annotations[AnnotationDiscoveryMode] = DiscoveryModeHTTP
@@ -178,7 +178,7 @@ func buildAnnotations(provider *mcpv1alpha1.MCPServer) map[string]string {
 }
 
 // buildLabels creates standard labels for provider resources
-func buildLabels(provider *mcpv1alpha1.MCPServer) map[string]string {
+func buildLabels(provider *mcpv1alpha2.MCPServer) map[string]string {
 	labels := map[string]string{
 		LabelManagedBy: DefaultManagerName,
 		LabelName:      provider.Name,
@@ -197,7 +197,7 @@ func buildLabels(provider *mcpv1alpha1.MCPServer) map[string]string {
 }
 
 // buildEnvVars creates environment variables from provider spec
-func buildEnvVars(provider *mcpv1alpha1.MCPServer) []corev1.EnvVar {
+func buildEnvVars(provider *mcpv1alpha2.MCPServer) []corev1.EnvVar {
 	envVars := []corev1.EnvVar{
 		{
 			Name:  "MCP_PROVIDER_NAME",
@@ -244,7 +244,7 @@ func buildEnvVars(provider *mcpv1alpha1.MCPServer) []corev1.EnvVar {
 }
 
 // buildEnvVarSource converts our EnvVarSource to k8s EnvVarSource
-func buildEnvVarSource(source *mcpv1alpha1.EnvVarSource) *corev1.EnvVarSource {
+func buildEnvVarSource(source *mcpv1alpha2.EnvVarSource) *corev1.EnvVarSource {
 	if source == nil {
 		return nil
 	}
@@ -275,7 +275,7 @@ func buildEnvVarSource(source *mcpv1alpha1.EnvVarSource) *corev1.EnvVarSource {
 }
 
 // buildResourceRequirements converts our ResourceRequirements to k8s ResourceRequirements
-func buildResourceRequirements(res *mcpv1alpha1.ResourceRequirements) corev1.ResourceRequirements {
+func buildResourceRequirements(res *mcpv1alpha2.ResourceRequirements) corev1.ResourceRequirements {
 	requirements := corev1.ResourceRequirements{}
 
 	if res.Requests != nil {
@@ -302,7 +302,7 @@ func buildResourceRequirements(res *mcpv1alpha1.ResourceRequirements) corev1.Res
 }
 
 // buildVolumes creates volume mounts and volumes from provider spec
-func buildVolumes(provider *mcpv1alpha1.MCPServer) ([]corev1.VolumeMount, []corev1.Volume) {
+func buildVolumes(provider *mcpv1alpha2.MCPServer) ([]corev1.VolumeMount, []corev1.Volume) {
 	var mounts []corev1.VolumeMount
 	var volumes []corev1.Volume
 
@@ -362,7 +362,7 @@ func buildVolumes(provider *mcpv1alpha1.MCPServer) ([]corev1.VolumeMount, []core
 }
 
 // buildKeyToPath converts our KeyToPath to k8s KeyToPath
-func buildKeyToPath(items []mcpv1alpha1.KeyToPath) []corev1.KeyToPath {
+func buildKeyToPath(items []mcpv1alpha2.KeyToPath) []corev1.KeyToPath {
 	if len(items) == 0 {
 		return nil
 	}
@@ -378,7 +378,7 @@ func buildKeyToPath(items []mcpv1alpha1.KeyToPath) []corev1.KeyToPath {
 }
 
 // buildTolerations converts our Tolerations to k8s Tolerations
-func buildTolerations(tolerations []mcpv1alpha1.Toleration) []corev1.Toleration {
+func buildTolerations(tolerations []mcpv1alpha2.Toleration) []corev1.Toleration {
 	result := make([]corev1.Toleration, len(tolerations))
 	for i, t := range tolerations {
 		result[i] = corev1.Toleration{
@@ -393,7 +393,7 @@ func buildTolerations(tolerations []mcpv1alpha1.Toleration) []corev1.Toleration 
 }
 
 // buildPodSecurityContext creates pod-level security context
-func buildPodSecurityContext(sc *mcpv1alpha1.SecurityContext) *corev1.PodSecurityContext {
+func buildPodSecurityContext(sc *mcpv1alpha2.SecurityContext) *corev1.PodSecurityContext {
 	ctx := &corev1.PodSecurityContext{}
 
 	if sc.RunAsNonRoot != nil {
@@ -418,7 +418,7 @@ func buildPodSecurityContext(sc *mcpv1alpha1.SecurityContext) *corev1.PodSecurit
 }
 
 // buildContainerSecurityContext creates container-level security context
-func buildContainerSecurityContext(sc *mcpv1alpha1.SecurityContext) *corev1.SecurityContext {
+func buildContainerSecurityContext(sc *mcpv1alpha2.SecurityContext) *corev1.SecurityContext {
 	ctx := &corev1.SecurityContext{}
 
 	if sc.RunAsNonRoot != nil {
@@ -489,16 +489,20 @@ func defaultContainerSecurityContext() *corev1.SecurityContext {
 	}
 }
 
-// getTerminationGracePeriod returns termination grace period in seconds
-func getTerminationGracePeriod(provider *mcpv1alpha1.MCPServer) *int64 {
-	// Default 30 seconds
+// getTerminationGracePeriod returns termination grace period in seconds.
+// The v1alpha1 builder claimed to parse the string field and always returned
+// the default; v1alpha2's *metav1.Duration is already parsed, so the spec
+// value is honoured now (non-positive values fall back to the default).
+func getTerminationGracePeriod(provider *mcpv1alpha2.MCPServer) *int64 {
 	defaultGrace := int64(30)
 
-	if provider.Spec.ShutdownGracePeriod == "" {
+	if provider.Spec.ShutdownGracePeriod == nil {
 		return &defaultGrace
 	}
 
-	// Parse duration (simplified - just handle seconds for now)
-	// Full implementation would parse "30s", "1m", etc.
-	return &defaultGrace
+	secs := int64(provider.Spec.ShutdownGracePeriod.Duration.Seconds())
+	if secs <= 0 {
+		return &defaultGrace
+	}
+	return &secs
 }
