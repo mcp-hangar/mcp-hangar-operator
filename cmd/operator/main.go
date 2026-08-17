@@ -202,21 +202,15 @@ func main() {
 	// conversion webhook went with it -- with a single version there is
 	// nothing to convert.
 	if enableWebhooks {
-		type webhookReg struct {
-			name      string
-			obj       runtime.Object
-			validator admission.CustomValidator
-		}
-		regs := []webhookReg{
-			{"MCPServer/v1alpha2", &mcpv1alpha2.MCPServer{}, &webhook.MCPServerV1alpha2Validator{}},
-			{"MCPServerGroup/v1alpha2", &mcpv1alpha2.MCPServerGroup{}, &webhook.MCPServerGroupV1alpha2Validator{}},
-			{"MCPDiscoverySource/v1alpha2", &mcpv1alpha2.MCPDiscoverySource{}, &webhook.MCPDiscoverySourceV1alpha2Validator{}},
-		}
+		// The list lives in internal/webhook so the registration-parity test
+		// can assert it covers every served CRD version (#137's lesson: a
+		// guard on an unregistered path is a guard that does not run).
+		regs := webhook.Registrations()
 		for _, r := range regs {
-			if err := ctrl.NewWebhookManagedBy(mgr, r.obj).
-				WithValidator(r.validator).
+			if err := ctrl.NewWebhookManagedBy(mgr, r.Object).
+				WithValidator(r.Validator).
 				Complete(); err != nil {
-				setupLog.Error(err, "unable to create webhook", "webhook", r.name)
+				setupLog.Error(err, "unable to create webhook", "webhook", r.Name)
 				os.Exit(1)
 			}
 		}
