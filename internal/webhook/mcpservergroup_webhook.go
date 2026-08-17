@@ -7,7 +7,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
 
@@ -28,36 +27,6 @@ func validateGroupSelector(hasSelector bool) error {
 		return fmt.Errorf("MCPServerGroup validation failed: spec.selector is required")
 	}
 	return nil
-}
-
-// +kubebuilder:webhook:path=/validate-mcp-hangar-io-v1alpha1-mcpservergroup,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcp-hangar.io,resources=mcpservergroups,verbs=create;update,versions=v1alpha1,name=vmcpservergroup-v1alpha1.kb.io,admissionReviewVersions=v1
-
-// MCPServerGroupValidator validates v1alpha1 MCPServerGroup resources.
-type MCPServerGroupValidator struct{}
-
-var _ admission.CustomValidator = &MCPServerGroupValidator{}
-
-// ValidateCreate validates a v1alpha1 MCPServerGroup on creation.
-func (v *MCPServerGroupValidator) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
-	g, ok := obj.(*mcpv1alpha1.MCPServerGroup)
-	if !ok || g == nil {
-		return nil, fmt.Errorf("expected v1alpha1 MCPServerGroup, got %T", obj)
-	}
-	return nil, validateGroupSelector(g.Spec.Selector != nil)
-}
-
-// ValidateUpdate validates a v1alpha1 MCPServerGroup on update.
-func (v *MCPServerGroupValidator) ValidateUpdate(_ context.Context, _ runtime.Object, newObj runtime.Object) (admission.Warnings, error) {
-	g, ok := newObj.(*mcpv1alpha1.MCPServerGroup)
-	if !ok || g == nil {
-		return nil, fmt.Errorf("expected v1alpha1 MCPServerGroup, got %T", newObj)
-	}
-	return nil, validateGroupSelector(g.Spec.Selector != nil)
-}
-
-// ValidateDelete is a no-op; deletion is always allowed.
-func (v *MCPServerGroupValidator) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
-	return nil, nil
 }
 
 // +kubebuilder:webhook:path=/validate-mcp-hangar-io-v1alpha2-mcpservergroup,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcp-hangar.io,resources=mcpservergroups,verbs=create;update,versions=v1alpha2,name=vmcpservergroup-v1alpha2.kb.io,admissionReviewVersions=v1

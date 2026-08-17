@@ -3,6 +3,7 @@ package webhook
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -110,10 +111,36 @@ func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 		warnings = append(warnings, capWarnings...)
 	}
 
+	// Wildcard egress needs the explicit opt-in annotation. Ported from the
+	// v1alpha1 validator when that one was deleted (#125) -- this check lived
+	// only there, so without the port the guard would have died with the API
+	// version while looking covered.
+	if hasWildcardEgressV2(p) && p.Annotations[unrestrictedEgressAnnotation] != "true" {
+		errs = append(errs, fmt.Sprintf(
+			"spec.capabilities.network.egress with host \"*\" (unrestricted egress) requires annotation %s: \"true\"",
+			unrestrictedEgressAnnotation))
+	}
+
 	if len(errs) > 0 {
 		return warnings, fmt.Errorf("MCPServer validation failed: %s", strings.Join(errs, "; "))
 	}
 	return warnings, nil
+}
+
+// unrestrictedEgressAnnotation opts a provider into wildcard (host: "*") egress.
+const unrestrictedEgressAnnotation = "hangar.io/allow-unrestricted-egress"
+
+// hasWildcardEgressV2 reports whether any egress rule targets host "*".
+func hasWildcardEgressV2(p *mcpv1alpha2.MCPServer) bool {
+	if p.Spec.Capabilities == nil || p.Spec.Capabilities.Network == nil {
+		return false
+	}
+	for _, rule := range p.Spec.Capabilities.Network.Egress {
+		if rule.Host == "*" {
+			return true
+		}
+	}
+	return false
 }
 
 // validateCapabilitiesV2 validates the v1alpha2 capabilities block. It returns
@@ -157,4 +184,22 @@ func validateCapabilitiesV2(caps *mcpv1alpha2.MCPServerCapabilities) ([]string, 
 	}
 
 	return errs, warnings
+}
+
+// validateRemoteEndpoint checks that a remote MCPServer endpoint is an absolute
+// http(s) URL with a non-empty host. url.ParseRequestURI alone accepts
+// non-HTTP schemes (e.g. "javascript:alert(1)") and bare paths ("/only/path"),
+// neither of which is a reachable remote endpoint.
+func validateRemoteEndpoint(endpoint string) error {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("spec.endpoint is not a valid URL: %v", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("spec.endpoint must be an http or https URL, got scheme %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("spec.endpoint must include a host")
+	}
+	return nil
 }

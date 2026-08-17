@@ -20,7 +20,6 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/internal/controller"
 	"github.com/mcp-hangar/operator/internal/health"
@@ -35,7 +34,6 @@ var scheme = runtime.NewScheme()
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(mcpv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(mcpv1alpha2.AddToScheme(scheme))
 }
 
@@ -199,18 +197,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Register validating admission webhooks and the conversion webhook.
-	//
-	// A validator is registered for every served version of every kind that has
-	// spec constraints. v1alpha2 is the storage AND a served version, so it must
-	// be validated explicitly -- writes submitted as v1alpha2 never reach the
-	// v1alpha1 validator (issue #12).
-	//
-	// Registering the builder for the convertible MCPServer types also installs
-	// the single shared "/convert" conversion handler on the webhook server, so
-	// the apiserver's conversion requests (strategy: Webhook) are served and the
-	// hand-written v1alpha1<->v1alpha2 ConvertTo/ConvertFrom logic is actually
-	// exercised (issue #11).
+	// Register validating admission webhooks. v1alpha2 is the only served
+	// version since #125 (v1alpha1 unserved in 0.16.0, deleted here); the
+	// conversion webhook went with it -- with a single version there is
+	// nothing to convert.
 	if enableWebhooks {
 		type webhookReg struct {
 			name      string
@@ -218,11 +208,8 @@ func main() {
 			validator admission.CustomValidator
 		}
 		regs := []webhookReg{
-			{"MCPServer/v1alpha1", &mcpv1alpha1.MCPServer{}, &webhook.MCPServerValidator{}},
 			{"MCPServer/v1alpha2", &mcpv1alpha2.MCPServer{}, &webhook.MCPServerV1alpha2Validator{}},
-			{"MCPServerGroup/v1alpha1", &mcpv1alpha1.MCPServerGroup{}, &webhook.MCPServerGroupValidator{}},
 			{"MCPServerGroup/v1alpha2", &mcpv1alpha2.MCPServerGroup{}, &webhook.MCPServerGroupV1alpha2Validator{}},
-			{"MCPDiscoverySource/v1alpha1", &mcpv1alpha1.MCPDiscoverySource{}, &webhook.MCPDiscoverySourceValidator{}},
 			{"MCPDiscoverySource/v1alpha2", &mcpv1alpha2.MCPDiscoverySource{}, &webhook.MCPDiscoverySourceV1alpha2Validator{}},
 		}
 		for _, r := range regs {
@@ -243,7 +230,7 @@ func main() {
 			},
 		})
 
-		setupLog.Info("validating + conversion webhooks registered",
+		setupLog.Info("validating webhooks registered",
 			"validatedKinds", len(regs))
 	}
 

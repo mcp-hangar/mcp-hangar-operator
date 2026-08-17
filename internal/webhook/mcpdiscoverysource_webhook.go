@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
 
@@ -58,49 +58,6 @@ func validateDiscoveryConstraints(c discoveryConstraints) error {
 	return nil
 }
 
-// +kubebuilder:webhook:path=/validate-mcp-hangar-io-v1alpha1-mcpdiscoverysource,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcp-hangar.io,resources=mcpdiscoverysources,verbs=create;update,versions=v1alpha1,name=vmcpdiscoverysource-v1alpha1.kb.io,admissionReviewVersions=v1
-
-// MCPDiscoverySourceValidator validates v1alpha1 MCPDiscoverySource resources.
-type MCPDiscoverySourceValidator struct{}
-
-var _ admission.CustomValidator = &MCPDiscoverySourceValidator{}
-
-func discoveryConstraintsFromV1alpha1(d *mcpv1alpha1.MCPDiscoverySource) discoveryConstraints {
-	c := discoveryConstraints{
-		discoveryType:   string(d.Spec.Type),
-		hasConfigMapRef: d.Spec.ConfigMapRef != nil,
-		durations:       map[string]string{"spec.refreshInterval": d.Spec.RefreshInterval},
-	}
-	if d.Spec.Filters != nil {
-		c.includePatterns = d.Spec.Filters.IncludePatterns
-		c.excludePatterns = d.Spec.Filters.ExcludePatterns
-	}
-	return c
-}
-
-// ValidateCreate validates a v1alpha1 MCPDiscoverySource on creation.
-func (v *MCPDiscoverySourceValidator) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
-	d, ok := obj.(*mcpv1alpha1.MCPDiscoverySource)
-	if !ok || d == nil {
-		return nil, fmt.Errorf("expected v1alpha1 MCPDiscoverySource, got %T", obj)
-	}
-	return nil, validateDiscoveryConstraints(discoveryConstraintsFromV1alpha1(d))
-}
-
-// ValidateUpdate validates a v1alpha1 MCPDiscoverySource on update.
-func (v *MCPDiscoverySourceValidator) ValidateUpdate(_ context.Context, _ runtime.Object, newObj runtime.Object) (admission.Warnings, error) {
-	d, ok := newObj.(*mcpv1alpha1.MCPDiscoverySource)
-	if !ok || d == nil {
-		return nil, fmt.Errorf("expected v1alpha1 MCPDiscoverySource, got %T", newObj)
-	}
-	return nil, validateDiscoveryConstraints(discoveryConstraintsFromV1alpha1(d))
-}
-
-// ValidateDelete is a no-op; deletion is always allowed.
-func (v *MCPDiscoverySourceValidator) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
-	return nil, nil
-}
-
 // +kubebuilder:webhook:path=/validate-mcp-hangar-io-v1alpha2-mcpdiscoverysource,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcp-hangar.io,resources=mcpdiscoverysources,verbs=create;update,versions=v1alpha2,name=vmcpdiscoverysource-v1alpha2.kb.io,admissionReviewVersions=v1
 
 // MCPDiscoverySourceV1alpha2Validator validates v1alpha2 (storage)
@@ -142,4 +99,26 @@ func (v *MCPDiscoverySourceV1alpha2Validator) ValidateUpdate(_ context.Context, 
 // ValidateDelete is a no-op; deletion is always allowed.
 func (v *MCPDiscoverySourceV1alpha2Validator) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
 	return nil, nil
+}
+
+// validateDurationStrings parses each non-empty duration value and returns an
+// error message for any that is unparseable or negative. It is shared by the
+// v1alpha1 validators, whose duration fields are free-form strings; conversion
+// to v1alpha2 hard-fails on a bad value, so rejecting it at admission keeps the
+// stored object convertible. (v1alpha2 models durations as *metav1.Duration,
+// which the apiserver already validates structurally.)
+func validateDurationStrings(fields map[string]string) []string {
+	var errs []string
+	for field, val := range fields {
+		if val == "" {
+			continue
+		}
+		d, err := time.ParseDuration(val)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s %q is not a valid duration: %v", field, val, err))
+		} else if d < 0 {
+			errs = append(errs, fmt.Sprintf("%s must not be negative", field))
+		}
+	}
+	return errs
 }

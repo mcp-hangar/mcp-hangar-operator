@@ -9,19 +9,12 @@ resources:
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
-# [WEBHOOK] To enable the conversion webhook, uncomment the following patches.
-# They add spec.conversion.strategy=Webhook + clientConfig so the apiserver
-# routes v1alpha1<->v1alpha2 conversion through the operator's /convert handler.
-# The CA is injected by cert-manager via the cainjection patches below.
-- path: patches/webhook_in_mcpservers.yaml
-- path: patches/webhook_in_mcpservergroups.yaml
-- path: patches/webhook_in_mcpdiscoverysources.yaml
+# The conversion webhook patches were deleted with v1alpha1 (#125):
+# a single served version has nothing to convert.
 # +kubebuilder:scaffold:crdkustomizewebhookpatch
 
-# [CERTMANAGER] To enable cert-manager, uncomment the following patches.
-- path: patches/cainjection_in_mcpservers.yaml
-- path: patches/cainjection_in_mcpservergroups.yaml
-- path: patches/cainjection_in_mcpdiscoverysources.yaml
+# The cainjection patches went with them -- the injected CA only ever served
+# the conversion webhook's clientConfig.
 # +kubebuilder:scaffold:crdkustomizecainjectionpatch
 
 # [WEBHOOK] To enable the conversion webhook, uncomment the following configuration

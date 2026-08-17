@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/internal/webhook"
 )
@@ -88,21 +87,6 @@ func TestDiscoveryV2_Valid(t *testing.T) {
 
 // ── MCPDiscoverySource (v1alpha1) ─────────────────────────────────────
 
-func TestDiscoveryV1_InvalidExcludeRegexp(t *testing.T) {
-	v := &webhook.MCPDiscoverySourceValidator{}
-	d := &mcpv1alpha1.MCPDiscoverySource{
-		ObjectMeta: metav1.ObjectMeta{Name: "d", Namespace: "default"},
-		Spec: mcpv1alpha1.MCPDiscoverySourceSpec{
-			Type:    mcpv1alpha1.DiscoveryTypeNamespace,
-			Filters: &mcpv1alpha1.DiscoveryFilters{ExcludePatterns: []string{"(unclosed"}},
-		},
-	}
-
-	_, err := v.ValidateCreate(context.Background(), d)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "excludePatterns[0]")
-}
-
 func TestDiscoveryV2_DeleteAllowed(t *testing.T) {
 	v := &webhook.MCPDiscoverySourceV1alpha2Validator{}
 	d := &mcpv1alpha2.MCPDiscoverySource{ObjectMeta: metav1.ObjectMeta{Name: "d", Namespace: "default"}}
@@ -113,24 +97,10 @@ func TestDiscoveryV2_DeleteAllowed(t *testing.T) {
 
 // ── Typed-nil guards (#22) ────────────────────────────────────────────
 
-func TestGroupV1_TypedNilRejected(t *testing.T) {
-	v := &webhook.MCPServerGroupValidator{}
-	var g *mcpv1alpha1.MCPServerGroup
-	_, err := v.ValidateCreate(context.Background(), g)
-	require.Error(t, err)
-}
-
 func TestGroupV2_TypedNilRejected(t *testing.T) {
 	v := &webhook.MCPServerGroupV1alpha2Validator{}
 	var g *mcpv1alpha2.MCPServerGroup
 	_, err := v.ValidateCreate(context.Background(), g)
-	require.Error(t, err)
-}
-
-func TestDiscoveryV1_TypedNilRejected(t *testing.T) {
-	v := &webhook.MCPDiscoverySourceValidator{}
-	var d *mcpv1alpha1.MCPDiscoverySource
-	_, err := v.ValidateCreate(context.Background(), d)
 	require.Error(t, err)
 }
 
@@ -139,19 +109,4 @@ func TestDiscoveryV2_TypedNilRejected(t *testing.T) {
 	var d *mcpv1alpha2.MCPDiscoverySource
 	_, err := v.ValidateCreate(context.Background(), d)
 	require.Error(t, err)
-}
-
-// ── v1alpha1 duration-string validation (#22) ─────────────────────────
-func TestDiscoveryV1_BadRefreshIntervalRejected(t *testing.T) {
-	v := &webhook.MCPDiscoverySourceValidator{}
-	d := &mcpv1alpha1.MCPDiscoverySource{
-		ObjectMeta: metav1.ObjectMeta{Name: "d", Namespace: "default"},
-		Spec: mcpv1alpha1.MCPDiscoverySourceSpec{
-			Type:            mcpv1alpha1.DiscoveryTypeNamespace,
-			RefreshInterval: "every-minute",
-		},
-	}
-	_, err := v.ValidateCreate(context.Background(), d)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "spec.refreshInterval")
 }

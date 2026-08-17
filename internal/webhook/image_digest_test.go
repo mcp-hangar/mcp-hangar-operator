@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	mcpv1alpha1 "github.com/mcp-hangar/operator/api/v1alpha1"
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/internal/webhook"
 )
@@ -38,8 +37,8 @@ func warnsContain(t *testing.T, w []string, sub string) bool {
 	return false
 }
 
-func containerServer(name, image string) *mcpv1alpha1.MCPServer {
-	p := newProvider(name, mcpv1alpha1.MCPServerModeContainer)
+func containerServer(name, image string) *mcpv1alpha2.MCPServer {
+	p := newProvider(name, mcpv1alpha2.MCPServerModeContainer)
 	p.Spec.Image = image
 	return p
 }
@@ -48,7 +47,7 @@ func TestImageDigest_PinnedImageAlwaysAdmitted(t *testing.T) {
 	require.NoError(t, webhook.SetImageDigestPolicy("block"))
 	defer func() { _ = webhook.SetImageDigestPolicy("off") }()
 
-	v := &webhook.MCPServerValidator{}
+	v := &webhook.MCPServerV1alpha2Validator{}
 	w, err := v.ValidateCreate(context.Background(), containerServer("pinned", pinnedImage))
 	require.NoError(t, err)
 	assert.Empty(t, w, "a digest-pinned image should produce no findings")
@@ -57,7 +56,7 @@ func TestImageDigest_PinnedImageAlwaysAdmitted(t *testing.T) {
 func TestImageDigest_WarnPolicyAdmitsWithWarning(t *testing.T) {
 	require.NoError(t, webhook.SetImageDigestPolicy("warn"))
 	defer func() { _ = webhook.SetImageDigestPolicy("off") }()
-	v := &webhook.MCPServerValidator{}
+	v := &webhook.MCPServerV1alpha2Validator{}
 	w, err := v.ValidateCreate(context.Background(), containerServer("mutable-warn", mutableImage))
 	require.NoError(t, err, "warn policy must not reject")
 	assert.True(t, warnsContain(t, w, "not digest-pinned"), "expected a not-digest-pinned warning")
@@ -67,7 +66,7 @@ func TestImageDigest_BlockPolicyRejects(t *testing.T) {
 	require.NoError(t, webhook.SetImageDigestPolicy("block"))
 	defer func() { _ = webhook.SetImageDigestPolicy("off") }()
 
-	v := &webhook.MCPServerValidator{}
+	v := &webhook.MCPServerV1alpha2Validator{}
 	_, err := v.ValidateCreate(context.Background(), containerServer("mutable-block", mutableImage))
 	require.Error(t, err, "block policy must reject a mutable tag")
 	assert.Contains(t, err.Error(), "not digest-pinned")
@@ -77,7 +76,7 @@ func TestImageDigest_OffPolicyIgnores(t *testing.T) {
 	require.NoError(t, webhook.SetImageDigestPolicy("off"))
 	defer func() { _ = webhook.SetImageDigestPolicy("off") }()
 
-	v := &webhook.MCPServerValidator{}
+	v := &webhook.MCPServerV1alpha2Validator{}
 	w, err := v.ValidateCreate(context.Background(), containerServer("mutable-off", mutableImage))
 	require.NoError(t, err)
 	assert.False(t, warnsContain(t, w, "not digest-pinned"), "off policy must be silent")
@@ -89,7 +88,7 @@ func TestImageDigest_AnnotationOptsOutUnderBlock(t *testing.T) {
 
 	p := containerServer("mutable-annotated", mutableImage)
 	p.Annotations = map[string]string{"hangar.io/allow-mutable-image": "true"}
-	v := &webhook.MCPServerValidator{}
+	v := &webhook.MCPServerV1alpha2Validator{}
 	_, err := v.ValidateCreate(context.Background(), p)
 	assert.NoError(t, err, "the allow-mutable-image annotation must bypass block")
 }
@@ -114,4 +113,18 @@ func TestImageDigest_V1alpha2ValidatorEnforces(t *testing.T) {
 func TestSetImageDigestPolicy_Invalid(t *testing.T) {
 	require.Error(t, webhook.SetImageDigestPolicy("nonsense"))
 	_ = webhook.SetImageDigestPolicy("off")
+}
+
+// newProvider moved here from the deleted v1alpha1 webhook test file; the
+// digest and wildcard-egress tests share it.
+func newProvider(name string, mode mcpv1alpha2.MCPServerMode) *mcpv1alpha2.MCPServer {
+	return &mcpv1alpha2.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+		},
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode: mode,
+		},
+	}
 }
