@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.16.0](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.15.3...v0.16.0) (2026-08-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **api:** mcp-hangar.io/v1alpha1 manifests are no longer accepted; apply them as mcp-hangar.io/v1alpha2.
+
+### Added
+
+* **api:** stop serving v1alpha1 ([#136](https://github.com/mcp-hangar/mcp-hangar-operator/issues/136)) ([89c3a82](https://github.com/mcp-hangar/mcp-hangar-operator/commit/89c3a82db938cf7c32048ea4ad15c6278798de7e))
+
+
+### Fixed
+
+* **api:** delete the unserved v1alpha1 API, and port the wildcard-egress guard it was hiding ([#137](https://github.com/mcp-hangar/mcp-hangar-operator/issues/137)) ([f5c2041](https://github.com/mcp-hangar/mcp-hangar-operator/commit/f5c2041057064d60ab86ce0151fb28e45bc6ca7c))
+
+
+### Changed
+
+* **ci:** pre-1.0 breaking changes bump minor, and this release is 0.16.0 ([#139](https://github.com/mcp-hangar/mcp-hangar-operator/issues/139)) ([0562641](https://github.com/mcp-hangar/mcp-hangar-operator/commit/0562641faaadc6bff1cf1fa4c92574494b1e7e88))
+
 ## [0.15.3](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.15.2...v0.15.3) (2026-08-17)
 
 
