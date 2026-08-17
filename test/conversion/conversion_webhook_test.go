@@ -1,9 +1,8 @@
-// Package conversion_test exercises a real v1alpha1<->v1alpha2 conversion
-// round-trip through the conversion webhook served by the manager, using
-// envtest. This is the end-to-end counterpart to the unit-level ConvertTo /
-// ConvertFrom tests in api/v1alpha1: it proves that with the conversion webhook
-// wired (issue #11), the apiserver actually routes conversion through the
-// operator's hand-written logic instead of blindly relabelling apiVersion.
+// Package conversion_test used to exercise the v1alpha1<->v1alpha2 conversion
+// round-trip (issue #11). Since #125 unserved v1alpha1, the same envtest
+// scaffold asserts the unserve instead: a v1alpha1 create is rejected by the
+// apiserver, and the v1alpha2 path is unaffected. The whole package goes away
+// with api/v1alpha1 in Phase B step 2.
 package conversion_test
 
 import (
@@ -31,7 +30,7 @@ import (
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
 
-func TestConversionWebhookRoundTrip(t *testing.T) {
+func TestV1alpha1UnservedV2Unaffected(t *testing.T) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" && firstEnvTestBinDir() == "" {
 		t.Skip("KUBEBUILDER_ASSETS not set and no bin/k8s assets found; skipping envtest conversion round-trip")
 	}
@@ -98,8 +97,10 @@ func TestConversionWebhookRoundTrip(t *testing.T) {
 	name := "conv-roundtrip"
 	ns := "default"
 
-	// Create the object as v1alpha1 (a served, non-storage version). Persisting
-	// it forces a v1alpha1 -> v1alpha2 (storage) conversion through the webhook.
+	// Phase B step 1 (#125): v1alpha1 is no longer served. A create via
+	// v1alpha1 must be rejected by the apiserver -- this is the acceptance
+	// assertion for the unserve release, and it flips back to a passing
+	// round-trip only if someone re-serves v1alpha1 by accident.
 	v1 := &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: mcpv1alpha1.MCPServerSpec{
@@ -108,29 +109,29 @@ func TestConversionWebhookRoundTrip(t *testing.T) {
 			StartupTimeout: "5m",
 		},
 	}
-	require.Eventually(t, func() bool {
-		return k8sClient.Create(ctx, v1) == nil
-	}, 30*time.Second, 500*time.Millisecond, "create via v1alpha1 should succeed once the conversion webhook is reachable")
+	err = k8sClient.Create(ctx, v1)
+	require.Error(t, err, "create via unserved v1alpha1 must be rejected")
 
-	// Read it back as v1alpha2 (storage): this is a storage->v1alpha2 no-op read,
-	// but confirms the object round-tripped through conversion on write.
+	// The v1alpha2 path is unaffected: create and read back as v1alpha2
+	// (storage), typed durations intact.
+	v2 := &mcpv1alpha2.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:           mcpv1alpha2.MCPServerModeRemote,
+			Endpoint:       "https://api.example.com/mcp",
+			StartupTimeout: &metav1.Duration{Duration: 5 * time.Minute},
+		},
+	}
+	require.Eventually(t, func() bool {
+		return k8sClient.Create(ctx, v2) == nil
+	}, 30*time.Second, 500*time.Millisecond, "create via v1alpha2 must succeed")
+
 	gotV2 := &mcpv1alpha2.MCPServer{}
 	require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: ns}, gotV2))
 	assert.Equal(t, mcpv1alpha2.MCPServerModeRemote, gotV2.Spec.Mode)
 	assert.Equal(t, "https://api.example.com/mcp", gotV2.Spec.Endpoint)
-	require.NotNil(t, gotV2.Spec.StartupTimeout, "startupTimeout must survive conversion into the typed v1alpha2 metav1.Duration")
+	require.NotNil(t, gotV2.Spec.StartupTimeout)
 	assert.Equal(t, 5*time.Minute, gotV2.Spec.StartupTimeout.Duration)
-
-	// And read it back as v1alpha1 (storage v1alpha2 -> v1alpha1): a second
-	// conversion in the reverse direction.
-	gotV1 := &mcpv1alpha1.MCPServer{}
-	require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: ns}, gotV1))
-	assert.Equal(t, mcpv1alpha1.MCPServerModeRemote, gotV1.Spec.Mode)
-	// The value round-tripped through the typed v1alpha2 metav1.Duration and back
-	// to the v1alpha1 string form, so it is normalized ("5m" -> "5m0s"). This
-	// normalization is itself proof the hand-written conversion ran rather than a
-	// blind apiVersion relabel.
-	assert.Equal(t, "5m0s", gotV1.Spec.StartupTimeout, "startupTimeout must convert back to the v1alpha1 string form")
 }
 
 func loadCRDs() ([]*apiextensionsv1.CustomResourceDefinition, error) {

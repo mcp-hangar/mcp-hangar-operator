@@ -221,6 +221,7 @@ type DiscoveredMCPServer struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:unservedversion
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.spec.type`
 // +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.spec.mode`
