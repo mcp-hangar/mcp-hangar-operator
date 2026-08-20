@@ -168,13 +168,6 @@ func TestV2_ValidateDelete(t *testing.T) {
 	assert.Empty(t, warnings)
 }
 
-func TestV2_WrongType(t *testing.T) {
-	v := &webhook.MCPServerV1alpha2Validator{}
-	_, err := v.ValidateCreate(context.Background(), &mcpv1alpha2.MCPServerGroup{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "expected v1alpha2 MCPServer")
-}
-
 // ── Typed-nil guard (#22) ─────────────────────────────────────────────
 
 func TestV2_TypedNilRejected(t *testing.T) {

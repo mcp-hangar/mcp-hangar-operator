@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
@@ -64,7 +63,7 @@ func validateDiscoveryConstraints(c discoveryConstraints) error {
 // MCPDiscoverySource resources.
 type MCPDiscoverySourceV1alpha2Validator struct{}
 
-var _ admission.CustomValidator = &MCPDiscoverySourceV1alpha2Validator{}
+var _ admission.Validator[*mcpv1alpha2.MCPDiscoverySource] = &MCPDiscoverySourceV1alpha2Validator{}
 
 func discoveryConstraintsFromV1alpha2(d *mcpv1alpha2.MCPDiscoverySource) discoveryConstraints {
 	c := discoveryConstraints{
@@ -79,25 +78,23 @@ func discoveryConstraintsFromV1alpha2(d *mcpv1alpha2.MCPDiscoverySource) discove
 }
 
 // ValidateCreate validates a v1alpha2 MCPDiscoverySource on creation.
-func (v *MCPDiscoverySourceV1alpha2Validator) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
-	d, ok := obj.(*mcpv1alpha2.MCPDiscoverySource)
-	if !ok || d == nil {
-		return nil, fmt.Errorf("expected v1alpha2 MCPDiscoverySource, got %T", obj)
+func (v *MCPDiscoverySourceV1alpha2Validator) ValidateCreate(_ context.Context, obj *mcpv1alpha2.MCPDiscoverySource) (admission.Warnings, error) {
+	if obj == nil {
+		return nil, fmt.Errorf("MCPDiscoverySource object is nil")
 	}
-	return nil, validateDiscoveryConstraints(discoveryConstraintsFromV1alpha2(d))
+	return nil, validateDiscoveryConstraints(discoveryConstraintsFromV1alpha2(obj))
 }
 
 // ValidateUpdate validates a v1alpha2 MCPDiscoverySource on update.
-func (v *MCPDiscoverySourceV1alpha2Validator) ValidateUpdate(_ context.Context, _ runtime.Object, newObj runtime.Object) (admission.Warnings, error) {
-	d, ok := newObj.(*mcpv1alpha2.MCPDiscoverySource)
-	if !ok || d == nil {
-		return nil, fmt.Errorf("expected v1alpha2 MCPDiscoverySource, got %T", newObj)
+func (v *MCPDiscoverySourceV1alpha2Validator) ValidateUpdate(_ context.Context, _, newObj *mcpv1alpha2.MCPDiscoverySource) (admission.Warnings, error) {
+	if newObj == nil {
+		return nil, fmt.Errorf("MCPDiscoverySource object is nil")
 	}
-	return nil, validateDiscoveryConstraints(discoveryConstraintsFromV1alpha2(d))
+	return nil, validateDiscoveryConstraints(discoveryConstraintsFromV1alpha2(newObj))
 }
 
 // ValidateDelete is a no-op; deletion is always allowed.
-func (v *MCPDiscoverySourceV1alpha2Validator) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
+func (v *MCPDiscoverySourceV1alpha2Validator) ValidateDelete(_ context.Context, _ *mcpv1alpha2.MCPDiscoverySource) (admission.Warnings, error) {
 	return nil, nil
 }
 

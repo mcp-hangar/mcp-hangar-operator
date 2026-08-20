@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
@@ -35,27 +34,25 @@ func validateGroupSelector(hasSelector bool) error {
 // resources.
 type MCPServerGroupV1alpha2Validator struct{}
 
-var _ admission.CustomValidator = &MCPServerGroupV1alpha2Validator{}
+var _ admission.Validator[*mcpv1alpha2.MCPServerGroup] = &MCPServerGroupV1alpha2Validator{}
 
 // ValidateCreate validates a v1alpha2 MCPServerGroup on creation.
-func (v *MCPServerGroupV1alpha2Validator) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
-	g, ok := obj.(*mcpv1alpha2.MCPServerGroup)
-	if !ok || g == nil {
-		return nil, fmt.Errorf("expected v1alpha2 MCPServerGroup, got %T", obj)
+func (v *MCPServerGroupV1alpha2Validator) ValidateCreate(_ context.Context, obj *mcpv1alpha2.MCPServerGroup) (admission.Warnings, error) {
+	if obj == nil {
+		return nil, fmt.Errorf("MCPServerGroup object is nil")
 	}
-	return nil, validateGroupSelector(g.Spec.Selector != nil)
+	return nil, validateGroupSelector(obj.Spec.Selector != nil)
 }
 
 // ValidateUpdate validates a v1alpha2 MCPServerGroup on update.
-func (v *MCPServerGroupV1alpha2Validator) ValidateUpdate(_ context.Context, _ runtime.Object, newObj runtime.Object) (admission.Warnings, error) {
-	g, ok := newObj.(*mcpv1alpha2.MCPServerGroup)
-	if !ok || g == nil {
-		return nil, fmt.Errorf("expected v1alpha2 MCPServerGroup, got %T", newObj)
+func (v *MCPServerGroupV1alpha2Validator) ValidateUpdate(_ context.Context, _, newObj *mcpv1alpha2.MCPServerGroup) (admission.Warnings, error) {
+	if newObj == nil {
+		return nil, fmt.Errorf("MCPServerGroup object is nil")
 	}
-	return nil, validateGroupSelector(g.Spec.Selector != nil)
+	return nil, validateGroupSelector(newObj.Spec.Selector != nil)
 }
 
 // ValidateDelete is a no-op; deletion is always allowed.
-func (v *MCPServerGroupV1alpha2Validator) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
+func (v *MCPServerGroupV1alpha2Validator) ValidateDelete(_ context.Context, _ *mcpv1alpha2.MCPServerGroup) (admission.Warnings, error) {
 	return nil, nil
 }
