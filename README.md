@@ -129,6 +129,30 @@ FQDN/host egress rules **fail closed** — a rule that a Kubernetes
 Declarative L7/FQDN egress is handled by the `MCPEgressPolicy` API and its
 Cilium/Tetragon backstop (ADR-006).
 
+### CIDR rules on Cilium do not reach in-cluster upstreams
+
+Cilium matches policy on **security identities**, not IPs. By default a CIDR
+selector — a `NetworkPolicy` `ipBlock` (what `capabilities.network.egress[].cidr`
+becomes) or a `CiliumNetworkPolicy` `toCIDR` (what an `MCPEgressPolicy` CIDR
+upstream becomes) — **does not match cluster-internal pod or node IPs**
+([Cilium docs](https://docs.cilium.io/en/stable/network/kubernetes/policy/)). The
+rule is accepted, matches nothing, and the traffic is dropped on the wire. The
+same rule works on Calico. Cluster operators opt in with:
+
+```bash
+cilium install --set policyCIDRMatchMode='{pods}'   # or --policy-cidr-match-mode=pods
+```
+
+When the operator detects Cilium (its CRD is installed), an `MCPServer` whose
+egress CIDR falls in a range in-cluster IPs come from (RFC1918, CGNAT
+`100.64.0.0/10`, IPv6 ULA) gets an **admission warning** naming that flag, and
+an `MCPEgressPolicy` with such an upstream says so in its `BackstopApplied`
+condition message. It is a warning, never a rejection: the operator cannot read
+the CNI's flag state, and a private range is equally likely to be a legitimate
+external upstream (an on-prem database at `10.x`). If the destination really is
+in-cluster, set `policyCIDRMatchMode` — a hostname does not route around this,
+since `toFQDNs` resolves to the same CIDR identities. See #152.
+
 ## Examples
 
 See [`config/samples/`](config/samples/) for complete, runnable examples:

@@ -200,6 +200,14 @@ func main() {
 	// conversion webhook went with it -- with a single version there is
 	// nothing to convert.
 	if enableWebhooks {
+		// #152: on Cilium a CIDR egress rule naming an in-cluster upstream is
+		// admitted and then dropped on the wire (identity-based matching). The
+		// validator warns about that only on a Cilium cluster, so detect it once
+		// here -- an admission path must not do discovery per request.
+		cilium := networkpolicy.CiliumAvailable(mgr.GetRESTMapper())
+		webhook.SetCiliumDetected(cilium)
+		setupLog.Info("CNI detection for admission warnings", "cilium", cilium)
+
 		// The list lives in internal/webhook so the registration-parity test
 		// can assert it covers every served CRD version (#137's lesson: a
 		// guard on an unregistered path is a guard that does not run).

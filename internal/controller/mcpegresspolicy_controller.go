@@ -388,7 +388,8 @@ func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, l
 			return err
 		}
 		r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionTrue,
-			"BackstopApplied", fmt.Sprintf("Cilium backstop %q applied for %q (FQDN + CIDR enforced)", cnp.GetName(), targetName))
+			"BackstopApplied", fmt.Sprintf("Cilium backstop %q applied for %q (FQDN + CIDR enforced)%s",
+				cnp.GetName(), targetName, ciliumCIDRCaveat(policy, ciliumAvailable)))
 		r.clearDegraded(policy)
 		logger.Info("Reconciled MCPEgressPolicy backstop", "policy", policy.Name, "target", targetName, "flavor", "Cilium")
 		return nil
@@ -406,7 +407,8 @@ func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, l
 		return err
 	}
 	r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionTrue,
-		"BackstopApplied", fmt.Sprintf("Vanilla backstop %q applied", desired.Name))
+		"BackstopApplied", fmt.Sprintf("Vanilla backstop %q applied%s",
+			desired.Name, ciliumCIDRCaveat(policy, ciliumAvailable)))
 
 	// A Vanilla NetworkPolicy cannot match FQDNs: hostname upstreams are denied
 	// (fail closed), not opened. Surface the gap.
@@ -424,6 +426,31 @@ func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, l
 	logger.Info("Reconciled MCPEgressPolicy backstop",
 		"policy", policy.Name, "flavor", "Vanilla", "unenforceableUpstreams", len(unenforceable))
 	return nil
+}
+
+// ciliumCIDRCaveat returns a suffix for the BackstopApplied message when the
+// cluster runs Cilium and the policy has CIDR upstreams that look
+// cluster-internal: those are emitted (as ipBlock/toCIDR) but match nothing
+// under stock Cilium, so "backstop applied" alone would overclaim (#152).
+//
+// It is a message caveat, not a Degraded condition: the range test cannot tell
+// an in-cluster pod IP from a legitimately private external upstream, and
+// whether the cluster runs with policyCIDRMatchMode={pods} is not observable
+// from here -- degrading on that guess would page people over a working policy.
+func ciliumCIDRCaveat(policy *mcpv1alpha2.MCPEgressPolicy, ciliumAvailable bool) string {
+	if !ciliumAvailable {
+		return ""
+	}
+	var internal []string
+	for _, u := range policy.Spec.Upstreams {
+		if networkpolicy.LooksClusterInternal(u.Match.Host) {
+			internal = append(internal, u.Match.Host)
+		}
+	}
+	if len(internal) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(". NOTE for %s: %s", strings.Join(internal, ", "), networkpolicy.CiliumCIDRMatchNote)
 }
 
 // applyBackstop creates or updates the desired backstop NetworkPolicy.
@@ -470,10 +497,7 @@ func (r *MCPEgressPolicyReconciler) deleteBackstopIfExists(ctx context.Context, 
 // ciliumAvailable reports whether the CiliumNetworkPolicy CRD is installed, so
 // the operator can pick the Cilium flavor on Auto and enforce FQDN upstreams.
 func (r *MCPEgressPolicyReconciler) ciliumAvailable() bool {
-	_, err := r.RESTMapper().RESTMapping(
-		schema.GroupKind{Group: networkpolicy.CiliumGroup, Kind: networkpolicy.CiliumNetworkPolicyKind},
-		networkpolicy.CiliumVersion)
-	return err == nil
+	return networkpolicy.CiliumAvailable(r.RESTMapper())
 }
 
 // newCiliumBackstopStub returns an empty unstructured CiliumNetworkPolicy with
