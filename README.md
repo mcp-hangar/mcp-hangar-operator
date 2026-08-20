@@ -133,7 +133,7 @@ Cilium/Tetragon backstop (ADR-006).
 
 See [`config/samples/`](config/samples/) for complete, runnable examples:
 
-- [`mcp-hangar_v1alpha2_mcpserver.yaml`](config/samples/mcp-hangar_v1alpha2_mcpserver.yaml) - Basic container-mode `MCPServer`. For an external endpoint provider, set `spec.mode: remote` and `spec.endpoint` instead of `spec.image`; for Secret-backed config, add `spec.env`/`spec.volumes` referencing a `Secret` (both fields are part of the `MCPServer` spec).
+- [`mcp-hangar_v1alpha2_mcpserver.yaml`](config/samples/mcp-hangar_v1alpha2_mcpserver.yaml) - Basic container-mode `MCPServer`. For an external endpoint provider, set `spec.mode: remote` and `spec.endpoint` instead of `spec.image`; for Secret-backed config, add `spec.env` (`corev1.EnvVar`) or a `spec.volumes` entry plus a matching `spec.volumeMounts` entry referencing a `Secret`. `spec.env`, `spec.volumes`, `spec.volumeMounts`, `spec.resources`, `spec.tolerations`, `spec.podSecurityContext` and `spec.containerSecurityContext` are the `corev1` types verbatim, so anything a `PodSpec` accepts is accepted here.
 - [`mcp-hangar_v1alpha2_mcpservergroup.yaml`](config/samples/mcp-hangar_v1alpha2_mcpservergroup.yaml) - Group of `MCPServer`s selected by label, with a `healthPolicy` the group reports against.
 - [`mcp-hangar_v1alpha2_mcpdiscoverysource.yaml`](config/samples/mcp-hangar_v1alpha2_mcpdiscoverysource.yaml) - Automatic server discovery from a namespace.
 

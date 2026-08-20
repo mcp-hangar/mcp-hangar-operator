@@ -76,21 +76,31 @@ type MCPServerSpec struct {
 	// +optional
 	ShutdownGracePeriod *metav1.Duration `json:"shutdownGracePeriod,omitempty"`
 
-	// Resources defines resource requirements
+	// Resources defines resource requirements for the provider container.
 	// +optional
-	Resources *ResourceRequirements `json:"resources,omitempty"`
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 
-	// Env defines environment variables
+	// Env defines environment variables for the provider container.
 	// +optional
-	Env []EnvVar `json:"env,omitempty"`
+	Env []corev1.EnvVar `json:"env,omitempty"`
 
-	// Volumes defines volume mounts
+	// Volumes are the pod's volumes. Mount them with volumeMounts.
 	// +optional
-	Volumes []Volume `json:"volumes,omitempty"`
+	Volumes []corev1.Volume `json:"volumes,omitempty"`
 
-	// SecurityContext defines pod security settings
+	// VolumeMounts mounts volumes into the provider container.
 	// +optional
-	SecurityContext *SecurityContext `json:"securityContext,omitempty"`
+	VolumeMounts []corev1.VolumeMount `json:"volumeMounts,omitempty"`
+
+	// PodSecurityContext is the pod-level security context. Unset means the
+	// operator's restricted defaults.
+	// +optional
+	PodSecurityContext *corev1.PodSecurityContext `json:"podSecurityContext,omitempty"`
+
+	// ContainerSecurityContext is the provider container's security context.
+	// Unset means the operator's restricted defaults.
+	// +optional
+	ContainerSecurityContext *corev1.SecurityContext `json:"containerSecurityContext,omitempty"`
 
 	// ServiceAccountName is the ServiceAccount for the provider pod
 	// +optional
@@ -106,7 +116,7 @@ type MCPServerSpec struct {
 
 	// Tolerations for pod scheduling
 	// +optional
-	Tolerations []Toleration `json:"tolerations,omitempty"`
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
 
 	// Affinity rules for pod scheduling
 	// +optional
@@ -120,146 +130,6 @@ type MCPServerSpec struct {
 	// Used by the operator for NetworkPolicy generation and enforcement.
 	// +optional
 	Capabilities *MCPServerCapabilities `json:"capabilities,omitempty"`
-}
-
-// ResourceRequirements defines resource requests and limits
-type ResourceRequirements struct {
-	Requests *ResourceList `json:"requests,omitempty"`
-	Limits   *ResourceList `json:"limits,omitempty"`
-}
-
-// ResourceList defines CPU and memory resources
-type ResourceList struct {
-	CPU    string `json:"cpu,omitempty"`
-	Memory string `json:"memory,omitempty"`
-}
-
-// EnvVar defines an environment variable
-type EnvVar struct {
-	// Name of the environment variable
-	Name string `json:"name"`
-
-	// Value is the literal value
-	// +optional
-	Value string `json:"value,omitempty"`
-
-	// ValueFrom references a Secret or ConfigMap
-	// +optional
-	ValueFrom *EnvVarSource `json:"valueFrom,omitempty"`
-}
-
-// EnvVarSource defines the source for an environment variable value
-type EnvVarSource struct {
-	SecretKeyRef    *SecretKeySelector    `json:"secretKeyRef,omitempty"`
-	ConfigMapKeyRef *ConfigMapKeySelector `json:"configMapKeyRef,omitempty"`
-}
-
-// SecretKeySelector selects a key from a Secret
-type SecretKeySelector struct {
-	Name     string `json:"name"`
-	Key      string `json:"key"`
-	Optional *bool  `json:"optional,omitempty"`
-}
-
-// ConfigMapKeySelector selects a key from a ConfigMap
-type ConfigMapKeySelector struct {
-	Name     string `json:"name"`
-	Key      string `json:"key"`
-	Optional *bool  `json:"optional,omitempty"`
-}
-
-// Volume defines a volume mount
-type Volume struct {
-	// Name of the volume
-	Name string `json:"name"`
-
-	// MountPath within the container
-	MountPath string `json:"mountPath"`
-
-	// SubPath within the volume
-	// +optional
-	SubPath string `json:"subPath,omitempty"`
-
-	// ReadOnly mount
-	// +optional
-	ReadOnly bool `json:"readOnly,omitempty"`
-
-	// Secret volume source
-	// +optional
-	Secret *SecretVolumeSource `json:"secret,omitempty"`
-
-	// ConfigMap volume source
-	// +optional
-	ConfigMap *ConfigMapVolumeSource `json:"configMap,omitempty"`
-
-	// PersistentVolumeClaim source
-	// +optional
-	PersistentVolumeClaim *PVCVolumeSource `json:"persistentVolumeClaim,omitempty"`
-
-	// EmptyDir volume source
-	// +optional
-	EmptyDir *EmptyDirVolumeSource `json:"emptyDir,omitempty"`
-}
-
-// SecretVolumeSource adapts a Secret
-type SecretVolumeSource struct {
-	SecretName string      `json:"secretName"`
-	Items      []KeyToPath `json:"items,omitempty"`
-}
-
-// ConfigMapVolumeSource adapts a ConfigMap
-type ConfigMapVolumeSource struct {
-	Name  string      `json:"name"`
-	Items []KeyToPath `json:"items,omitempty"`
-}
-
-// PVCVolumeSource references a PersistentVolumeClaim
-type PVCVolumeSource struct {
-	ClaimName string `json:"claimName"`
-}
-
-// EmptyDirVolumeSource is an empty directory volume
-type EmptyDirVolumeSource struct {
-	Medium    string `json:"medium,omitempty"`
-	SizeLimit string `json:"sizeLimit,omitempty"`
-}
-
-// KeyToPath defines a key to path mapping
-type KeyToPath struct {
-	Key  string `json:"key"`
-	Path string `json:"path"`
-}
-
-// SecurityContext defines security settings
-type SecurityContext struct {
-	RunAsNonRoot             *bool           `json:"runAsNonRoot,omitempty"`
-	RunAsUser                *int64          `json:"runAsUser,omitempty"`
-	RunAsGroup               *int64          `json:"runAsGroup,omitempty"`
-	FSGroup                  *int64          `json:"fsGroup,omitempty"`
-	ReadOnlyRootFilesystem   *bool           `json:"readOnlyRootFilesystem,omitempty"`
-	AllowPrivilegeEscalation *bool           `json:"allowPrivilegeEscalation,omitempty"`
-	Capabilities             *Capabilities   `json:"capabilities,omitempty"`
-	SeccompProfile           *SeccompProfile `json:"seccompProfile,omitempty"`
-}
-
-// Capabilities defines Linux capabilities
-type Capabilities struct {
-	Add  []string `json:"add,omitempty"`
-	Drop []string `json:"drop,omitempty"`
-}
-
-// SeccompProfile defines seccomp settings
-type SeccompProfile struct {
-	Type string `json:"type,omitempty"`
-}
-
-// Toleration defines a pod toleration
-type Toleration struct {
-	Key               string `json:"key,omitempty"`
-	Operator          string `json:"operator,omitempty"`
-	Value             string `json:"value,omitempty"`
-	Effect            string `json:"effect,omitempty"`
-	TolerationSeconds *int64 `json:"tolerationSeconds,omitempty"`
 }
 
 // MCPServerCapabilities declares what resources an MCP server needs.

@@ -9,3 +9,20 @@ spec:
   mode: container
   image: ghcr.io/example/mcp-example-server:latest
   replicas: 1
+  # spec.resources is corev1.ResourceRequirements: any resource name, values
+  # parsed as quantities.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  # spec.env is corev1.EnvVar, so fieldRef/resourceFieldRef work too.
+  env:
+    - name: LOG_LEVEL
+      value: info
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
