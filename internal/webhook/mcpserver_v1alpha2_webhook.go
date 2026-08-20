@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
@@ -18,31 +17,24 @@ import (
 // MCPServerV1alpha2Validator validates v1alpha2 MCPServer resources on create
 // and update. v1alpha2 is both the storage and a served version, so writes
 // submitted at v1alpha2 must be validated here (they never reach the v1alpha1
-// validator). It implements admission.CustomValidator from controller-runtime.
+// validator). It implements admission.Validator[*MCPServer] from
+// controller-runtime.
 type MCPServerV1alpha2Validator struct{}
 
-var _ admission.CustomValidator = &MCPServerV1alpha2Validator{}
+var _ admission.Validator[*mcpv1alpha2.MCPServer] = &MCPServerV1alpha2Validator{}
 
 // ValidateCreate validates a v1alpha2 MCPServer on creation.
-func (v *MCPServerV1alpha2Validator) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
-	provider, ok := obj.(*mcpv1alpha2.MCPServer)
-	if !ok {
-		return nil, fmt.Errorf("expected v1alpha2 MCPServer, got %T", obj)
-	}
-	return validateProviderV2(provider)
+func (v *MCPServerV1alpha2Validator) ValidateCreate(_ context.Context, obj *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
+	return validateProviderV2(obj)
 }
 
 // ValidateUpdate validates a v1alpha2 MCPServer on update.
-func (v *MCPServerV1alpha2Validator) ValidateUpdate(_ context.Context, _ runtime.Object, newObj runtime.Object) (admission.Warnings, error) {
-	provider, ok := newObj.(*mcpv1alpha2.MCPServer)
-	if !ok {
-		return nil, fmt.Errorf("expected v1alpha2 MCPServer, got %T", newObj)
-	}
-	return validateProviderV2(provider)
+func (v *MCPServerV1alpha2Validator) ValidateUpdate(_ context.Context, _, newObj *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
+	return validateProviderV2(newObj)
 }
 
 // ValidateDelete is a no-op; deletion is always allowed.
-func (v *MCPServerV1alpha2Validator) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
+func (v *MCPServerV1alpha2Validator) ValidateDelete(_ context.Context, _ *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 	return nil, nil
 }
 
@@ -53,8 +45,8 @@ func (v *MCPServerV1alpha2Validator) ValidateDelete(_ context.Context, _ runtime
 // values structurally. The remaining semantic check is that a duration must not
 // be negative.
 func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
-	// A typed-nil *MCPServer satisfies the ok type assertion in the handlers,
-	// so guard here rather than dereferencing p.Spec and panicking the webhook.
+	// A typed-nil *MCPServer satisfies the generic handler signature, so guard
+	// here rather than dereferencing p.Spec and panicking the webhook.
 	if p == nil {
 		return nil, fmt.Errorf("MCPServer object is nil")
 	}

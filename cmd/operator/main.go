@@ -207,9 +207,7 @@ func main() {
 		// guard on an unregistered path is a guard that does not run).
 		regs := webhook.Registrations()
 		for _, r := range regs {
-			if err := ctrl.NewWebhookManagedBy(mgr, r.Object).
-				WithValidator(r.Validator).
-				Complete(); err != nil {
+			if err := r.Register(mgr); err != nil {
 				setupLog.Error(err, "unable to create webhook", "webhook", r.Name)
 				os.Exit(1)
 			}
