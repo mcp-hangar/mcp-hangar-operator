@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.17.0](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.16.0...v0.17.0) (2026-08-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* **api:** MCPServer spec.resources takes resource.Quantity values in an open requests/limits map; spec.volumes is corev1.Volume and its mount moves to the new spec.volumeMounts; spec.securityContext is replaced by spec.podSecurityContext and spec.containerSecurityContext. See UPGRADE.md.
+
+### Added
+
+* **api:** embed the corev1 pod types on MCPServer instead of a lossy subset ([#153](https://github.com/mcp-hangar/mcp-hangar-operator/issues/153)) ([edcf782](https://github.com/mcp-hangar/mcp-hangar-operator/commit/edcf7827a54e3d0c695db551d9fe94c7605f1f22))
+* **controller:** emit Events through events.k8s.io/v1, and turn SA1019 back on ([#150](https://github.com/mcp-hangar/mcp-hangar-operator/issues/150)) ([ca19ef8](https://github.com/mcp-hangar/mcp-hangar-operator/commit/ca19ef815585e87b55a26befadcfc19f41715f67)), closes [#58](https://github.com/mcp-hangar/mcp-hangar-operator/issues/58)
+* **webhook:** warn when a CIDR egress rule cannot match in-cluster on Cilium ([#154](https://github.com/mcp-hangar/mcp-hangar-operator/issues/154)) ([63ca2d3](https://github.com/mcp-hangar/mcp-hangar-operator/commit/63ca2d38c075c8c6027c14b09a4344cae188e5d2)), closes [#152](https://github.com/mcp-hangar/mcp-hangar-operator/issues/152)
+
+
+### Fixed
+
+* **ci:** make lint runs the linter CI runs ([#155](https://github.com/mcp-hangar/mcp-hangar-operator/issues/155)) ([a4b388f](https://github.com/mcp-hangar/mcp-hangar-operator/commit/a4b388faec3fd711d8db90bab9e72e88d03e1738))
+
 ## [0.16.0](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.15.3...v0.16.0) (2026-08-17)
 
 
