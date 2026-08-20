@@ -14,7 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -53,6 +53,15 @@ const (
 	// the Pod restart-backoff ceiling in handlePodFailed.
 	maxConsecutiveFailures = int32(5)
 
+	// ActionReconcile is the events.k8s.io `action` field on every Event this
+	// operator emits. The new events API splits what the legacy API called a
+	// reason into reason + action; every event here is emitted from a reconcile
+	// loop, and the reason (preserved verbatim from the legacy API, because it
+	// is what `kubectl get events` shows and what people alert on) already
+	// carries the specifics. A second, finer taxonomy nothing consumes would
+	// just drift.
+	ActionReconcile = "Reconcile"
+
 	// Event reasons
 	ReasonCreated                   = "Created"
 	ReasonUpdated                   = "Updated"
@@ -73,7 +82,7 @@ const (
 type MCPServerReconciler struct {
 	client.Client
 	Scheme       *runtime.Scheme
-	Recorder     record.EventRecorder
+	Recorder     events.EventRecorder
 	HangarClient *hangar.Client
 	Config       *ReconcilerConfig
 }
@@ -111,6 +120,10 @@ func DefaultReconcilerConfig() *ReconcilerConfig {
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
+// Events now go to events.k8s.io/v1 (the recorder migration in #58). The
+// core/v1 grant stays because controller-runtime's leader election still emits
+// through the legacy events API; it can go when that does.
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 
@@ -209,7 +222,8 @@ func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mc
 		if err := r.Status().Update(ctx, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
-		r.Recorder.Event(mcpServer, corev1.EventTypeWarning, ReasonFailed, "Container mode requires image")
+		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonFailed, ActionReconcile,
+			"Container mode requires image")
 		return ctrl.Result{}, nil
 	}
 
@@ -217,16 +231,16 @@ func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mc
 	if err := r.reconcileNetworkPolicy(ctx, mcpServer); err != nil {
 		logger.Error(err, "Failed to reconcile NetworkPolicy")
 		// Non-blocking: log error but continue with Pod reconciliation
-		r.Recorder.Event(mcpServer, corev1.EventTypeWarning, "NetworkPolicyFailed",
-			fmt.Sprintf("Failed to reconcile NetworkPolicy: %v", err))
+		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, "NetworkPolicyFailed", ActionReconcile,
+			"Failed to reconcile NetworkPolicy: %v", err)
 	}
 
 	// Reconcile violation detection (after NetworkPolicy, before Pod lifecycle)
 	if err := r.reconcileViolationDetection(ctx, mcpServer); err != nil {
 		logger.Error(err, "Failed to reconcile violation detection")
 		// Non-blocking: log error but continue with Pod reconciliation
-		r.Recorder.Event(mcpServer, corev1.EventTypeWarning, "ViolationDetectionFailed",
-			fmt.Sprintf("Failed to detect violations: %v", err))
+		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, "ViolationDetectionFailed", ActionReconcile,
+			"Failed to detect violations: %v", err)
 	}
 
 	// Audit wildcard egress override usage (emits Warning event for audit trail)
@@ -274,7 +288,8 @@ func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mc
 		if err := r.Status().Update(ctx, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
-		r.Recorder.Event(mcpServer, corev1.EventTypeNormal, ReasonUpdated, "Spec changed, recreating Pod")
+		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonUpdated, ActionReconcile,
+			"Spec changed, recreating Pod")
 		metrics.MCPServerRestarts.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Inc()
 		return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
 	}
@@ -314,7 +329,8 @@ func (r *MCPServerReconciler) handlePodNotFound(ctx context.Context, mcpServer *
 		if err := r.Status().Update(ctx, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
-		r.Recorder.Event(mcpServer, corev1.EventTypeWarning, ReasonFailed, fmt.Sprintf("Failed to create Pod: %v", err))
+		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonFailed, ActionReconcile,
+			"Failed to create Pod: %v", err)
 		return ctrl.Result{RequeueAfter: errorRequeueAfter}, nil
 	}
 
@@ -329,7 +345,8 @@ func (r *MCPServerReconciler) handlePodNotFound(ctx context.Context, mcpServer *
 		return ctrl.Result{}, err
 	}
 
-	r.Recorder.Event(mcpServer, corev1.EventTypeNormal, ReasonStarting, "Creating provider Pod")
+	r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonStarting, ActionReconcile,
+		"Creating provider Pod")
 	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, string(mcpv1alpha2.MCPServerStateInitializing))
 
 	return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
@@ -444,7 +461,8 @@ func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *m
 	setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionFalse, "", "")
 	setServerCondition(mcpServer, ConditionAvailable, metav1.ConditionTrue, "Available", "Provider is available")
 
-	r.Recorder.Event(mcpServer, corev1.EventTypeNormal, ReasonReady, "Provider is ready")
+	r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonReady, ActionReconcile,
+		"Provider is ready")
 	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Ready")
 
 	return readyRequeueAfter
@@ -473,7 +491,8 @@ func (r *MCPServerReconciler) handlePodFailed(ctx context.Context, mcpServer *mc
 
 	setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "PodFailed", reason)
 	setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, "PodFailed", reason)
-	r.Recorder.Event(mcpServer, corev1.EventTypeWarning, ReasonFailed, fmt.Sprintf("Pod failed: %s", reason))
+	r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonFailed, ActionReconcile,
+		"Pod failed: %s", reason)
 	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Dead")
 
 	// Check if we should restart (with backoff)
@@ -538,7 +557,8 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 			// on the counter. `errorRequeueAfter` is 10s and was never reached,
 			// because the watch event always arrived first.
 			setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, "HealthCheckFailed", err.Error())
-			r.Recorder.Event(mcpServer, corev1.EventTypeWarning, ReasonUnhealthy, fmt.Sprintf("Health check failed: %v", err))
+			r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonUnhealthy, ActionReconcile,
+				"Health check failed: %v", err)
 			metrics.MCPServerHealthCheckFailures.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Inc()
 			// Re-probe soon so recovery is detected fast, not after the full readyRequeueAfter window.
 			requeueAfter = errorRequeueAfter
@@ -548,7 +568,8 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 			now := metav1.Now()
 			mcpServer.Status.LastHealthCheck = &now
 			setServerCondition(mcpServer, ConditionReady, metav1.ConditionTrue, "EndpointHealthy", "Remote endpoint is healthy")
-			r.Recorder.Event(mcpServer, corev1.EventTypeNormal, ReasonHealthy, "Remote endpoint is healthy")
+			r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonHealthy, ActionReconcile,
+				"Remote endpoint is healthy")
 
 			// Tools come from the read model, which is the right source for a
 			// catalogue and the wrong one for liveness -- hence the separate
@@ -568,7 +589,8 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 			mcpServer.Status.ConsecutiveFailures = int32(health.ConsecutiveFailures)
 			setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, "EndpointUnhealthy",
 				fmt.Sprintf("Core reports %d consecutive failures (success rate %.2f)", health.ConsecutiveFailures, health.SuccessRate))
-			r.Recorder.Event(mcpServer, corev1.EventTypeWarning, ReasonUnhealthy, "Remote endpoint unhealthy")
+			r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonUnhealthy, ActionReconcile,
+				"Remote endpoint unhealthy")
 			// Re-probe soon so recovery is detected fast, not after the full readyRequeueAfter window.
 			requeueAfter = errorRequeueAfter
 		}
@@ -620,9 +642,8 @@ func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpSer
 			}
 			logger.Info("Withholding egress: image not digest-pinned in enforce-egress namespace",
 				"provider", mcpServer.Name, "image", mcpServer.Spec.Image)
-			r.Recorder.Event(mcpServer, corev1.EventTypeWarning, "EgressWithheld",
-				"egress not opened: spec.image is not digest-pinned in an enforce-egress namespace; "+
-					"pin the image (image@sha256:...) or set annotation hangar.io/allow-mutable-image=\"true\" (#51/#52)")
+			r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, "EgressWithheld", ActionReconcile,
+				"egress not opened: spec.image is not digest-pinned in an enforce-egress namespace; "+"pin the image (image@sha256:...) or set annotation hangar.io/allow-mutable-image=\"true\" (#51/#52)")
 			setServerCondition(mcpServer, ConditionNetworkPolicyApplied, metav1.ConditionFalse,
 				"EgressWithheldUnpinnedImage",
 				"Egress withheld: image not digest-pinned in an enforce-egress namespace")
@@ -659,8 +680,8 @@ func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpSer
 		if err := r.Create(ctx, desired); err != nil {
 			return fmt.Errorf("failed to create NetworkPolicy: %w", err)
 		}
-		r.Recorder.Event(mcpServer, corev1.EventTypeNormal, "NetworkPolicyCreated",
-			fmt.Sprintf("Created NetworkPolicy %s", desired.Name))
+		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, "NetworkPolicyCreated", ActionReconcile,
+			"Created NetworkPolicy %s", desired.Name)
 		setServerCondition(mcpServer, ConditionNetworkPolicyApplied, metav1.ConditionTrue,
 			"PolicyApplied", fmt.Sprintf("NetworkPolicy %s created", desired.Name))
 		return nil
@@ -678,8 +699,8 @@ func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpSer
 		if err := r.Update(ctx, existing); err != nil {
 			return fmt.Errorf("failed to update NetworkPolicy: %w", err)
 		}
-		r.Recorder.Event(mcpServer, corev1.EventTypeNormal, "NetworkPolicyUpdated",
-			fmt.Sprintf("Updated NetworkPolicy %s", desired.Name))
+		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, "NetworkPolicyUpdated", ActionReconcile,
+			"Updated NetworkPolicy %s", desired.Name)
 	}
 
 	setServerCondition(mcpServer, ConditionNetworkPolicyApplied, metav1.ConditionTrue,
@@ -738,7 +759,7 @@ func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, m
 		if cond != nil && cond.Status == metav1.ConditionTrue {
 			setServerCondition(mcpServer, ConditionViolationDetected, metav1.ConditionFalse,
 				"NoViolations", "No capability violations detected")
-			r.Recorder.Event(mcpServer, corev1.EventTypeNormal, ReasonViolationCleared,
+			r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonViolationCleared, ActionReconcile,
 				"No capability violations detected")
 		}
 		return nil
@@ -754,8 +775,8 @@ func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, m
 			"detail", v.Detail,
 		)
 		metrics.RecordViolation(mcpServer.Namespace, mcpServer.Name, v.Type)
-		r.Recorder.Event(mcpServer, corev1.EventTypeWarning, ReasonViolationDetected,
-			fmt.Sprintf("Capability violation: %s - %s", v.Type, v.Detail))
+		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonViolationDetected, ActionReconcile,
+			"Capability violation: %s - %s", v.Type, v.Detail)
 	}
 
 	// Append to status, cap at MaxViolationRecords
@@ -784,8 +805,7 @@ func (r *MCPServerReconciler) reconcileEgressAudit(_ context.Context, mcpServer 
 		if rule.Host == "*" {
 			ann := mcpServer.GetAnnotations()
 			if ann != nil && ann["hangar.io/allow-unrestricted-egress"] == "true" {
-				r.Recorder.Event(mcpServer, corev1.EventTypeWarning,
-					ReasonUnrestrictedEgressAllowed,
+				r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonUnrestrictedEgressAllowed, ActionReconcile,
 					"Provider uses wildcard egress with explicit override annotation")
 			}
 			return
@@ -877,7 +897,8 @@ func (r *MCPServerReconciler) reconcileDelete(ctx context.Context, mcpServer *mc
 		return ctrl.Result{}, err
 	}
 
-	r.Recorder.Event(mcpServer, corev1.EventTypeNormal, ReasonDeleted, "Provider deleted")
+	r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonDeleted, ActionReconcile,
+		"Provider deleted")
 	logger.Info("MCPServer deleted successfully")
 
 	return ctrl.Result{}, nil

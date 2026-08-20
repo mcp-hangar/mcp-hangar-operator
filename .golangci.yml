@@ -20,10 +20,8 @@ linters:
     staticcheck:
       checks:
         - "SA*"      # bug-finding analyses only -- matches the pre-v2 gate scope
-        - "-SA1019"  # deprecations: controller-runtime v0.24 deprecated
-                     # CustomValidator (-> Validator) and GetEventRecorderFor
-                     # (-> GetEventRecorder). Both still work; migrate off them in
-                     # a scheduled follow-up rather than in this dependency bump.
+                     # SA1019 (deprecations) is IN: the controller-runtime v0.24
+                     # deprecations it was excluded for are migrated off (#58).
   exclusions:
     generated: lax
     presets:

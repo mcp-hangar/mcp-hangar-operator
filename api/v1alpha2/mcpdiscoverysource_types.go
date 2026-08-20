@@ -257,7 +257,7 @@ type MCPDiscoverySourceList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&MCPDiscoverySource{}, &MCPDiscoverySourceList{})
+	objectTypes = append(objectTypes, &MCPDiscoverySource{}, &MCPDiscoverySourceList{})
 }
 
 // Helper methods

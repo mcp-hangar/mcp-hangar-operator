@@ -108,7 +108,7 @@ type MCPServerGroupList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&MCPServerGroup{}, &MCPServerGroupList{})
+	objectTypes = append(objectTypes, &MCPServerGroup{}, &MCPServerGroupList{})
 }
 
 // Helper methods

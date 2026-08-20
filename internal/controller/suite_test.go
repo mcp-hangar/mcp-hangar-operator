@@ -96,7 +96,7 @@ func TestMain(m *testing.M) {
 		if err := (&MCPServerReconciler{
 			Client:   mgr.GetClient(),
 			Scheme:   mgr.GetScheme(),
-			Recorder: mgr.GetEventRecorderFor("mcpserver-controller"),
+			Recorder: mgr.GetEventRecorder("mcpserver-controller"),
 			Config:   DefaultReconcilerConfig(),
 		}).SetupWithManager(mgr); err != nil {
 			panic("failed to setup MCPServer controller: " + err.Error())
@@ -107,7 +107,7 @@ func TestMain(m *testing.M) {
 	if err := (&MCPServerGroupReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("mcpservergroup-controller"),
+		Recorder: mgr.GetEventRecorder("mcpservergroup-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		panic("failed to setup MCPServerGroup controller: " + err.Error())
 	}
@@ -116,7 +116,7 @@ func TestMain(m *testing.M) {
 	if err := (&MCPDiscoverySourceReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("mcpdiscoverysource-controller"),
+		Recorder: mgr.GetEventRecorder("mcpdiscoverysource-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		panic("failed to setup MCPDiscoverySource controller: " + err.Error())
 	}
