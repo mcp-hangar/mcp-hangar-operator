@@ -8,6 +8,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
@@ -63,14 +64,14 @@ func TestBuildPodForMCPServer_WithResources(t *testing.T) {
 		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
-			Resources: &mcpv1alpha2.ResourceRequirements{
-				Requests: &mcpv1alpha2.ResourceList{
-					CPU:    "100m",
-					Memory: "128Mi",
+			Resources: &corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("100m"),
+					corev1.ResourceMemory: resource.MustParse("128Mi"),
 				},
-				Limits: &mcpv1alpha2.ResourceList{
-					CPU:    "500m",
-					Memory: "512Mi",
+				Limits: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("500m"),
+					corev1.ResourceMemory: resource.MustParse("512Mi"),
 				},
 			},
 		},
@@ -96,18 +97,26 @@ func TestBuildPodForMCPServer_WithEnvVars(t *testing.T) {
 		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
-			Env: []mcpv1alpha2.EnvVar{
+			Env: []corev1.EnvVar{
 				{
 					Name:  "CUSTOM_VAR",
 					Value: "custom-value",
 				},
 				{
 					Name: "SECRET_VAR",
-					ValueFrom: &mcpv1alpha2.EnvVarSource{
-						SecretKeyRef: &mcpv1alpha2.SecretKeySelector{
-							Name: "my-secret",
-							Key:  "password",
+					ValueFrom: &corev1.EnvVarSource{
+						SecretKeyRef: &corev1.SecretKeySelector{
+							LocalObjectReference: corev1.LocalObjectReference{Name: "my-secret"},
+							Key:                  "password",
 						},
+					},
+				},
+				// Only reachable now that Env is corev1.EnvVar: the hand-rolled
+				// EnvVarSource had no fieldRef.
+				{
+					Name: "NODE_NAME",
+					ValueFrom: &corev1.EnvVarSource{
+						FieldRef: &corev1.ObjectFieldSelector{FieldPath: "spec.nodeName"},
 					},
 				},
 			},
@@ -148,23 +157,27 @@ func TestBuildPodForMCPServer_WithVolumes(t *testing.T) {
 		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
-			Volumes: []mcpv1alpha2.Volume{
+			Volumes: []corev1.Volume{
 				{
-					Name:      "data",
-					MountPath: "/data",
-					ReadOnly:  false,
-					PersistentVolumeClaim: &mcpv1alpha2.PVCVolumeSource{
-						ClaimName: "data-pvc",
+					Name: "data",
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: "data-pvc",
+						},
 					},
 				},
 				{
-					Name:      "config",
-					MountPath: "/config",
-					ReadOnly:  true,
-					ConfigMap: &mcpv1alpha2.ConfigMapVolumeSource{
-						Name: "provider-config",
+					Name: "config",
+					VolumeSource: corev1.VolumeSource{
+						ConfigMap: &corev1.ConfigMapVolumeSource{
+							LocalObjectReference: corev1.LocalObjectReference{Name: "provider-config"},
+						},
 					},
 				},
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: "data", MountPath: "/data"},
+				{Name: "config", MountPath: "/config", ReadOnly: true},
 			},
 		},
 	}
@@ -204,6 +217,7 @@ func TestBuildPodForMCPServer_WithSecurityContext(t *testing.T) {
 	runAsNonRoot := true
 	readOnlyRootFilesystem := true
 	allowPrivilegeEscalation := false
+	privileged := false
 
 	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
@@ -213,15 +227,17 @@ func TestBuildPodForMCPServer_WithSecurityContext(t *testing.T) {
 		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
-			SecurityContext: &mcpv1alpha2.SecurityContext{
+			ContainerSecurityContext: &corev1.SecurityContext{
 				RunAsUser:                &runAsUser,
 				RunAsNonRoot:             &runAsNonRoot,
 				ReadOnlyRootFilesystem:   &readOnlyRootFilesystem,
 				AllowPrivilegeEscalation: &allowPrivilegeEscalation,
-				Capabilities: &mcpv1alpha2.Capabilities{
-					Drop: []string{"ALL"},
-					Add:  []string{"NET_BIND_SERVICE"},
+				Capabilities: &corev1.Capabilities{
+					Drop: []corev1.Capability{"ALL"},
+					Add:  []corev1.Capability{"NET_BIND_SERVICE"},
 				},
+				// Container-only in corev1, inexpressible before the split.
+				Privileged: &privileged,
 			},
 		},
 	}
@@ -240,6 +256,7 @@ func TestBuildPodForMCPServer_WithSecurityContext(t *testing.T) {
 	require.NotNil(t, secCtx.Capabilities)
 	assert.Contains(t, secCtx.Capabilities.Drop, corev1.Capability("ALL"))
 	assert.Contains(t, secCtx.Capabilities.Add, corev1.Capability("NET_BIND_SERVICE"))
+	assert.False(t, *secCtx.Privileged)
 }
 
 func TestBuildPodForMCPServer_WithDefaultSecurityContext(t *testing.T) {
@@ -268,6 +285,36 @@ func TestBuildPodForMCPServer_WithDefaultSecurityContext(t *testing.T) {
 
 	require.NotNil(t, secCtx.Capabilities)
 	assert.Contains(t, secCtx.Capabilities.Drop, corev1.Capability("ALL"))
+}
+
+// The two security contexts are independent fields now: setting one must not
+// disturb the other's defaults, and fsGroup (pod-only) survives the trip.
+func TestBuildPodForMCPServer_SecurityContextsAreIndependent(t *testing.T) {
+	fsGroup := int64(2000)
+
+	provider := &mcpv1alpha2.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-provider", Namespace: "default"},
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:  "container",
+			Image: "test-image:latest",
+			PodSecurityContext: &corev1.PodSecurityContext{
+				FSGroup:             &fsGroup,
+				FSGroupChangePolicy: ptr.To(corev1.FSGroupChangeOnRootMismatch),
+			},
+		},
+	}
+
+	pod, err := BuildPodForMCPServer(provider)
+	require.NoError(t, err)
+
+	require.NotNil(t, pod.Spec.SecurityContext)
+	assert.Equal(t, int64(2000), *pod.Spec.SecurityContext.FSGroup)
+	assert.Equal(t, corev1.FSGroupChangeOnRootMismatch, *pod.Spec.SecurityContext.FSGroupChangePolicy)
+
+	// Container context is untouched -- still the restricted default.
+	secCtx := pod.Spec.Containers[0].SecurityContext
+	require.NotNil(t, secCtx)
+	assert.True(t, *secCtx.ReadOnlyRootFilesystem)
 }
 
 func TestBuildPodForMCPServer_WithCommandAndArgs(t *testing.T) {
@@ -325,12 +372,12 @@ func TestBuildPodForMCPServer_WithTolerations(t *testing.T) {
 		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode:  "container",
 			Image: "test-image:latest",
-			Tolerations: []mcpv1alpha2.Toleration{
+			Tolerations: []corev1.Toleration{
 				{
 					Key:      "key1",
-					Operator: "Equal",
+					Operator: corev1.TolerationOpEqual,
 					Value:    "value1",
-					Effect:   "NoSchedule",
+					Effect:   corev1.TaintEffectNoSchedule,
 				},
 			},
 		},
@@ -384,43 +431,6 @@ func TestBuildLabels(t *testing.T) {
 	assert.Equal(t, "test-provider", labels[LabelProvider])
 	assert.Equal(t, "test-uid-123", labels[LabelProviderUID])
 }
-
-func TestBuildResourceRequirements(t *testing.T) {
-	spec := &mcpv1alpha2.ResourceRequirements{
-		Requests: &mcpv1alpha2.ResourceList{
-			CPU:    "100m",
-			Memory: "128Mi",
-		},
-		Limits: &mcpv1alpha2.ResourceList{
-			CPU:    "1",
-			Memory: "1Gi",
-		},
-	}
-
-	reqs := buildResourceRequirements(spec)
-
-	assert.Equal(t, resource.MustParse("100m"), reqs.Requests[corev1.ResourceCPU])
-	assert.Equal(t, resource.MustParse("128Mi"), reqs.Requests[corev1.ResourceMemory])
-	assert.Equal(t, resource.MustParse("1"), reqs.Limits[corev1.ResourceCPU])
-	assert.Equal(t, resource.MustParse("1Gi"), reqs.Limits[corev1.ResourceMemory])
-}
-
-func TestBuildResourceRequirements_Partial(t *testing.T) {
-	// Only requests, no limits
-	spec := &mcpv1alpha2.ResourceRequirements{
-		Requests: &mcpv1alpha2.ResourceList{
-			CPU: "100m",
-		},
-	}
-
-	reqs := buildResourceRequirements(spec)
-
-	assert.Equal(t, resource.MustParse("100m"), reqs.Requests[corev1.ResourceCPU])
-	assert.Empty(t, reqs.Requests[corev1.ResourceMemory])
-	assert.Empty(t, reqs.Limits)
-}
-
-// Helper functions
 
 func findEnvVar(envVars []corev1.EnvVar, name string) *corev1.EnvVar {
 	for _, env := range envVars {

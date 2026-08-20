@@ -6,7 +6,6 @@ import (
 	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
@@ -64,9 +63,7 @@ func BuildPodForMCPServer(provider *mcpv1alpha2.MCPServer) (*corev1.Pod, error) 
 	// Build main container
 	container := buildContainer(provider)
 
-	// Build volumes
-	volumeMounts, volumes := buildVolumes(provider)
-	container.VolumeMounts = volumeMounts
+	container.VolumeMounts = provider.Spec.VolumeMounts
 
 	// Build Pod
 	pod := &corev1.Pod{
@@ -78,7 +75,7 @@ func BuildPodForMCPServer(provider *mcpv1alpha2.MCPServer) (*corev1.Pod, error) 
 		},
 		Spec: corev1.PodSpec{
 			Containers:                    []corev1.Container{container},
-			Volumes:                       volumes,
+			Volumes:                       provider.Spec.Volumes,
 			RestartPolicy:                 corev1.RestartPolicyNever, // Operator manages restarts
 			ServiceAccountName:            provider.Spec.ServiceAccountName,
 			NodeSelector:                  provider.Spec.NodeSelector,
@@ -88,21 +85,12 @@ func BuildPodForMCPServer(provider *mcpv1alpha2.MCPServer) (*corev1.Pod, error) 
 		},
 	}
 
-	// Tolerations
-	if len(provider.Spec.Tolerations) > 0 {
-		pod.Spec.Tolerations = buildTolerations(provider.Spec.Tolerations)
-	}
+	pod.Spec.Tolerations = provider.Spec.Tolerations
+	pod.Spec.Affinity = provider.Spec.Affinity
 
-	// Affinity
-	if provider.Spec.Affinity != nil {
-		pod.Spec.Affinity = provider.Spec.Affinity
-	}
-
-	// Pod security context
-	if provider.Spec.SecurityContext != nil {
-		pod.Spec.SecurityContext = buildPodSecurityContext(provider.Spec.SecurityContext)
-	} else {
-		// Secure defaults
+	// Pod security context: the spec value wins whole, otherwise secure defaults.
+	pod.Spec.SecurityContext = provider.Spec.PodSecurityContext
+	if pod.Spec.SecurityContext == nil {
 		pod.Spec.SecurityContext = defaultPodSecurityContext()
 	}
 
@@ -135,13 +123,12 @@ func buildContainer(provider *mcpv1alpha2.MCPServer) corev1.Container {
 
 	// Resources
 	if provider.Spec.Resources != nil {
-		container.Resources = buildResourceRequirements(provider.Spec.Resources)
+		container.Resources = *provider.Spec.Resources
 	}
 
 	// Container security context
-	if provider.Spec.SecurityContext != nil {
-		container.SecurityContext = buildContainerSecurityContext(provider.Spec.SecurityContext)
-	} else {
+	container.SecurityContext = provider.Spec.ContainerSecurityContext
+	if container.SecurityContext == nil {
 		container.SecurityContext = defaultContainerSecurityContext()
 	}
 
@@ -226,232 +213,7 @@ func buildEnvVars(provider *mcpv1alpha2.MCPServer) []corev1.EnvVar {
 	}
 
 	// Add user-defined env vars
-	for _, env := range provider.Spec.Env {
-		envVar := corev1.EnvVar{
-			Name: env.Name,
-		}
-
-		if env.Value != "" {
-			envVar.Value = env.Value
-		} else if env.ValueFrom != nil {
-			envVar.ValueFrom = buildEnvVarSource(env.ValueFrom)
-		}
-
-		envVars = append(envVars, envVar)
-	}
-
-	return envVars
-}
-
-// buildEnvVarSource converts our EnvVarSource to k8s EnvVarSource
-func buildEnvVarSource(source *mcpv1alpha2.EnvVarSource) *corev1.EnvVarSource {
-	if source == nil {
-		return nil
-	}
-
-	result := &corev1.EnvVarSource{}
-
-	if source.SecretKeyRef != nil {
-		result.SecretKeyRef = &corev1.SecretKeySelector{
-			LocalObjectReference: corev1.LocalObjectReference{
-				Name: source.SecretKeyRef.Name,
-			},
-			Key:      source.SecretKeyRef.Key,
-			Optional: source.SecretKeyRef.Optional,
-		}
-	}
-
-	if source.ConfigMapKeyRef != nil {
-		result.ConfigMapKeyRef = &corev1.ConfigMapKeySelector{
-			LocalObjectReference: corev1.LocalObjectReference{
-				Name: source.ConfigMapKeyRef.Name,
-			},
-			Key:      source.ConfigMapKeyRef.Key,
-			Optional: source.ConfigMapKeyRef.Optional,
-		}
-	}
-
-	return result
-}
-
-// buildResourceRequirements converts our ResourceRequirements to k8s ResourceRequirements
-func buildResourceRequirements(res *mcpv1alpha2.ResourceRequirements) corev1.ResourceRequirements {
-	requirements := corev1.ResourceRequirements{}
-
-	if res.Requests != nil {
-		requirements.Requests = corev1.ResourceList{}
-		if res.Requests.CPU != "" {
-			requirements.Requests[corev1.ResourceCPU] = resource.MustParse(res.Requests.CPU)
-		}
-		if res.Requests.Memory != "" {
-			requirements.Requests[corev1.ResourceMemory] = resource.MustParse(res.Requests.Memory)
-		}
-	}
-
-	if res.Limits != nil {
-		requirements.Limits = corev1.ResourceList{}
-		if res.Limits.CPU != "" {
-			requirements.Limits[corev1.ResourceCPU] = resource.MustParse(res.Limits.CPU)
-		}
-		if res.Limits.Memory != "" {
-			requirements.Limits[corev1.ResourceMemory] = resource.MustParse(res.Limits.Memory)
-		}
-	}
-
-	return requirements
-}
-
-// buildVolumes creates volume mounts and volumes from provider spec
-func buildVolumes(provider *mcpv1alpha2.MCPServer) ([]corev1.VolumeMount, []corev1.Volume) {
-	var mounts []corev1.VolumeMount
-	var volumes []corev1.Volume
-
-	for _, vol := range provider.Spec.Volumes {
-		mount := corev1.VolumeMount{
-			Name:      vol.Name,
-			MountPath: vol.MountPath,
-			SubPath:   vol.SubPath,
-			ReadOnly:  vol.ReadOnly,
-		}
-		mounts = append(mounts, mount)
-
-		volume := corev1.Volume{
-			Name: vol.Name,
-		}
-
-		if vol.Secret != nil {
-			volume.VolumeSource = corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{
-					SecretName: vol.Secret.SecretName,
-					Items:      buildKeyToPath(vol.Secret.Items),
-				},
-			}
-		} else if vol.ConfigMap != nil {
-			volume.VolumeSource = corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: vol.ConfigMap.Name,
-					},
-					Items: buildKeyToPath(vol.ConfigMap.Items),
-				},
-			}
-		} else if vol.PersistentVolumeClaim != nil {
-			volume.VolumeSource = corev1.VolumeSource{
-				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: vol.PersistentVolumeClaim.ClaimName,
-				},
-			}
-		} else if vol.EmptyDir != nil {
-			emptyDir := &corev1.EmptyDirVolumeSource{}
-			if vol.EmptyDir.Medium == "Memory" {
-				emptyDir.Medium = corev1.StorageMediumMemory
-			}
-			if vol.EmptyDir.SizeLimit != "" {
-				quantity := resource.MustParse(vol.EmptyDir.SizeLimit)
-				emptyDir.SizeLimit = &quantity
-			}
-			volume.VolumeSource = corev1.VolumeSource{
-				EmptyDir: emptyDir,
-			}
-		}
-
-		volumes = append(volumes, volume)
-	}
-
-	return mounts, volumes
-}
-
-// buildKeyToPath converts our KeyToPath to k8s KeyToPath
-func buildKeyToPath(items []mcpv1alpha2.KeyToPath) []corev1.KeyToPath {
-	if len(items) == 0 {
-		return nil
-	}
-
-	result := make([]corev1.KeyToPath, len(items))
-	for i, item := range items {
-		result[i] = corev1.KeyToPath{
-			Key:  item.Key,
-			Path: item.Path,
-		}
-	}
-	return result
-}
-
-// buildTolerations converts our Tolerations to k8s Tolerations
-func buildTolerations(tolerations []mcpv1alpha2.Toleration) []corev1.Toleration {
-	result := make([]corev1.Toleration, len(tolerations))
-	for i, t := range tolerations {
-		result[i] = corev1.Toleration{
-			Key:               t.Key,
-			Operator:          corev1.TolerationOperator(t.Operator),
-			Value:             t.Value,
-			Effect:            corev1.TaintEffect(t.Effect),
-			TolerationSeconds: t.TolerationSeconds,
-		}
-	}
-	return result
-}
-
-// buildPodSecurityContext creates pod-level security context
-func buildPodSecurityContext(sc *mcpv1alpha2.SecurityContext) *corev1.PodSecurityContext {
-	ctx := &corev1.PodSecurityContext{}
-
-	if sc.RunAsNonRoot != nil {
-		ctx.RunAsNonRoot = sc.RunAsNonRoot
-	}
-	if sc.RunAsUser != nil {
-		ctx.RunAsUser = sc.RunAsUser
-	}
-	if sc.RunAsGroup != nil {
-		ctx.RunAsGroup = sc.RunAsGroup
-	}
-	if sc.FSGroup != nil {
-		ctx.FSGroup = sc.FSGroup
-	}
-	if sc.SeccompProfile != nil {
-		ctx.SeccompProfile = &corev1.SeccompProfile{
-			Type: corev1.SeccompProfileType(sc.SeccompProfile.Type),
-		}
-	}
-
-	return ctx
-}
-
-// buildContainerSecurityContext creates container-level security context
-func buildContainerSecurityContext(sc *mcpv1alpha2.SecurityContext) *corev1.SecurityContext {
-	ctx := &corev1.SecurityContext{}
-
-	if sc.RunAsNonRoot != nil {
-		ctx.RunAsNonRoot = sc.RunAsNonRoot
-	}
-	if sc.RunAsUser != nil {
-		ctx.RunAsUser = sc.RunAsUser
-	}
-	if sc.RunAsGroup != nil {
-		ctx.RunAsGroup = sc.RunAsGroup
-	}
-	if sc.ReadOnlyRootFilesystem != nil {
-		ctx.ReadOnlyRootFilesystem = sc.ReadOnlyRootFilesystem
-	}
-	if sc.AllowPrivilegeEscalation != nil {
-		ctx.AllowPrivilegeEscalation = sc.AllowPrivilegeEscalation
-	}
-	if sc.Capabilities != nil {
-		ctx.Capabilities = &corev1.Capabilities{}
-		for _, cap := range sc.Capabilities.Add {
-			ctx.Capabilities.Add = append(ctx.Capabilities.Add, corev1.Capability(cap))
-		}
-		for _, cap := range sc.Capabilities.Drop {
-			ctx.Capabilities.Drop = append(ctx.Capabilities.Drop, corev1.Capability(cap))
-		}
-	}
-	if sc.SeccompProfile != nil {
-		ctx.SeccompProfile = &corev1.SeccompProfile{
-			Type: corev1.SeccompProfileType(sc.SeccompProfile.Type),
-		}
-	}
-
-	return ctx
+	return append(envVars, provider.Spec.Env...)
 }
 
 // defaultPodSecurityContext returns secure default pod security context
