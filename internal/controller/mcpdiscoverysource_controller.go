@@ -22,7 +22,6 @@ import (
 	"sigs.k8s.io/yaml"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
-	"github.com/mcp-hangar/operator/pkg/hangar"
 	"github.com/mcp-hangar/operator/pkg/metrics"
 )
 
@@ -86,9 +85,8 @@ type ConfigMapMCPServerEntry struct {
 // MCPDiscoverySourceReconciler reconciles a MCPDiscoverySource object
 type MCPDiscoverySourceReconciler struct {
 	client.Client
-	Scheme       *runtime.Scheme
-	Recorder     events.EventRecorder
-	HangarClient *hangar.Client
+	Scheme   *runtime.Scheme
+	Recorder events.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpdiscoverysources,verbs=get;list;watch;create;update;patch;delete
@@ -104,13 +102,8 @@ type MCPDiscoverySourceReconciler struct {
 // Reconcile performs the reconciliation loop for MCPDiscoverySource
 func (r *MCPDiscoverySourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	startTime := time.Now()
 
 	logger.Info("Reconciling MCPDiscoverySource", "namespacedName", req.NamespacedName)
-	defer func() {
-		duration := time.Since(startTime)
-		metrics.ReconcileDuration.WithLabelValues("mcpdiscoverysource").Observe(duration.Seconds())
-	}()
 
 	// Fetch the MCPDiscoverySource instance
 	source := &mcpv1alpha2.MCPDiscoverySource{}
@@ -120,19 +113,12 @@ func (r *MCPDiscoverySourceReconciler) Reconcile(ctx context.Context, req ctrl.R
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get MCPDiscoverySource")
-		metrics.ReconcileTotal.WithLabelValues("mcpdiscoverysource", "error").Inc()
 		return ctrl.Result{}, err
 	}
 
 	// Handle deletion
 	if !source.ObjectMeta.DeletionTimestamp.IsZero() {
-		result, err := r.reconcileDelete(ctx, source)
-		if err != nil {
-			metrics.ReconcileTotal.WithLabelValues("mcpdiscoverysource", "error").Inc()
-		} else {
-			metrics.ReconcileTotal.WithLabelValues("mcpdiscoverysource", "success").Inc()
-		}
-		return result, err
+		return r.reconcileDelete(ctx, source)
 	}
 
 	// Add finalizer if not present
@@ -145,14 +131,7 @@ func (r *MCPDiscoverySourceReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	// Main reconciliation logic
-	result, err := r.reconcileNormal(ctx, source)
-	if err != nil {
-		metrics.ReconcileTotal.WithLabelValues("mcpdiscoverysource", "error").Inc()
-	} else {
-		metrics.ReconcileTotal.WithLabelValues("mcpdiscoverysource", "success").Inc()
-	}
-
-	return result, err
+	return r.reconcileNormal(ctx, source)
 }
 
 // reconcileNormal handles normal (non-deletion) reconciliation

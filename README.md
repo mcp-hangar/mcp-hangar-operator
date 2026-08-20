@@ -149,8 +149,8 @@ The operator exposes Prometheus metrics at `:8080/metrics`:
 
 | Metric | Description |
 |--------|-------------|
-| `mcp_operator_reconcile_total` | Total reconciliations |
-| `mcp_operator_reconcile_duration_seconds` | Reconciliation duration |
+| `controller_runtime_reconcile_total` | Total reconciliations (controller-runtime built-in) |
+| `controller_runtime_reconcile_time_seconds` | Reconciliation duration (controller-runtime built-in) |
 | `mcp_operator_provider_state` | Provider state (1 = in state) |
 | `mcp_operator_provider_tools_count` | Tools per provider |
 | `mcp_operator_provider_health_check_failures_total` | Health check failures |

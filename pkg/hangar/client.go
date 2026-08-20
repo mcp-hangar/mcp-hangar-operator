@@ -151,23 +151,6 @@ func (c *Client) doWithRetry(ctx context.Context, method, url string, body []byt
 	return nil, fmt.Errorf("request failed after %d retries: %w", c.maxRetries, lastErr)
 }
 
-// MCPServerInfo represents provider information from Hangar
-type MCPServerInfo struct {
-	Name       string   `json:"name"`
-	Namespace  string   `json:"namespace"`
-	State      string   `json:"state"`
-	Tools      []string `json:"tools"`
-	ToolsCount int      `json:"tools_count"`
-	Endpoint   string   `json:"endpoint,omitempty"`
-}
-
-// ToolInfo represents tool information
-type ToolInfo struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description,omitempty"`
-	InputSchema map[string]interface{} `json:"input_schema,omitempty"`
-}
-
 // GetMCPServerTools fetches the list of tools from a provider
 // toolRef parses one element of core's tools list. core returns tool-info
 // objects ({"name": ...}); a bare tool-name string is also tolerated for

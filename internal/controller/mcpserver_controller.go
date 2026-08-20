@@ -84,32 +84,6 @@ type MCPServerReconciler struct {
 	Scheme       *runtime.Scheme
 	Recorder     events.EventRecorder
 	HangarClient *hangar.Client
-	Config       *ReconcilerConfig
-}
-
-// ReconcilerConfig holds configuration for the reconciler
-type ReconcilerConfig struct {
-	// MaxConcurrentReconciles limits concurrent reconciliations
-	MaxConcurrentReconciles int
-
-	// ReadyRequeueInterval for ready providers
-	ReadyRequeueInterval time.Duration
-
-	// ErrorRequeueInterval for errored providers
-	ErrorRequeueInterval time.Duration
-
-	// DefaultImage for provider sidecar
-	DefaultImage string
-}
-
-// DefaultReconcilerConfig returns default configuration
-func DefaultReconcilerConfig() *ReconcilerConfig {
-	return &ReconcilerConfig{
-		MaxConcurrentReconciles: 10,
-		ReadyRequeueInterval:    5 * time.Minute,
-		ErrorRequeueInterval:    10 * time.Second,
-		DefaultImage:            "ghcr.io/mcp-hangar/mcp-hangar-sidecar:latest",
-	}
 }
 
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservers,verbs=get;list;watch;create;update;patch;delete
@@ -130,13 +104,8 @@ func DefaultReconcilerConfig() *ReconcilerConfig {
 // Reconcile performs the reconciliation loop for MCPServer
 func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	startTime := time.Now()
 
 	logger.Info("Reconciling MCPServer", "namespacedName", req.NamespacedName)
-	defer func() {
-		duration := time.Since(startTime)
-		metrics.ReconcileDuration.WithLabelValues("mcpserver").Observe(duration.Seconds())
-	}()
 
 	// Fetch the MCPServer instance
 	mcpServer := &mcpv1alpha2.MCPServer{}
@@ -146,19 +115,12 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get MCPServer")
-		metrics.ReconcileTotal.WithLabelValues("mcpserver", "error").Inc()
 		return ctrl.Result{}, err
 	}
 
 	// Handle deletion
 	if !mcpServer.ObjectMeta.DeletionTimestamp.IsZero() {
-		result, err := r.reconcileDelete(ctx, mcpServer)
-		if err != nil {
-			metrics.ReconcileTotal.WithLabelValues("mcpserver", "error").Inc()
-		} else {
-			metrics.ReconcileTotal.WithLabelValues("mcpserver", "success").Inc()
-		}
-		return result, err
+		return r.reconcileDelete(ctx, mcpServer)
 	}
 
 	// Add finalizer if not present
@@ -171,14 +133,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Main reconciliation logic
-	result, err := r.reconcileNormal(ctx, mcpServer)
-	if err != nil {
-		metrics.ReconcileTotal.WithLabelValues("mcpserver", "error").Inc()
-	} else {
-		metrics.ReconcileTotal.WithLabelValues("mcpserver", "success").Inc()
-	}
-
-	return result, err
+	return r.reconcileNormal(ctx, mcpServer)
 }
 
 // reconcileNormal handles normal (non-deletion) reconciliation
