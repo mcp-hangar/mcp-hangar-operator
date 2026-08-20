@@ -167,6 +167,13 @@ endef
 #   calico (default) -- enforces the Vanilla NetworkPolicy path (CIDR peers).
 #   cilium           -- additionally enforces the Cilium flavor's toFQDNs rules
 #                       (BuildEgressPolicyCiliumNetworkPolicy); no other CNI can.
+#
+# The cilium install sets policyCIDRMatchMode=pods. Cilium matches policy on
+# security identities, so by DEFAULT an ipBlock naming an in-cluster pod IP
+# selects nothing and the Vanilla CIDR rules the operator emits grant no access
+# to in-cluster upstreams -- a real divergence from Calico, tracked in #152.
+# Without this flag the cilium leg would fail on that CNI semantic rather than
+# on anything the operator does, and the two legs would assert different claims.
 
 E2E_CLUSTER ?= mcp-np-e2e
 E2E_CNI ?= calico
@@ -193,7 +200,8 @@ e2e-cluster: ## Create a kind cluster with a NetworkPolicy-enforcing CNI (E2E_CN
 	@echo "waiting for the API server..."
 	@until kubectl --context kind-$(E2E_CLUSTER) get --raw /healthz >/dev/null 2>&1; do sleep 5; done
 ifeq ($(E2E_CNI),cilium)
-	@$(CILIUM_CLI) install --context kind-$(E2E_CLUSTER) --version $(CILIUM_VERSION) --wait
+	@$(CILIUM_CLI) install --context kind-$(E2E_CLUSTER) --version $(CILIUM_VERSION) \
+		--set policyCIDRMatchMode='{pods}' --wait
 	@$(CILIUM_CLI) status --context kind-$(E2E_CLUSTER) --wait
 	@echo "waiting for the node to become Ready (Cilium must be up first)..."
 	@until [ "$$(kubectl --context kind-$(E2E_CLUSTER) get nodes -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}')" = "True" ]; do sleep 10; done

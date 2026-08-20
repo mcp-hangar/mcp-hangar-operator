@@ -199,6 +199,11 @@ func serverWithEgress(name, ns string, egress []mcpv1alpha2.EgressRuleSpec) *mcp
 
 // TestCIDRRuleAllowsAndOtherDestinationsAreBlocked is the baseline claim: a CIDR
 // egress rule opens exactly that CIDR and nothing else.
+//
+// The allowed CIDR here is a pod IP. On the cilium leg that only holds because
+// `make e2e-cluster E2E_CNI=cilium` installs Cilium with
+// policyCIDRMatchMode=pods: stock Cilium matches policy on identities, so an
+// ipBlock naming an in-cluster pod IP selects nothing (see #152).
 func TestCIDRRuleAllowsAndOtherDestinationsAreBlocked(t *testing.T) {
 	cs := clientset(t)
 	ns := namespace(t, cs, nil)
