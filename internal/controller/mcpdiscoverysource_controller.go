@@ -14,7 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -87,7 +87,7 @@ type ConfigMapMCPServerEntry struct {
 type MCPDiscoverySourceReconciler struct {
 	client.Client
 	Scheme       *runtime.Scheme
-	Recorder     record.EventRecorder
+	Recorder     events.EventRecorder
 	HangarClient *hangar.Client
 }
 
@@ -99,7 +99,7 @@ type MCPDiscoverySourceReconciler struct {
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile performs the reconciliation loop for MCPDiscoverySource
 func (r *MCPDiscoverySourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -184,7 +184,8 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 
 	// Start sync timer
 	syncStart := time.Now()
-	r.Recorder.Event(source, corev1.EventTypeNormal, ReasonSyncStarted, "Starting discovery sync")
+	r.Recorder.Eventf(source, nil, corev1.EventTypeNormal, ReasonSyncStarted, ActionReconcile,
+		"Starting discovery sync")
 
 	// Discover providers
 	discovered, scanErrors, err := r.discoverProviders(ctx, source)
@@ -196,7 +197,8 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 		if statusErr := r.Status().Update(ctx, source); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
-		r.Recorder.Event(source, corev1.EventTypeWarning, ReasonSyncFailed, fmt.Sprintf("Discovery failed: %v", err))
+		r.Recorder.Eventf(source, nil, corev1.EventTypeWarning, ReasonSyncFailed, ActionReconcile,
+			"Discovery failed: %v", err)
 		return ctrl.Result{RequeueAfter: errorRequeueAfter}, nil
 	}
 
@@ -272,8 +274,8 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 		return ctrl.Result{}, err
 	}
 
-	r.Recorder.Event(source, corev1.EventTypeNormal, ReasonSyncCompleted,
-		fmt.Sprintf("Sync completed: discovered=%d, managed=%d, errors=%d", len(discovered), managedCount, len(allErrors)))
+	r.Recorder.Eventf(source, nil, corev1.EventTypeNormal, ReasonSyncCompleted, ActionReconcile,
+		"Sync completed: discovered=%d, managed=%d, errors=%d", len(discovered), managedCount, len(allErrors))
 
 	return ctrl.Result{RequeueAfter: refreshInterval}, nil
 }
@@ -703,8 +705,8 @@ func (r *MCPDiscoverySourceReconciler) authoritativeSync(ctx context.Context, so
 				logger.Error(err, "Failed to delete provider during authoritative sync", "provider", existing.Name)
 				deleteErrors = append(deleteErrors, fmt.Sprintf("delete %s: %v", existing.Name, err))
 			} else {
-				r.Recorder.Event(source, corev1.EventTypeNormal, ReasonProviderGone,
-					fmt.Sprintf("Deleted provider %s (no longer discovered)", existing.Name))
+				r.Recorder.Eventf(source, nil, corev1.EventTypeNormal, ReasonProviderGone, ActionReconcile,
+					"Deleted provider %s (no longer discovered)", existing.Name)
 			}
 		}
 	}
@@ -802,7 +804,8 @@ func (r *MCPDiscoverySourceReconciler) reconcileDelete(ctx context.Context, sour
 		return ctrl.Result{}, err
 	}
 
-	r.Recorder.Event(source, corev1.EventTypeNormal, ReasonDeleted, "Discovery source deleted")
+	r.Recorder.Eventf(source, nil, corev1.EventTypeNormal, ReasonDeleted, ActionReconcile,
+		"Discovery source deleted")
 	logger.Info("MCPDiscoverySource deleted successfully")
 
 	return ctrl.Result{}, nil

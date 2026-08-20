@@ -12,7 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,14 +34,14 @@ import (
 type MCPServerGroupReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservergroups,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservergroups/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservergroups/finalizers,verbs=update
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservers,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile performs the reconciliation loop for MCPServerGroup
 func (r *MCPServerGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -336,7 +336,8 @@ func (r *MCPServerGroupReconciler) reconcileDelete(ctx context.Context, group *m
 		return ctrl.Result{}, err
 	}
 
-	r.Recorder.Event(group, "Normal", ReasonDeleted, "Provider group deleted")
+	r.Recorder.Eventf(group, nil, "Normal", ReasonDeleted, ActionReconcile,
+		"Provider group deleted")
 	logger.Info("MCPServerGroup deleted successfully")
 
 	return ctrl.Result{}, nil

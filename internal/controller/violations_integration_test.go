@@ -9,33 +9,25 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/metrics"
 )
 
 // fakeEventRecorder captures events for synchronous assertion in tests.
-// record.NewFakeRecorder uses a channel that is awkward for synchronous checks.
+// events.NewFakeRecorder uses a channel that is awkward for synchronous checks.
 type fakeEventRecorder struct {
-	events []string
+	events  []string
+	actions []string
 }
 
-func (f *fakeEventRecorder) Event(object runtime.Object, eventtype, reason, message string) {
-	f.events = append(f.events, fmt.Sprintf("%s %s %s", eventtype, reason, message))
+func (f *fakeEventRecorder) Eventf(regarding, related runtime.Object, eventtype, reason, action, note string, args ...interface{}) {
+	f.events = append(f.events, fmt.Sprintf("%s %s %s", eventtype, reason, fmt.Sprintf(note, args...)))
+	f.actions = append(f.actions, action)
 }
 
-func (f *fakeEventRecorder) Eventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
-	msg := fmt.Sprintf(messageFmt, args...)
-	f.events = append(f.events, fmt.Sprintf("%s %s %s", eventtype, reason, msg))
-}
-
-func (f *fakeEventRecorder) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype, reason, messageFmt string, args ...interface{}) {
-	msg := fmt.Sprintf(messageFmt, args...)
-	f.events = append(f.events, fmt.Sprintf("%s %s %s", eventtype, reason, msg))
-}
-
-var _ record.EventRecorder = (*fakeEventRecorder)(nil)
+var _ events.EventRecorder = (*fakeEventRecorder)(nil)
 
 // newViolationTestReconciler creates a reconciler with a fakeEventRecorder
 // so tests can synchronously inspect emitted events.
@@ -85,6 +77,11 @@ func TestViolationDetection_FullReconcile_NetworkDrift(t *testing.T) {
 	require.Len(t, fakeRec.events, 1)
 	assert.Contains(t, fakeRec.events[0], "ViolationDetected")
 	assert.Contains(t, fakeRec.events[0], "capability_drift")
+	// events.k8s.io/v1 requires a non-empty action (<=128 chars) -- an empty one
+	// makes the apiserver reject every event, and only the broadcaster's log
+	// would show it. Nothing else in the suite reaches a real sink.
+	require.NotEmpty(t, fakeRec.actions[0], "action is required by events.k8s.io/v1")
+	assert.LessOrEqual(t, len(fakeRec.actions[0]), 128)
 }
 
 // TestViolationDetection_FullReconcile_ToolDrift verifies that a provider with

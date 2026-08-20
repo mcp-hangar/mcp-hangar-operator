@@ -17,7 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -55,7 +55,7 @@ const l7PolicyFinalizer = "mcp-hangar.io/l7-policy-cleanup"
 type MCPEgressPolicyReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 	// HangarClient talks to the core REST API to deliver the L7 policy. Nil when
 	// core integration is disabled (no --hangar-url); L7 push is then skipped.
 	HangarClient *hangar.Client
@@ -166,8 +166,8 @@ func (r *MCPEgressPolicyReconciler) handleDeletion(ctx context.Context, policy *
 					// hand-edits the finalizer. core drops a server's L7 policy when the
 					// server itself is removed, and an orphaned policy on a live server is
 					// overwritten by the next push, so releasing the finalizer is safe.
-					r.Recorder.Event(policy, corev1.EventTypeWarning, "L7ClearFailed",
-						fmt.Sprintf("Best-effort clear of L7 policy for %q failed; removing finalizer anyway: %v", name, err))
+					r.Recorder.Eventf(policy, nil, corev1.EventTypeWarning, "L7ClearFailed", ActionReconcile,
+						"Best-effort clear of L7 policy for %q failed; removing finalizer anyway: %v", name, err)
 					logger.Error(err, "L7 policy clear failed; releasing finalizer to avoid blocking deletion", "server", name)
 				}
 			}
@@ -189,8 +189,8 @@ func (r *MCPEgressPolicyReconciler) pushL7Policy(ctx context.Context, logger log
 	payload := compileL7Policy(policy)
 	for _, name := range providerNamesFromSelector(selector) {
 		if err := r.HangarClient.SetL7Policy(ctx, name, payload); err != nil {
-			r.Recorder.Event(policy, corev1.EventTypeWarning, "L7PushFailed",
-				fmt.Sprintf("Failed to deliver L7 policy to core for %q: %v", name, err))
+			r.Recorder.Eventf(policy, nil, corev1.EventTypeWarning, "L7PushFailed", ActionReconcile,
+				"Failed to deliver L7 policy to core for %q: %v", name, err)
 			return fmt.Errorf("push L7 policy for %q: %w", name, err)
 		}
 		logger.Info("Delivered L7 policy to core", "policy", policy.Name, "server", name)
@@ -435,8 +435,8 @@ func (r *MCPEgressPolicyReconciler) applyBackstop(ctx context.Context, policy *m
 		if err := r.Create(ctx, desired); err != nil {
 			return fmt.Errorf("create backstop: %w", err)
 		}
-		r.Recorder.Event(policy, corev1.EventTypeNormal, "BackstopCreated",
-			fmt.Sprintf("Created network backstop %s", desired.Name))
+		r.Recorder.Eventf(policy, nil, corev1.EventTypeNormal, "BackstopCreated", ActionReconcile,
+			"Created network backstop %s", desired.Name)
 		return nil
 	}
 	if err != nil {
@@ -448,8 +448,8 @@ func (r *MCPEgressPolicyReconciler) applyBackstop(ctx context.Context, policy *m
 		if err := r.Update(ctx, existing); err != nil {
 			return fmt.Errorf("update backstop: %w", err)
 		}
-		r.Recorder.Event(policy, corev1.EventTypeNormal, "BackstopUpdated",
-			fmt.Sprintf("Updated network backstop %s", desired.Name))
+		r.Recorder.Eventf(policy, nil, corev1.EventTypeNormal, "BackstopUpdated", ActionReconcile,
+			"Updated network backstop %s", desired.Name)
 	}
 	return nil
 }
@@ -496,8 +496,8 @@ func (r *MCPEgressPolicyReconciler) applyCiliumBackstop(ctx context.Context, pol
 		if err := r.Create(ctx, desired); err != nil {
 			return fmt.Errorf("create cilium backstop: %w", err)
 		}
-		r.Recorder.Event(policy, corev1.EventTypeNormal, "BackstopCreated",
-			fmt.Sprintf("Created Cilium network backstop %s", desired.GetName()))
+		r.Recorder.Eventf(policy, nil, corev1.EventTypeNormal, "BackstopCreated", ActionReconcile,
+			"Created Cilium network backstop %s", desired.GetName())
 		return nil
 	}
 	if err != nil {
@@ -511,8 +511,8 @@ func (r *MCPEgressPolicyReconciler) applyCiliumBackstop(ctx context.Context, pol
 		if err := r.Update(ctx, existing); err != nil {
 			return fmt.Errorf("update cilium backstop: %w", err)
 		}
-		r.Recorder.Event(policy, corev1.EventTypeNormal, "BackstopUpdated",
-			fmt.Sprintf("Updated Cilium network backstop %s", desired.GetName()))
+		r.Recorder.Eventf(policy, nil, corev1.EventTypeNormal, "BackstopUpdated", ActionReconcile,
+			"Updated Cilium network backstop %s", desired.GetName())
 	}
 	return nil
 }

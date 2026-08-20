@@ -146,7 +146,7 @@ func main() {
 	if err := (&controller.MCPServerReconciler{
 		Client:       mgr.GetClient(),
 		Scheme:       mgr.GetScheme(),
-		Recorder:     mgr.GetEventRecorderFor("mcpserver-controller"),
+		Recorder:     mgr.GetEventRecorder("mcpserver-controller"),
 		HangarClient: hangarClient,
 		Config:       controller.DefaultReconcilerConfig(),
 	}).SetupWithManager(mgr); err != nil {
@@ -169,7 +169,7 @@ func main() {
 	if err := (&controller.MCPServerGroupReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("mcpservergroup-controller"),
+		Recorder: mgr.GetEventRecorder("mcpservergroup-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPServerGroup")
 		os.Exit(1)
@@ -179,7 +179,7 @@ func main() {
 	if err := (&controller.MCPDiscoverySourceReconciler{
 		Client:       mgr.GetClient(),
 		Scheme:       mgr.GetScheme(),
-		Recorder:     mgr.GetEventRecorderFor("mcpdiscoverysource-controller"),
+		Recorder:     mgr.GetEventRecorder("mcpdiscoverysource-controller"),
 		HangarClient: hangarClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPDiscoverySource")
@@ -190,7 +190,7 @@ func main() {
 	if err := (&controller.MCPEgressPolicyReconciler{
 		Client:       mgr.GetClient(),
 		Scheme:       mgr.GetScheme(),
-		Recorder:     mgr.GetEventRecorderFor("mcpegresspolicy-controller"),
+		Recorder:     mgr.GetEventRecorder("mcpegresspolicy-controller"),
 		HangarClient: hangarClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPEgressPolicy")

@@ -245,5 +245,5 @@ type MCPEgressPolicyList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&MCPEgressPolicy{}, &MCPEgressPolicyList{})
+	objectTypes = append(objectTypes, &MCPEgressPolicy{}, &MCPEgressPolicyList{})
 }
