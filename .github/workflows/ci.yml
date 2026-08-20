@@ -65,13 +65,20 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # Read the pin out of the Makefile so `make lint` and this job cannot
+      # drift apart. They did: the Makefile sat on v1.55.2 against a v2-format
+      # .golangci.yml for long enough that `make lint` was broken locally while
+      # CI stayed green, and every contributor had to know to ignore it.
+      - name: Resolve the pinned golangci-lint version
+        id: golangci
+        run: |
+          version="$(sed -n 's/^GOLANGCI_LINT_VERSION ?= //p' Makefile)"
+          test -n "$version" || { echo "::error::GOLANGCI_LINT_VERSION not found in Makefile"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          # golangci-lint v2: v1.64.8 could not typecheck the go 1.26 toolchain
-          # the k8s v0.36 / controller-runtime v0.24 bump requires. Action v8 is
-          # the v2-compatible major (v6 is v1-only); .golangci.yml is v2 format.
-          version: v2.12.2
+          version: ${{ steps.golangci.outputs.version }}
 
   # Does what this repo generates actually install on a current Kubernetes?
   #

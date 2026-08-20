@@ -125,7 +125,11 @@ GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 KUSTOMIZE_VERSION ?= v5.3.0
 CONTROLLER_TOOLS_VERSION ?= v0.17.2
 ENVTEST_VERSION ?= latest
-GOLANGCI_LINT_VERSION ?= v1.55.2
+# Keep this the ONLY place the version is written: the lint job in
+# .github/workflows/ci.yml reads it out of this file, so `make lint` and CI
+# cannot pin different linters. .golangci.yml is v2 format -- v1 cannot parse
+# it, and v1.64.8 could not typecheck the go 1.26 toolchain this repo needs.
+GOLANGCI_LINT_VERSION ?= v2.12.2
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -143,9 +147,15 @@ $(ENVTEST): $(LOCALBIN)
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
 
 .PHONY: golangci-lint
-golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
-$(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+golangci-lint: $(LOCALBIN) ## Download golangci-lint locally if necessary.
+# Not go-install-tool: that skips the install when the binary merely EXISTS, so
+# a bin/ left over from an older pin would survive a version bump and quietly
+# lint with the wrong tool. Reinstall unless the version already matches.
+	@if ! test -x $(GOLANGCI_LINT) || ! $(GOLANGCI_LINT) --version 2>/dev/null | grep -q '$(patsubst v%,%,$(GOLANGCI_LINT_VERSION))'; then \
+		echo "Installing golangci-lint $(GOLANGCI_LINT_VERSION)" ;\
+		rm -f $(GOLANGCI_LINT) ;\
+		GOBIN=$(LOCALBIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) ;\
+	fi
 
 # go-install-tool will 'go install' any package with custom target and target name
 define go-install-tool
