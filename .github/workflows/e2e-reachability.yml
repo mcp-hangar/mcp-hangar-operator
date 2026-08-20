@@ -41,6 +41,17 @@ jobs:
   reachability:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      # A Calico regression and a Cilium regression are independent signals;
+      # do not let one hide the other.
+      fail-fast: false
+      matrix:
+        # calico exercises the Vanilla NetworkPolicy path (CIDR peers).
+        # cilium is the only CNI that enforces the toFQDNs rules the Cilium
+        # flavor emits (issue #110) -- without this leg, the feature's headline
+        # capability is covered by API-object assertions only.
+        cni: [calico, cilium]
+    name: reachability (${{ matrix.cni }})
     steps:
       - uses: actions/checkout@v7
 
@@ -49,21 +60,23 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Create kind cluster with Calico
+      - name: Create kind cluster with ${{ matrix.cni }}
         # kind's default CNI (kindnet) does NOT enforce NetworkPolicy. Running
         # these tests on it would pass every deny assertion for the wrong
         # reason, which is worse than not running them.
-        run: make e2e-cluster
+        run: make e2e-cluster E2E_CNI=${{ matrix.cni }}
 
       - name: Reachability tests
-        run: make e2e
+        run: make e2e E2E_CNI=${{ matrix.cni }}
 
       - name: Diagnostics on failure
         if: failure()
         run: |
           kubectl get pods -A -o wide || true
           kubectl get networkpolicies -A -o yaml || true
+          kubectl get ciliumnetworkpolicies -A -o yaml || true
           kubectl -n kube-system logs -l k8s-app=calico-node --tail=100 || true
+          kubectl -n kube-system logs -l k8s-app=cilium --tail=100 || true
 
       - name: Tear down
         if: always()

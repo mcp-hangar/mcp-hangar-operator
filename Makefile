@@ -161,26 +161,52 @@ endef
 # targets build a cluster whose CNI enforces NetworkPolicy and check reachability.
 #
 # kind's default CNI (kindnet) does NOT enforce NetworkPolicy -- every deny test
-# would pass for the wrong reason. Hence disableDefaultCNI + Calico.
+# would pass for the wrong reason. Hence disableDefaultCNI + a real CNI.
+#
+# E2E_CNI selects which one:
+#   calico (default) -- enforces the Vanilla NetworkPolicy path (CIDR peers).
+#   cilium           -- additionally enforces the Cilium flavor's toFQDNs rules
+#                       (BuildEgressPolicyCiliumNetworkPolicy); no other CNI can.
 
 E2E_CLUSTER ?= mcp-np-e2e
+E2E_CNI ?= calico
 CALICO_VERSION ?= v3.28.2
+CILIUM_VERSION ?= v1.20.1
+CILIUM_CLI_VERSION ?= v0.19.7
+CILIUM_CLI ?= $(LOCALBIN)/cilium
+
+.PHONY: cilium-cli
+cilium-cli: $(CILIUM_CLI) ## Download cilium-cli locally if necessary.
+$(CILIUM_CLI): $(LOCALBIN)
+	curl -sSfL https://github.com/cilium/cilium-cli/releases/download/$(CILIUM_CLI_VERSION)/cilium-$(shell go env GOOS)-$(shell go env GOARCH).tar.gz \
+		| tar -xz -C $(LOCALBIN) cilium
+
+ifeq ($(E2E_CNI),cilium)
+e2e-cluster: cilium-cli
+endif
 
 .PHONY: e2e-cluster
-e2e-cluster: ## Create a kind cluster with Calico for reachability tests.
+e2e-cluster: ## Create a kind cluster with a NetworkPolicy-enforcing CNI (E2E_CNI=calico|cilium).
 	@kind get clusters 2>/dev/null | grep -qx $(E2E_CLUSTER) || \
 		printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: "192.168.0.0/16"\nnodes:\n  - role: control-plane\n' \
 		| kind create cluster --name $(E2E_CLUSTER) --config -
 	@echo "waiting for the API server..."
 	@until kubectl --context kind-$(E2E_CLUSTER) get --raw /healthz >/dev/null 2>&1; do sleep 5; done
+ifeq ($(E2E_CNI),cilium)
+	@$(CILIUM_CLI) install --context kind-$(E2E_CLUSTER) --version $(CILIUM_VERSION) --wait
+	@$(CILIUM_CLI) status --context kind-$(E2E_CLUSTER) --wait
+	@echo "waiting for the node to become Ready (Cilium must be up first)..."
+	@until [ "$$(kubectl --context kind-$(E2E_CLUSTER) get nodes -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}')" = "True" ]; do sleep 10; done
+else
 	@kubectl --context kind-$(E2E_CLUSTER) apply -f https://raw.githubusercontent.com/projectcalico/calico/$(CALICO_VERSION)/manifests/calico.yaml
 	@echo "waiting for the node to become Ready (Calico must be up first)..."
 	@until [ "$$(kubectl --context kind-$(E2E_CLUSTER) get nodes -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}')" = "True" ]; do sleep 10; done
 	@kubectl --context kind-$(E2E_CLUSTER) wait --for=condition=Ready pods -n kube-system -l k8s-app=calico-node --timeout=180s
+endif
 
 .PHONY: e2e
-e2e: ## Run reachability tests against the current kube context.
-	go test -tags e2e ./test/e2e/... -v -timeout 20m
+e2e: ## Run reachability tests against the current kube context (E2E_CNI gates CNI-specific tests).
+	E2E_CNI=$(E2E_CNI) go test -tags e2e ./test/e2e/... -v -timeout 20m
 
 .PHONY: e2e-clean
 e2e-clean: ## Delete the e2e cluster.
