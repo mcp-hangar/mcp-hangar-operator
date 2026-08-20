@@ -185,3 +185,26 @@ e2e: ## Run reachability tests against the current kube context.
 .PHONY: e2e-clean
 e2e-clean: ## Delete the e2e cluster.
 	-kind delete cluster --name $(E2E_CLUSTER)
+
+##@ End-to-end (remote lifecycle, #106)
+
+# Boots a plain kind cluster (default CNI -- nothing here needs NetworkPolicy
+# enforcement) with a LIVE core, a minimal MCP backend and the released
+# operator, then drives the mode:remote MCPServer lifecycle against it: Ready
+# with a real tool count, the not-registered condition, and the sustained
+# core-unreachable probe cadence. Image pins live in
+# test/e2e/remote/manifests/core.yaml and test/e2e/remote/operator/.
+
+E2E_REMOTE_CLUSTER ?= mcp-remote-e2e
+
+.PHONY: e2e-remote-up
+e2e-remote-up: ## Boot kind + core + backend + operator for the remote-lifecycle e2e.
+	E2E_REMOTE_CLUSTER=$(E2E_REMOTE_CLUSTER) test/e2e/remote/up.sh
+
+.PHONY: e2e-remote
+e2e-remote: ## Run the remote-lifecycle e2e against the current kube context.
+	go test -tags e2e_remote ./test/e2e/remote/... -v -timeout 30m
+
+.PHONY: e2e-remote-clean
+e2e-remote-clean: ## Delete the remote-lifecycle e2e cluster.
+	-kind delete cluster --name $(E2E_REMOTE_CLUSTER)

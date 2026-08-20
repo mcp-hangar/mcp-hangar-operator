@@ -1,0 +1,108 @@
+# A live mcp-hangar core for the remote-lifecycle e2e (#106).
+#
+# Image pinned to the newest stable 2.x, deliberately not :latest -- the test
+# pins a response SHAPE, and a floating tag would silently change what shape is
+# being pinned. Bump it on purpose, with the route-inventory drift check as the
+# early-warning for path changes.
+#
+# --unsafe-no-auth: the gateway refuses to bind a non-loopback address without
+# authentication (correctly). This stack is a disposable single-cluster harness
+# whose only client is the operator under test; do not copy this flag anywhere
+# that fronts a real upstream.
+#
+# MCP_CONFIG must point at the mounted file -- mounting alone loads nothing
+# (learned the hard way in core's examples/task_upstream compose).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hangar-config
+  namespace: hangar-e2e
+data:
+  config.yaml: |
+    logging:
+      level: INFO
+      json_format: true
+    mcp_servers:
+      backend:
+        mode: remote
+        endpoint: http://task-upstream.hangar-e2e.svc.cluster.local:8080/mcp
+        # Long enough that the server cannot idle out mid-test.
+        idle_ttl_s: 3600
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-hangar
+  namespace: hangar-e2e
+  labels: { app: mcp-hangar }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mcp-hangar }
+  template:
+    metadata:
+      labels: { app: mcp-hangar }
+    spec:
+      containers:
+        - name: core
+          image: ghcr.io/mcp-hangar/mcp-hangar:2.12.0
+          # args, NOT command: the image's ENTRYPOINT is `mcp-hangar` and its
+          # CMD is the serve arguments. Kubernetes `command` replaces the
+          # ENTRYPOINT (compose's `command` replaces CMD, which is why the
+          # example this was adapted from can spell it the other way), so
+          # spelling it `command` here execs `serve` as a binary: instant exit,
+          # empty logs, CrashLoopBackOff that looks like a config problem.
+          args:
+            - serve
+            - --http
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8080"
+            - --unsafe-no-auth
+          env:
+            # Without this, every operator call gets `400 Invalid host header`
+            # and the CR sits Degraded: core's default allowlist is
+            # localhost,127.0.0.1,::1,testserver, and the operator dials core
+            # by Service DNS. The chart exposes the same knob as
+            # config.trustedHosts and documents the same 400 -- so setting it
+            # here is configuring the stack the way a real deployment must,
+            # not working around the guard. Ports are stripped before matching.
+            - name: MCP_TRUSTED_HOSTS
+              value: "mcp-hangar.hangar-e2e.svc.cluster.local,mcp-hangar.hangar-e2e.svc,mcp-hangar,localhost,127.0.0.1"
+            - { name: MCP_CONFIG, value: /etc/mcp-hangar/config.yaml }
+            - { name: MCP_LOG_LEVEL, value: INFO }
+            - { name: MCP_JSON_LOGS, value: "true" }
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mcp-hangar
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: hangar-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-hangar
+  namespace: hangar-e2e
+spec:
+  selector: { app: mcp-hangar }
+  ports:
+    - port: 8080
+      targetPort: 8080
