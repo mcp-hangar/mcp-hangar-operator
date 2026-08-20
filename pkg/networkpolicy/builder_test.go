@@ -646,3 +646,29 @@ func TestBuildNetworkPolicy_FQDNFailClosed(t *testing.T) {
 	require.Contains(t, np.Annotations, "mcp-hangar.io/host-warnings")
 	assert.Contains(t, np.Annotations["mcp-hangar.io/host-warnings"], "api.internal.example")
 }
+
+// --- LooksClusterInternal (#152) ---
+
+func TestLooksClusterInternal(t *testing.T) {
+	tests := []struct {
+		host string
+		want bool
+	}{
+		{"10.244.1.5/32", true},    // typical pod IP
+		{"192.168.0.0/16", true},   // kind podSubnet used by the e2e cluster
+		{"172.20.0.5", true},       // bare IP, RFC1918
+		{"100.64.3.4/32", true},    // CGNAT: EKS secondary pod CIDR
+		{"fd00::1/128", true},      // IPv6 ULA
+		{"0.0.0.0/0", true},        // catch-all: does not reach pods either
+		{"203.0.113.10/32", false}, // external
+		{"8.8.8.8", false},         // external
+		{"2001:db8::1/128", false}, // external IPv6
+		{"api.example.com", false}, // FQDN: not a CIDR rule at all
+		{"", false},                // nothing to test
+		{"not-a-cidr/32", false},   // unparseable
+	}
+
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, LooksClusterInternal(tt.host), "host %q", tt.host)
+	}
+}

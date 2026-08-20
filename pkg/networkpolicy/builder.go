@@ -5,10 +5,12 @@ package networkpolicy
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -282,6 +284,69 @@ func labelSelectorToUnstructured(sel metav1.LabelSelector) map[string]interface{
 		out["matchExpressions"] = exprs
 	}
 	return out
+}
+
+// CiliumAvailable reports whether the CiliumNetworkPolicy CRD is installed, so
+// callers can tell a Cilium cluster from any other CNI.
+func CiliumAvailable(mapper meta.RESTMapper) bool {
+	_, err := mapper.RESTMapping(
+		schema.GroupKind{Group: CiliumGroup, Kind: CiliumNetworkPolicyKind}, CiliumVersion)
+	return err == nil
+}
+
+// CiliumCIDRMatchNote explains the Cilium divergence behind #152, for whoever
+// wrote a CIDR egress rule that looks cluster-internal.
+//
+// Cilium matches policy on security identities, so by default a CIDR selector
+// (NetworkPolicy ipBlock, CiliumNetworkPolicy toCIDR) does not select
+// cluster-internal entities: the rule is accepted, matches nothing, and the
+// traffic is dropped on the wire. Calico honours the same rule. Cluster
+// operators opt in with policyCIDRMatchMode.
+const CiliumCIDRMatchNote = "this cluster runs Cilium, which matches policy on security identities: " +
+	"by default a CIDR rule (NetworkPolicy ipBlock / CiliumNetworkPolicy toCIDR) does NOT match " +
+	"cluster-internal pod or node IPs, so if this destination is in-cluster the rule selects nothing " +
+	"and the traffic is silently dropped (it works on Calico). Install Cilium with " +
+	"policyCIDRMatchMode={pods} (--policy-cidr-match-mode=pods) to make CIDR rules match pod IPs. " +
+	"See https://docs.cilium.io/en/stable/network/kubernetes/policy/"
+
+// clusterInternalRanges are the blocks a Kubernetes pod, Service or node IP is
+// normally drawn from. Deliberately a fixed list rather than a lookup of the
+// live pod/Service CIDR: those are not reliably readable (Cilium's own IPAM
+// does not populate Node.spec.podCIDR), and a wrong-but-confident answer is
+// worse than a documented heuristic. See LooksClusterInternal.
+var clusterInternalRanges = []netip.Prefix{
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("100.64.0.0/10"), // CGNAT: EKS secondary pod CIDRs
+	netip.MustParsePrefix("fc00::/7"),      // IPv6 unique local
+}
+
+// LooksClusterInternal reports whether host (a literal IP or CIDR; a hostname
+// is always false) overlaps a range that cluster-internal IPs are drawn from.
+//
+// It over-reports: a legitimately private EXTERNAL upstream (an on-prem
+// database at 10.x, a peered VPC) matches too, and so does a catch-all like
+// 0.0.0.0/0 -- which is correct, since that does not reach pods on stock Cilium
+// either. It under-reports for a cluster whose pod CIDR is publicly routable
+// (some IPv6/GUA clusters). That is why callers WARN and never reject: the
+// operator cannot read the CNI's policy-cidr-match-mode either.
+func LooksClusterInternal(host string) bool {
+	cidr, ok := asCIDR(host)
+	if !ok {
+		return false
+	}
+	p, err := netip.ParsePrefix(cidr)
+	if err != nil {
+		return false
+	}
+	p = p.Masked()
+	for _, r := range clusterInternalRanges {
+		if r.Overlaps(p) {
+			return true
+		}
+	}
+	return false
 }
 
 // asCIDR normalizes a host that is a literal IP or CIDR into a CIDR string. A

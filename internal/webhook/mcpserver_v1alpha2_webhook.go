@@ -10,6 +10,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
+	"github.com/mcp-hangar/operator/pkg/networkpolicy"
 )
 
 // +kubebuilder:webhook:path=/validate-mcp-hangar-io-v1alpha2-mcpserver,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcp-hangar.io,resources=mcpservers,verbs=create;update,versions=v1alpha2,name=vmcpserver-v1alpha2.kb.io,admissionReviewVersions=v1
@@ -122,6 +123,18 @@ func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 // unrestrictedEgressAnnotation opts a provider into wildcard (host: "*") egress.
 const unrestrictedEgressAnnotation = "hangar.io/allow-unrestricted-egress"
 
+// ciliumDetected records whether this cluster runs Cilium (its CRD is
+// installed). Set once at operator startup via SetCiliumDetected; false means
+// "no Cilium detected", which is also the right answer when webhooks run
+// outside a cluster (unit tests). Gates the #152 CIDR warning so Calico and
+// other CNIs -- which do honour an ipBlock naming a pod IP -- stay quiet.
+var ciliumDetected bool
+
+// SetCiliumDetected records whether the cluster runs Cilium.
+func SetCiliumDetected(detected bool) {
+	ciliumDetected = detected
+}
+
 // hasWildcardEgressV2 reports whether any egress rule targets host "*".
 func hasWildcardEgressV2(p *mcpv1alpha2.MCPServer) bool {
 	if p.Spec.Capabilities == nil || p.Spec.Capabilities.Network == nil {
@@ -156,6 +169,17 @@ func validateCapabilitiesV2(caps *mcpv1alpha2.MCPServerCapabilities) ([]string, 
 				warnings = append(warnings, fmt.Sprintf(
 					"spec.capabilities.network.egress[%d] (host %q) is not enforceable by the NetworkPolicy backend and will NOT be applied; specify a cidr for network-level enforcement. FQDN egress enforcement is deferred to the Tetragon backend (ADR-006 v1.5).",
 					i, rule.Host))
+				continue
+			}
+			// #152: a CIDR rule naming an in-cluster upstream is accepted by the
+			// apiserver and dropped on the wire under stock Cilium. Warn (never
+			// reject): whether policyCIDRMatchMode is set is not readable from
+			// here, and the range test cannot tell an in-cluster pod IP from a
+			// legitimately private external upstream.
+			if ciliumDetected && networkpolicy.LooksClusterInternal(rule.CIDR) {
+				warnings = append(warnings, fmt.Sprintf(
+					"spec.capabilities.network.egress[%d] (cidr %q): %s",
+					i, rule.CIDR, networkpolicy.CiliumCIDRMatchNote))
 			}
 		}
 	}
