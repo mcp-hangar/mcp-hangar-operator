@@ -234,17 +234,20 @@ func testNotRegistered(t *testing.T, cl crclient.Client) {
 }
 
 // testProbeCadence scales core to zero and counts probe attempts in the
-// operator's log. Both CRs from the earlier subtests are on the 10s
-// errorRequeueAfter cadence once core is gone, and each attempt logs
-// healthUnreachableLog exactly once -- so the operator log IS the probe counter.
+// operator's log: each attempt logs healthUnreachableLog exactly once, so the
+// operator log IS the probe counter.
 //
-// Bounds, not equality, and the arithmetic is deliberately loose at the bottom:
-// a probe cycle is the 10s requeue plus the client's in-call retries (~3.5s),
-// so each CR contributes ~4-6 per minute and two CRs put the expected count for
-// a 2-minute window around 18-24. The floor of 4 still separates "sustained"
-// from "stalled" even if connections to the endpointless Service hang rather
-// than being refused; the ceiling of 60 catches the #105 shape, which was
-// ~168/s -- twenty thousand per window, not sixty.
+// The count is driven by "ghost", which is already on the 10s
+// errorRequeueAfter cadence; "backend" is Ready and therefore on the 5-minute
+// readyRequeueAfter, so it contributes at most one attempt inside the window
+// before dropping to the error cadence too.
+//
+// Bounds, not equality, and deliberately loose at the bottom: a probe cycle is
+// the 10s requeue plus the client's in-call retries (~3.5s), so a 2-minute
+// window holds roughly 9. The floor of 4 still separates "sustained" from
+// "stalled" even if connections to the endpointless Service hang rather than
+// being refused; the ceiling of 60 catches the #105 shape, which was ~168/s --
+// twenty thousand per window, not sixty. Measured on the first green run: 18.
 func testProbeCadence(t *testing.T, cl crclient.Client, cs *kubernetes.Clientset) {
 	ctx := context.Background()
 

@@ -61,6 +61,15 @@ spec:
             - "8080"
             - --unsafe-no-auth
           env:
+            # Without this, every operator call gets `400 Invalid host header`
+            # and the CR sits Degraded: core's default allowlist is
+            # localhost,127.0.0.1,::1,testserver, and the operator dials core
+            # by Service DNS. The chart exposes the same knob as
+            # config.trustedHosts and documents the same 400 -- so setting it
+            # here is configuring the stack the way a real deployment must,
+            # not working around the guard. Ports are stripped before matching.
+            - name: MCP_TRUSTED_HOSTS
+              value: "mcp-hangar.hangar-e2e.svc.cluster.local,mcp-hangar.hangar-e2e.svc,mcp-hangar,localhost,127.0.0.1"
             - { name: MCP_CONFIG, value: /etc/mcp-hangar/config.yaml }
             - { name: MCP_LOG_LEVEL, value: INFO }
             - { name: MCP_JSON_LOGS, value: "true" }
