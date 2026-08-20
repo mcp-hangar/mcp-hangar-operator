@@ -1,0 +1,50 @@
+# A minimal MCP-over-HTTP upstream for the remote-lifecycle e2e (#106).
+#
+# The image is core's examples/task_upstream, built by up.sh from the same core
+# tag the e2e boots and loaded into kind (imagePullPolicy: Never). It serves
+# streamable HTTP on :8080/mcp with exactly three tools -- long_job,
+# long_job_consent, echo -- which is what makes status.toolsCount assertable.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hangar-e2e
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: task-upstream
+  namespace: hangar-e2e
+  labels: { app: task-upstream }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: task-upstream }
+  template:
+    metadata:
+      labels: { app: task-upstream }
+    spec:
+      containers:
+        - name: server
+          image: localhost/mcp-task-upstream:e2e
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - { name: MCP_HOST, value: "0.0.0.0" }
+            - { name: MCP_PORT, value: "8080" }
+            - { name: MCP_HTTP_PATH, value: "/mcp" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: task-upstream
+  namespace: hangar-e2e
+spec:
+  selector: { app: task-upstream }
+  ports:
+    - port: 8080
+      targetPort: 8080

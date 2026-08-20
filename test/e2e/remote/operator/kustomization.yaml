@@ -1,0 +1,42 @@
+# Operator install for the remote-lifecycle e2e (#106).
+#
+# Deliberately NOT config/default: that overlay wires the admission/conversion
+# webhooks and therefore needs cert-manager, none of which this e2e is about --
+# CRD validity is already covered by the crd-install CI job, and the CRDs are
+# applied straight from config/crd/bases by up.sh (same as that job).
+#
+# The image is the published GHCR release, pinned. Must be >= 0.15.2: that is
+# the first tag carrying #107, without which the core-unreachable cadence this
+# e2e asserts (~6/min) reads ~168/s.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: mcp-hangar
+namePrefix: mcp-hangar-operator-
+
+labels:
+  - includeSelectors: true
+    pairs:
+      app.kubernetes.io/name: mcp-hangar-operator
+
+resources:
+  - ../../../../config/rbac
+  - ../../../../config/manager
+
+images:
+  # config/manager already rewrites `controller` to the GHCR name with :latest;
+  # this overlay only pins the tag (matching on the post-rewrite name).
+  - name: ghcr.io/mcp-hangar/mcp-hangar-operator
+    newTag: "0.16.0"
+
+patches:
+  # Point the manager at the live core deployed by manifests/core.yaml.
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: controller-manager
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --hangar-url=http://mcp-hangar.hangar-e2e.svc.cluster.local:8080
