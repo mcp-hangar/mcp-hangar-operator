@@ -7,29 +7,6 @@ import (
 )
 
 var (
-	// ReconcileTotal counts total reconciliations
-	ReconcileTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "mcp",
-			Subsystem: "operator",
-			Name:      "reconcile_total",
-			Help:      "Total number of reconciliations by controller and result",
-		},
-		[]string{"controller", "result"},
-	)
-
-	// ReconcileDuration tracks reconciliation duration
-	ReconcileDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "mcp",
-			Subsystem: "operator",
-			Name:      "reconcile_duration_seconds",
-			Help:      "Duration of reconciliation in seconds",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 15),
-		},
-		[]string{"controller"},
-	)
-
 	// MCPServerState tracks current provider states
 	MCPServerState = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -72,17 +49,6 @@ var (
 			Help:      "Total provider restarts",
 		},
 		[]string{"namespace", "name"},
-	)
-
-	// CRDCount tracks CRD instances
-	CRDCount = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "mcp",
-			Subsystem: "operator",
-			Name:      "crd_count",
-			Help:      "Number of CRD instances by kind",
-		},
-		[]string{"kind"},
 	)
 
 	// GroupMCPServerCount tracks providers per group
@@ -174,13 +140,10 @@ var (
 func init() {
 	// Register all metrics with the controller-runtime metrics registry
 	metrics.Registry.MustRegister(
-		ReconcileTotal,
-		ReconcileDuration,
 		MCPServerState,
 		MCPServerToolsCount,
 		MCPServerHealthCheckFailures,
 		MCPServerRestarts,
-		CRDCount,
 		GroupMCPServerCount,
 		GroupStatusWriteTotal,
 		DiscoverySourceCount,

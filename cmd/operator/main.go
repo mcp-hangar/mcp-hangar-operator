@@ -148,7 +148,6 @@ func main() {
 		Scheme:       mgr.GetScheme(),
 		Recorder:     mgr.GetEventRecorder("mcpserver-controller"),
 		HangarClient: hangarClient,
-		Config:       controller.DefaultReconcilerConfig(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPServer")
 		os.Exit(1)
@@ -177,10 +176,9 @@ func main() {
 
 	// Register MCPDiscoverySource controller.
 	if err := (&controller.MCPDiscoverySourceReconciler{
-		Client:       mgr.GetClient(),
-		Scheme:       mgr.GetScheme(),
-		Recorder:     mgr.GetEventRecorder("mcpdiscoverysource-controller"),
-		HangarClient: hangarClient,
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorder("mcpdiscoverysource-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPDiscoverySource")
 		os.Exit(1)

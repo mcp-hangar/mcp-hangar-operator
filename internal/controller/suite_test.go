@@ -97,7 +97,6 @@ func TestMain(m *testing.M) {
 			Client:   mgr.GetClient(),
 			Scheme:   mgr.GetScheme(),
 			Recorder: mgr.GetEventRecorder("mcpserver-controller"),
-			Config:   DefaultReconcilerConfig(),
 		}).SetupWithManager(mgr); err != nil {
 			panic("failed to setup MCPServer controller: " + err.Error())
 		}

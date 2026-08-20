@@ -40,7 +40,6 @@ func newMCPServerReconciler(objs ...runtime.Object) *MCPServerReconciler {
 		Client:   fakeClient,
 		Scheme:   scheme,
 		Recorder: events.NewFakeRecorder(10),
-		Config:   DefaultReconcilerConfig(),
 	}
 }
 

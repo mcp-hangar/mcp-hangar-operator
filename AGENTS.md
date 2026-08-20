@@ -236,8 +236,8 @@ Prometheus metrics exposed via controller-runtime metrics server:
 
 | Metric | Type | Labels |
 |--------|------|--------|
-| `mcp_operator_reconcile_total` | Counter | controller, result |
-| `mcp_operator_reconcile_duration_seconds` | Histogram | controller |
+| `controller_runtime_reconcile_total` | Counter | controller, result (controller-runtime built-in) |
+| `controller_runtime_reconcile_time_seconds` | Histogram | controller (controller-runtime built-in) |
 | `mcp_operator_provider_state` | Gauge | provider, namespace, state |
 
 ## Dependencies on Other Subprojects

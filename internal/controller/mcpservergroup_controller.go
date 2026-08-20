@@ -4,7 +4,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"time"
 
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -46,13 +45,8 @@ type MCPServerGroupReconciler struct {
 // Reconcile performs the reconciliation loop for MCPServerGroup
 func (r *MCPServerGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	startTime := time.Now()
 
 	logger.Info("Reconciling MCPServerGroup", "namespacedName", req.NamespacedName)
-	defer func() {
-		duration := time.Since(startTime)
-		metrics.ReconcileDuration.WithLabelValues("mcpservergroup").Observe(duration.Seconds())
-	}()
 
 	// Fetch the MCPServerGroup instance
 	group := &mcpv1alpha2.MCPServerGroup{}
@@ -62,19 +56,12 @@ func (r *MCPServerGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get MCPServerGroup")
-		metrics.ReconcileTotal.WithLabelValues("mcpservergroup", "error").Inc()
 		return ctrl.Result{}, err
 	}
 
 	// Handle deletion
 	if !group.ObjectMeta.DeletionTimestamp.IsZero() {
-		result, err := r.reconcileDelete(ctx, group)
-		if err != nil {
-			metrics.ReconcileTotal.WithLabelValues("mcpservergroup", "error").Inc()
-		} else {
-			metrics.ReconcileTotal.WithLabelValues("mcpservergroup", "success").Inc()
-		}
-		return result, err
+		return r.reconcileDelete(ctx, group)
 	}
 
 	// Add finalizer if not present
@@ -87,14 +74,7 @@ func (r *MCPServerGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// Main reconciliation logic
-	result, err := r.reconcileNormal(ctx, group)
-	if err != nil {
-		metrics.ReconcileTotal.WithLabelValues("mcpservergroup", "error").Inc()
-	} else {
-		metrics.ReconcileTotal.WithLabelValues("mcpservergroup", "success").Inc()
-	}
-
-	return result, err
+	return r.reconcileNormal(ctx, group)
 }
 
 // reconcileNormal handles normal (non-deletion) reconciliation for groups

@@ -8,31 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestReconcileTotal(t *testing.T) {
-	// Reset counter before test
-	ReconcileTotal.Reset()
-
-	// Increment counter
-	ReconcileTotal.WithLabelValues("mcpserver", "success").Inc()
-	ReconcileTotal.WithLabelValues("mcpserver", "success").Inc()
-	ReconcileTotal.WithLabelValues("mcpserver", "error").Inc()
-
-	// Verify metrics
-	assert.Equal(t, float64(2), testutil.ToFloat64(ReconcileTotal.WithLabelValues("mcpserver", "success")))
-	assert.Equal(t, float64(1), testutil.ToFloat64(ReconcileTotal.WithLabelValues("mcpserver", "error")))
-}
-
-func TestReconcileDuration(t *testing.T) {
-	// Observe some durations
-	ReconcileDuration.WithLabelValues("mcpserver").Observe(0.1)
-	ReconcileDuration.WithLabelValues("mcpserver").Observe(0.5)
-	ReconcileDuration.WithLabelValues("mcpserver").Observe(1.2)
-
-	// Verify that observations were recorded
-	count := testutil.CollectAndCount(ReconcileDuration)
-	assert.Greater(t, count, 0)
-}
-
 func TestMCPServerState(t *testing.T) {
 	// Set provider states
 	SetMCPServerState("default", "provider1", "Ready")
@@ -78,18 +53,6 @@ func TestMCPServerHealthCheckFailures(t *testing.T) {
 	assert.Equal(t, float64(3), testutil.ToFloat64(MCPServerHealthCheckFailures.WithLabelValues("default", "provider1")))
 }
 
-func TestCRDCount(t *testing.T) {
-	// Set CRD counts
-	CRDCount.WithLabelValues("MCPServer").Set(25)
-	CRDCount.WithLabelValues("MCPServerGroup").Set(5)
-	CRDCount.WithLabelValues("MCPDiscoverySource").Set(3)
-
-	// Verify metrics
-	assert.Equal(t, float64(25), testutil.ToFloat64(CRDCount.WithLabelValues("MCPServer")))
-	assert.Equal(t, float64(5), testutil.ToFloat64(CRDCount.WithLabelValues("MCPServerGroup")))
-	assert.Equal(t, float64(3), testutil.ToFloat64(CRDCount.WithLabelValues("MCPDiscoverySource")))
-}
-
 func TestCapabilityViolationsTotal(t *testing.T) {
 	CapabilityViolationsTotal.Reset()
 
@@ -115,31 +78,15 @@ func TestRecordViolation(t *testing.T) {
 func TestMetricsRegistered(t *testing.T) {
 	// Verify all metrics are registered
 	metrics := []prometheus.Collector{
-		ReconcileTotal,
-		ReconcileDuration,
 		MCPServerState,
 		MCPServerToolsCount,
 		MCPServerHealthCheckFailures,
-		CRDCount,
 		CapabilityViolationsTotal,
 	}
 
 	for _, metric := range metrics {
 		assert.NotNil(t, metric, "Metric should be initialized")
 	}
-}
-
-func TestReconcileTotal_Labels(t *testing.T) {
-	// Test different controller types
-	ReconcileTotal.Reset()
-
-	ReconcileTotal.WithLabelValues("mcpserver", "success").Inc()
-	ReconcileTotal.WithLabelValues("mcpservergroup", "success").Inc()
-	ReconcileTotal.WithLabelValues("mcpdiscoverysource", "success").Inc()
-
-	assert.Equal(t, float64(1), testutil.ToFloat64(ReconcileTotal.WithLabelValues("mcpserver", "success")))
-	assert.Equal(t, float64(1), testutil.ToFloat64(ReconcileTotal.WithLabelValues("mcpservergroup", "success")))
-	assert.Equal(t, float64(1), testutil.ToFloat64(ReconcileTotal.WithLabelValues("mcpdiscoverysource", "success")))
 }
 
 func TestMCPServerState_AllStates(t *testing.T) {
