@@ -46,7 +46,13 @@ spec:
       containers:
         - name: core
           image: ghcr.io/mcp-hangar/mcp-hangar:2.12.0
-          command:
+          # args, NOT command: the image's ENTRYPOINT is `mcp-hangar` and its
+          # CMD is the serve arguments. Kubernetes `command` replaces the
+          # ENTRYPOINT (compose's `command` replaces CMD, which is why the
+          # example this was adapted from can spell it the other way), so
+          # spelling it `command` here execs `serve` as a binary: instant exit,
+          # empty logs, CrashLoopBackOff that looks like a config problem.
+          args:
             - serve
             - --http
             - --host

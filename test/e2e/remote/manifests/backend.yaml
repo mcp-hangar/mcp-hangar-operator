@@ -36,6 +36,12 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
+            # Explicit uid because the image's USER is the NAME `mcp`. With
+            # runAsNonRoot and a non-numeric image user, kubelet cannot prove
+            # the user is not root and refuses to start the container
+            # (CreateContainerConfigError, no logs). 1000 is the uid the
+            # example's Dockerfile creates.
+            runAsUser: 1000
             capabilities: { drop: ["ALL"] }
 ---
 apiVersion: v1
