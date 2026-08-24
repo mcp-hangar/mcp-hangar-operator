@@ -263,6 +263,20 @@ type L7ToolRules struct {
 	RequireApproval []string `json:"requireApproval,omitempty"`
 }
 
+// L7HeaderMatch mirrors one Mcp-Param-* selector in the compiled policy.
+type L7HeaderMatch struct {
+	Name   string   `json:"name"`
+	Values []string `json:"values"`
+}
+
+// L7HeaderRules mirrors the Mcp-Param-* selectors, same precedence as the tool
+// globs: deny, then require-approval, then allow.
+type L7HeaderRules struct {
+	Allow           []L7HeaderMatch `json:"allow,omitempty"`
+	Deny            []L7HeaderMatch `json:"deny,omitempty"`
+	RequireApproval []L7HeaderMatch `json:"requireApproval,omitempty"`
+}
+
 // L7ArgumentRules mirrors the L7 deterministic argument constraints.
 type L7ArgumentRules struct {
 	SecretPatterns  []string `json:"secretPatterns,omitempty"`
@@ -272,10 +286,14 @@ type L7ArgumentRules struct {
 // L7PolicyPayload is the compiled L7 egress policy the operator pushes to core.
 // It matches the wire form core's L7Policy.from_dict parses.
 type L7PolicyPayload struct {
-	Tools         L7ToolRules     `json:"tools"`
-	Arguments     L7ArgumentRules `json:"arguments"`
-	DefaultAction string          `json:"defaultAction"`
-	Mode          string          `json:"mode,omitempty"`
+	Tools     L7ToolRules     `json:"tools"`
+	Arguments L7ArgumentRules `json:"arguments"`
+	// Headers is omitted entirely when empty: a core that predates the
+	// Mcp-Param-* selector rejects nothing it does not recognise, and a core
+	// that has it parses an absent block as no selectors.
+	Headers       *L7HeaderRules `json:"headers,omitempty"`
+	DefaultAction string         `json:"defaultAction"`
+	Mode          string         `json:"mode,omitempty"`
 }
 
 // SetL7Policy pushes a compiled L7 egress policy for an mcp_server to core.
