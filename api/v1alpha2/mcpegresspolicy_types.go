@@ -114,6 +114,55 @@ type ToolRules struct {
 	RequireApproval []string `json:"requireApproval,omitempty"`
 }
 
+// HeaderMatch selects on one SEP-2243 `Mcp-Param-<Token>` request header.
+//
+// Only Mcp-Param-* is selectable. Any other header is one the policy author
+// does not own -- Authorization above all -- and a selector on it would turn an
+// egress policy into a way to read credentials out of a request by writing
+// globs until one matched. Core refuses a non-Mcp-Param name at parse; the CEL
+// rule below refuses it at `kubectl apply`, where the author can see it.
+// +kubebuilder:validation:XValidation:rule="self.name.lowerAscii().startsWith('mcp-param-')",message="only Mcp-Param-* headers are selectable"
+type HeaderMatch struct {
+	// Name is the header, e.g. Mcp-Param-Region. Matched case-insensitively.
+	// +kubebuilder:validation:MinLength=11
+	// +kubebuilder:validation:MaxLength=128
+	Name string `json:"name"`
+
+	// Values are globs matched against the header's value. A selector with no
+	// values can never fire, so at least one is required.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=64
+	Values []string `json:"values"`
+}
+
+// HeaderRules matches MCP requests by Mcp-Param-* header value, with the same
+// precedence as the tool-name globs: deny, then require-approval, then allow.
+//
+// Region, tenant and priority -- the SEP's own examples -- are the dimensions
+// L7 egress wants, and they are on the wire without parsing the body. Matching
+// them is what keeps this a header matcher rather than DPI.
+//
+// The protocol-version gate is core's and is deliberately not expressed here: a
+// request whose MCP-Protocol-Version predates mandatory header-body validation
+// never satisfies a selector, because nothing checked that its headers agree
+// with its body.
+type HeaderRules struct {
+	// Allow lists header selectors permitted to this upstream.
+	// +kubebuilder:validation:MaxItems=64
+	// +optional
+	Allow []HeaderMatch `json:"allow,omitempty"`
+
+	// Deny lists header selectors rejected outright.
+	// +kubebuilder:validation:MaxItems=64
+	// +optional
+	Deny []HeaderMatch `json:"deny,omitempty"`
+
+	// RequireApproval lists header selectors that route into approval gates.
+	// +kubebuilder:validation:MaxItems=64
+	// +optional
+	RequireApproval []HeaderMatch `json:"requireApproval,omitempty"`
+}
+
 // ArgumentRules constrains tool-call arguments. Detection is deterministic by
 // design: pattern and size limits only -- full DLP and ML-based detection are
 // explicit non-goals (ADR-013).
@@ -154,6 +203,11 @@ type UpstreamRule struct {
 	// Arguments constrains tool-call arguments to this upstream.
 	// +optional
 	Arguments *ArgumentRules `json:"arguments,omitempty"`
+
+	// Headers constrains which requests may reach this upstream by their
+	// SEP-2243 Mcp-Param-* headers.
+	// +optional
+	Headers *HeaderRules `json:"headers,omitempty"`
 }
 
 // NetworkBackstop controls generation of the L3/L4 backstop that prevents the

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -220,12 +221,18 @@ func providerNamesFromSelector(sel metav1.LabelSelector) []string {
 func compileL7Policy(policy *mcpv1alpha2.MCPEgressPolicy) *hangar.L7PolicyPayload {
 	var allow, deny, approval, secrets []string
 	var maxBytes *int64
+	var headers hangar.L7HeaderRules
 	for i := range policy.Spec.Upstreams {
 		u := policy.Spec.Upstreams[i]
 		if u.Tools != nil {
 			allow = appendUnique(allow, u.Tools.Allow...)
 			deny = appendUnique(deny, u.Tools.Deny...)
 			approval = appendUnique(approval, u.Tools.RequireApproval...)
+		}
+		if u.Headers != nil {
+			headers.Allow = appendUniqueHeaders(headers.Allow, u.Headers.Allow...)
+			headers.Deny = appendUniqueHeaders(headers.Deny, u.Headers.Deny...)
+			headers.RequireApproval = appendUniqueHeaders(headers.RequireApproval, u.Headers.RequireApproval...)
 		}
 		if u.Arguments != nil && u.Arguments.Deny != nil {
 			secrets = appendUnique(secrets, u.Arguments.Deny.SecretPatterns...)
@@ -243,12 +250,38 @@ func compileL7Policy(policy *mcpv1alpha2.MCPEgressPolicy) *hangar.L7PolicyPayloa
 	if mode == "" {
 		mode = string(mcpv1alpha2.EgressPolicyModeAudit)
 	}
-	return &hangar.L7PolicyPayload{
+	payload := &hangar.L7PolicyPayload{
 		Tools:         hangar.L7ToolRules{Allow: allow, Deny: deny, RequireApproval: approval},
 		Arguments:     hangar.L7ArgumentRules{SecretPatterns: secrets, MaxPayloadBytes: maxBytes},
 		DefaultAction: defaultAction,
 		Mode:          mode,
 	}
+	// Sent only when a selector exists, so a policy that declares none is byte
+	// identical to what this operator produced before the field existed.
+	if len(headers.Allow) > 0 || len(headers.Deny) > 0 || len(headers.RequireApproval) > 0 {
+		payload.Headers = &headers
+	}
+	return payload
+}
+
+// appendUniqueHeaders appends selectors not already present, preserving order.
+// Two entries naming the same header are not merged: core evaluates them as
+// alternatives, which is what two rules on one header already mean.
+func appendUniqueHeaders(dst []hangar.L7HeaderMatch, values ...mcpv1alpha2.HeaderMatch) []hangar.L7HeaderMatch {
+	for _, v := range values {
+		candidate := hangar.L7HeaderMatch{Name: v.Name, Values: append([]string(nil), v.Values...)}
+		found := false
+		for _, existing := range dst {
+			if existing.Name == candidate.Name && slices.Equal(existing.Values, candidate.Values) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			dst = append(dst, candidate)
+		}
+	}
+	return dst
 }
 
 // appendUnique appends values not already present, preserving order.
