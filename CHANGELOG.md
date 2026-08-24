@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.0...v0.17.1) (2026-08-24)
+
+
+### Added
+
+* **api:** an egress policy can select on Mcp-Param-* headers ([#161](https://github.com/mcp-hangar/mcp-hangar-operator/issues/161)) ([5010359](https://github.com/mcp-hangar/mcp-hangar-operator/commit/5010359d19d6b5797dad67d64dc27644650ad653)), closes [#160](https://github.com/mcp-hangar/mcp-hangar-operator/issues/160)
+
 ## [0.17.0](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.16.0...v0.17.0) (2026-08-20)
 
 
