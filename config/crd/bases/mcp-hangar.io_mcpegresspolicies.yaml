@@ -146,6 +146,122 @@ spec:
                               type: array
                           type: object
                       type: object
+                    headers:
+                      description: |-
+                        Headers constrains which requests may reach this upstream by their
+                        SEP-2243 Mcp-Param-* headers.
+                      properties:
+                        allow:
+                          description: Allow lists header selectors permitted to this
+                            upstream.
+                          items:
+                            description: |-
+                              HeaderMatch selects on one SEP-2243 `Mcp-Param-<Token>` request header.
+
+                              Only Mcp-Param-* is selectable. Any other header is one the policy author
+                              does not own -- Authorization above all -- and a selector on it would turn an
+                              egress policy into a way to read credentials out of a request by writing
+                              globs until one matched. Core refuses a non-Mcp-Param name at parse; the CEL
+                              rule below refuses it at `kubectl apply`, where the author can see it.
+                            properties:
+                              name:
+                                description: Name is the header, e.g. Mcp-Param-Region.
+                                  Matched case-insensitively.
+                                maxLength: 128
+                                minLength: 11
+                                type: string
+                              values:
+                                description: |-
+                                  Values are globs matched against the header's value. A selector with no
+                                  values can never fire, so at least one is required.
+                                items:
+                                  type: string
+                                maxItems: 64
+                                minItems: 1
+                                type: array
+                            required:
+                            - name
+                            - values
+                            type: object
+                            x-kubernetes-validations:
+                            - message: only Mcp-Param-* headers are selectable
+                              rule: self.name.lowerAscii().startsWith('mcp-param-')
+                          maxItems: 64
+                          type: array
+                        deny:
+                          description: Deny lists header selectors rejected outright.
+                          items:
+                            description: |-
+                              HeaderMatch selects on one SEP-2243 `Mcp-Param-<Token>` request header.
+
+                              Only Mcp-Param-* is selectable. Any other header is one the policy author
+                              does not own -- Authorization above all -- and a selector on it would turn an
+                              egress policy into a way to read credentials out of a request by writing
+                              globs until one matched. Core refuses a non-Mcp-Param name at parse; the CEL
+                              rule below refuses it at `kubectl apply`, where the author can see it.
+                            properties:
+                              name:
+                                description: Name is the header, e.g. Mcp-Param-Region.
+                                  Matched case-insensitively.
+                                maxLength: 128
+                                minLength: 11
+                                type: string
+                              values:
+                                description: |-
+                                  Values are globs matched against the header's value. A selector with no
+                                  values can never fire, so at least one is required.
+                                items:
+                                  type: string
+                                maxItems: 64
+                                minItems: 1
+                                type: array
+                            required:
+                            - name
+                            - values
+                            type: object
+                            x-kubernetes-validations:
+                            - message: only Mcp-Param-* headers are selectable
+                              rule: self.name.lowerAscii().startsWith('mcp-param-')
+                          maxItems: 64
+                          type: array
+                        requireApproval:
+                          description: RequireApproval lists header selectors that
+                            route into approval gates.
+                          items:
+                            description: |-
+                              HeaderMatch selects on one SEP-2243 `Mcp-Param-<Token>` request header.
+
+                              Only Mcp-Param-* is selectable. Any other header is one the policy author
+                              does not own -- Authorization above all -- and a selector on it would turn an
+                              egress policy into a way to read credentials out of a request by writing
+                              globs until one matched. Core refuses a non-Mcp-Param name at parse; the CEL
+                              rule below refuses it at `kubectl apply`, where the author can see it.
+                            properties:
+                              name:
+                                description: Name is the header, e.g. Mcp-Param-Region.
+                                  Matched case-insensitively.
+                                maxLength: 128
+                                minLength: 11
+                                type: string
+                              values:
+                                description: |-
+                                  Values are globs matched against the header's value. A selector with no
+                                  values can never fire, so at least one is required.
+                                items:
+                                  type: string
+                                maxItems: 64
+                                minItems: 1
+                                type: array
+                            required:
+                            - name
+                            - values
+                            type: object
+                            x-kubernetes-validations:
+                            - message: only Mcp-Param-* headers are selectable
+                              rule: self.name.lowerAscii().startsWith('mcp-param-')
+                          maxItems: 64
+                          type: array
+                      type: object
                     match:
                       description: Match selects the upstream and its trust conditions.
                       properties:
