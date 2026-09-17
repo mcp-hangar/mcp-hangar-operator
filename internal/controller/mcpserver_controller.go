@@ -413,7 +413,7 @@ func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *m
 
 	setServerCondition(mcpServer, ConditionReady, metav1.ConditionTrue, "ProviderReady", "Provider is ready")
 	setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionFalse, "Reconciled", "")
-	setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionFalse, "", "")
+	setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionFalse, "Healthy", "Provider is healthy")
 	setServerCondition(mcpServer, ConditionAvailable, metav1.ConditionTrue, "Available", "Provider is available")
 
 	r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonReady, ActionReconcile,
