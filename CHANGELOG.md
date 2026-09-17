@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.2](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.1...v0.17.2) (2026-09-17)
+
+
+### Fixed
+
+* **controller:** give the ready path's Degraded condition a reason ([#175](https://github.com/mcp-hangar/mcp-hangar-operator/issues/175)) ([a483a06](https://github.com/mcp-hangar/mcp-hangar-operator/commit/a483a06b843e6c0e2305eb1f64ba06fd5fcd5c06)), closes [#174](https://github.com/mcp-hangar/mcp-hangar-operator/issues/174)
+
 ## [0.17.1](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.0...v0.17.1) (2026-08-24)
 
 
