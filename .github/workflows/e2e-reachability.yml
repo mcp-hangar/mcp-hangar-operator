@@ -50,8 +50,22 @@ jobs:
         # cilium is the only CNI that enforces the toFQDNs rules the Cilium
         # flavor emits (issue #110) -- without this leg, the feature's headline
         # capability is covered by API-object assertions only.
-        cni: [calico, cilium]
-    name: reachability (${{ matrix.cni }})
+        # cilium-nodelocaldns is the same CNI with a per-node DNS cache as the
+        # resolver (issue #145). It is a third leg rather than a change to the
+        # second: a cluster whose pods resolve through kube-dns and one whose
+        # pods resolve through a link-local cache are different claims, and
+        # folding them together would retire the plain one.
+        include:
+          - leg: calico
+            cni: calico
+            nodelocaldns: ""
+          - leg: cilium
+            cni: cilium
+            nodelocaldns: ""
+          - leg: cilium-nodelocaldns
+            cni: cilium
+            nodelocaldns: "1"
+    name: reachability (${{ matrix.leg }})
     steps:
       - uses: actions/checkout@v7
 
@@ -64,10 +78,10 @@ jobs:
         # kind's default CNI (kindnet) does NOT enforce NetworkPolicy. Running
         # these tests on it would pass every deny assertion for the wrong
         # reason, which is worse than not running them.
-        run: make e2e-cluster E2E_CNI=${{ matrix.cni }}
+        run: make e2e-cluster E2E_CNI=${{ matrix.cni }} E2E_NODELOCAL_DNS=${{ matrix.nodelocaldns }}
 
       - name: Reachability tests
-        run: make e2e E2E_CNI=${{ matrix.cni }}
+        run: make e2e E2E_CNI=${{ matrix.cni }} E2E_NODELOCAL_DNS=${{ matrix.nodelocaldns }}
 
       - name: Diagnostics on failure
         if: failure()
@@ -77,6 +91,8 @@ jobs:
           kubectl get ciliumnetworkpolicies -A -o yaml || true
           kubectl -n kube-system logs -l k8s-app=calico-node --tail=100 || true
           kubectl -n kube-system logs -l k8s-app=cilium --tail=100 || true
+          kubectl -n kube-system logs -l k8s-app=node-local-dns --tail=100 || true
+          kubectl -n kube-system get daemonset node-local-dns -o wide || true
 
       - name: Tear down
         if: always()
