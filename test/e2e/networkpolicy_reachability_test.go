@@ -119,7 +119,16 @@ func canReach(t *testing.T, cs *kubernetes.Clientset, ns, name string, labels ma
 	t.Helper()
 	probe := fmt.Sprintf("nc -w %d -z %s %d && echo REACHED || echo BLOCKED",
 		int(probeTimeout.Seconds()), addr, port)
-	runningPodNoWait(t, cs, ns, name, labels, []string{probe})
+	return probeVerdict(t, cs, ns, name, labels, probe, "REACHED", "BLOCKED")
+}
+
+// probeVerdict runs a one-shot pod whose script prints one of two markers and
+// reports which. It is the machinery behind canReach, split out so a probe of
+// something other than a TCP connect -- name resolution, say -- does not have
+// to copy the poll loop.
+func probeVerdict(t *testing.T, cs *kubernetes.Clientset, ns, name string, labels map[string]string, script, yes, no string) bool {
+	t.Helper()
+	runningPodNoWait(t, cs, ns, name, labels, []string{script})
 
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
@@ -131,9 +140,9 @@ func canReach(t *testing.T, cs *kubernetes.Clientset, ns, name string, labels ma
 			}
 			out := string(logs)
 			switch {
-			case contains(out, "REACHED"):
+			case contains(out, yes):
 				return true
-			case contains(out, "BLOCKED"):
+			case contains(out, no):
 				return false
 			default:
 				t.Fatalf("probe %s produced no verdict, output: %q", name, out)

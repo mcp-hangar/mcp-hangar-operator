@@ -101,6 +101,15 @@ func applyCiliumPolicy(t *testing.T, dyn dynamic.Interface, cnp *unstructured.Un
 // dropped -- via the toFQDNs rules the builder emits.
 func TestCiliumFQDNAllowedConnectsAndDisallowedIsBlocked(t *testing.T) {
 	requireCiliumLeg(t)
+	// Not on the NodeLocal DNSCache leg: there the allow-listed name is denied,
+	// because Cilium's DNS proxy never observes a lookup a per-node cache
+	// answers, so the toFQDNs allow-list stays empty (#178). That claim is
+	// asserted, as it actually behaves, in nodelocaldns_reachability_test.go.
+	// Letting this test fail there would report the same finding twice and turn
+	// the leg red for something already tracked.
+	if os.Getenv("E2E_NODELOCAL_DNS") == "1" {
+		t.Skip("E2E_NODELOCAL_DNS=1: see TestNodeLocalDNSCiliumFQDNUpstreamsAreDenied (#178)")
+	}
 	cs := clientset(t)
 	dyn := dynamicClient(t)
 	ns := namespace(t, cs, nil)
