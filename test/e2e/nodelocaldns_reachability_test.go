@@ -9,20 +9,23 @@
 //	configuration (ExtraDNSEgressPeers) covers the same ground.
 //	-- guides/EGRESS_POLICY.md
 //
-// Two things can go wrong when a per-node cache is the resolver, and they fail
-// in opposite directions:
+// What it found, on the first run, is that the sentence is wrong in both of its
+// halves (#178):
 //
-//   - Availability. The generated DNS egress rule selects the kube-dns
-//     endpoints. Pods configured to resolve through a link-local address never
-//     send a packet to one, so a governed pod resolves nothing at all and every
-//     upstream is unreachable -- including the ones the policy allows. This is
-//     what --dns-egress-cidrs / ExtraDNSEgressPeers exists to prevent, and what
-//     nothing has ever checked against a running cache.
+//   - The DNS egress rule is not the control point. A governed pod resolves
+//     through the cache whether or not ExtraDNSEgressPeers names it, because
+//     the destination is the node itself. --dns-egress-cidrs does nothing here,
+//     and on the Cilium path it is not read at all.
 //
-//   - Enforcement. Cilium's toFQDNs allow-list is populated by its DNS proxy
-//     observing the lookup. A resolution path the proxy does not see would let
-//     a name resolve while the allow-list stays empty, or -- the direction that
-//     matters -- let traffic out to a name that was never allow-listed.
+//   - The allow-listed upstream is denied anyway. Cilium's toFQDNs list is
+//     populated by its DNS proxy observing the lookup, and a lookup a per-node
+//     cache answers is one the proxy never sees, so the list stays empty and
+//     the connect to the resolved address is dropped as unmatched.
+//
+// Enforcement survives -- a name outside the allow-list stays blocked in every
+// run -- so this fails closed. The tests below assert that behavior as it is,
+// not as the guide describes it, and say at each assertion which way it should
+// flip when #178 is fixed.
 //
 // This leg runs with NodeLocal DNSCache installed and kubelet pointed at it
 // (E2E_NODELOCAL_DNS=1, `make e2e-cluster E2E_CNI=cilium E2E_NODELOCAL_DNS=1`).
@@ -102,22 +105,29 @@ func TestNodeLocalDNSCacheIsTheResolver(t *testing.T) {
 	}
 }
 
-// TestNodeLocalDNSVanillaBackstopKeepsResolutionWorking is the availability
-// half, on the path where ExtraDNSEgressPeers is read: a Vanilla backstop is
-// default-deny egress, so a DNS rule that does not name the node-local resolver
-// takes the cluster's DNS away from every governed pod.
+// TestNodeLocalDNSResolutionIsNotGatedByTheDNSEgressRule records what the DNS
+// egress rule does on this topology, which turned out to be nothing.
 //
-// The negative control is the point of the test. Asserting only that resolution
-// works would pass just as happily if the setting did nothing, so the same
-// policy is also built with the setting cleared, and that one must fail.
-func TestNodeLocalDNSVanillaBackstopKeepsResolutionWorking(t *testing.T) {
+// The rule exists so a default-deny backstop does not take the cluster's DNS
+// away, and --dns-egress-cidrs exists so it can name a resolver that is not a
+// kube-dns pod. On a cluster where the resolver is a per-node cache at a
+// link-local address, neither matters: the destination is the node itself, and
+// a governed pod resolves through it whether or not the rule names it. Both
+// configurations are asserted, because "resolution works" on its own would
+// pass just as happily if the setting were load-bearing and correct -- and it
+// is neither (#178).
+//
+// If this ever starts failing, the DNS rule has become the control point here
+// after all, and the availability half below turns into a policy bug rather
+// than a data-plane one.
+func TestNodeLocalDNSResolutionIsNotGatedByTheDNSEgressRule(t *testing.T) {
 	requireNodeLocalDNSLeg(t)
 	cs := clientset(t)
 	ns := namespace(t, cs, nil)
 
 	if !resolves(t, cs, ns, "control-resolve", map[string]string{"role": "control"}, allowedFQDN) {
 		t.Fatalf("%s does not resolve with NO policy applied -- the cache is broken, and "+
-			"'resolution blocked' below would be indistinguishable from 'never worked'", allowedFQDN)
+			"every verdict below would be about the wrong thing", allowedFQDN)
 	}
 
 	policy := &mcpv1alpha2.MCPEgressPolicy{
@@ -132,17 +142,16 @@ func TestNodeLocalDNSVanillaBackstopKeepsResolutionWorking(t *testing.T) {
 	target := metav1.LabelSelector{MatchLabels: map[string]string{networkpolicy.LabelProvider: "srv"}}
 	selected := map[string]string{networkpolicy.LabelProvider: "srv"}
 
-	// With the resolver configured, as the operator would have it.
+	// As the operator would build it, told about the resolver.
 	withPeers, _ := networkpolicy.BuildEgressPolicyBackstop(policy, target)
 	applyPolicy(t, cs, withPeers)
 	if !resolves(t, cs, ns, "probe-resolve-configured", selected, allowedFQDN) {
 		t.Errorf("a governed pod cannot resolve %s through %s even though the DNS egress rule "+
-			"names it: ExtraDNSEgressPeers does not cover the node-local resolver on the wire",
-			allowedFQDN, nodeLocalDNSIP())
+			"names it", allowedFQDN, nodeLocalDNSIP())
 	}
 
-	// The control: the same policy as it would be built by an operator that was
-	// never told about the cache. This must take DNS away.
+	// As an operator that was never told would build it. This is the case the
+	// flag's help text says loses DNS, and it does not.
 	saved := networkpolicy.ExtraDNSEgressPeers
 	networkpolicy.ExtraDNSEgressPeers = nil
 	unconfigured, _ := networkpolicy.BuildEgressPolicyBackstop(policy, target)
@@ -151,17 +160,28 @@ func TestNodeLocalDNSVanillaBackstopKeepsResolutionWorking(t *testing.T) {
 	ns2 := namespace(t, cs, nil)
 	unconfigured.Namespace = ns2
 	applyPolicy(t, cs, unconfigured)
-	if resolves(t, cs, ns2, "probe-resolve-unconfigured", selected, allowedFQDN) {
-		t.Errorf("a governed pod still resolved %s under a backstop whose DNS rule names only the "+
-			"kube-dns endpoints: this leg is not exercising the node-local resolver, so the "+
-			"assertion above proves nothing", allowedFQDN)
+	if !resolves(t, cs, ns2, "probe-resolve-unconfigured", selected, allowedFQDN) {
+		t.Errorf("a backstop whose DNS rule names only the kube-dns endpoints blocked resolution "+
+			"of %s through %s: the DNS egress rule IS the control point on this topology after "+
+			"all, and --dns-egress-cidrs is now load-bearing here", allowedFQDN, nodeLocalDNSIP())
 	}
 }
 
-// TestNodeLocalDNSCiliumFQDNAllowListStillHolds is the enforcement half: a
-// resolution path that Cilium's DNS proxy does not observe cannot be allowed to
-// become a way around the toFQDNs allow-list.
-func TestNodeLocalDNSCiliumFQDNAllowListStillHolds(t *testing.T) {
+// TestNodeLocalDNSCiliumFQDNUpstreamsAreDenied is the finding this leg was
+// built to make visible, asserted as it behaves rather than as the docs
+// describe it: with a per-node DNS cache answering lookups, Cilium's DNS proxy
+// never observes one, the toFQDNs allow-list is never populated, and the
+// allow-listed upstream is denied along with everything else.
+//
+// Enforcement holds -- a name outside the allow-list stays blocked -- which is
+// why this fails closed and is a bug about availability. Both halves are
+// asserted, because a cluster with no egress at all would satisfy the second
+// on its own.
+//
+// When #178 is fixed, the first assertion flips and this test fails. That is
+// the intended signal: change it to require reachability then, and delete this
+// paragraph.
+func TestNodeLocalDNSCiliumFQDNUpstreamsAreDenied(t *testing.T) {
 	requireNodeLocalDNSLeg(t)
 	requireCiliumLeg(t)
 	cs := clientset(t)
@@ -189,13 +209,12 @@ func TestNodeLocalDNSCiliumFQDNAllowListStillHolds(t *testing.T) {
 
 	selected := map[string]string{networkpolicy.LabelProvider: "srv"}
 	if !resolves(t, cs, ns, "probe-fqdn-resolve", selected, allowedFQDN) {
-		t.Errorf("a governed pod cannot resolve %s through %s: the Cilium backstop's DNS egress "+
-			"rule does not reach the node-local resolver", allowedFQDN, nodeLocalDNSIP())
+		t.Errorf("a governed pod cannot resolve %s at all: the failure below would then be about "+
+			"DNS reachability rather than about the toFQDNs allow-list", allowedFQDN)
 	}
-	if !canReach(t, cs, ns, "probe-fqdn-allowed", selected, allowedFQDN, fqdnPort) {
-		t.Errorf("the allow-listed FQDN %s is blocked with the cache in the path: either the DNS "+
-			"rule does not cover it, or Cilium's proxy never saw the lookup and the toFQDNs "+
-			"allow-list stayed empty", allowedFQDN)
+	if canReach(t, cs, ns, "probe-fqdn-allowed", selected, allowedFQDN, fqdnPort) {
+		t.Errorf("the allow-listed FQDN %s is now reachable with the cache in the path -- #178 "+
+			"appears to be fixed; invert this assertion", allowedFQDN)
 	}
 	if canReach(t, cs, ns, "probe-fqdn-disallowed", selected, disallowedFQDN, fqdnPort) {
 		t.Errorf("%s is outside the FQDN allow-list but was reachable: resolution through the "+
