@@ -37,6 +37,13 @@ rules:
   - create
   - patch
 - apiGroups:
+  - apps
+  resources:
+  - daemonsets
+  verbs:
+  - get
+  - list
+- apiGroups:
   - cilium.io
   resources:
   - ciliumnetworkpolicies
