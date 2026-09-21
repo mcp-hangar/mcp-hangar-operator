@@ -228,3 +228,104 @@ func TestEgressPolicy_UpdateFromFQDNToCIDR(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, np.Spec.Egress, 2, "CIDR upstream should add an egress rule")
 }
+
+// withProbe gives a reconciler an enforcement verdict without a cluster to
+// probe, using the flag override path.
+func withProbe(r *MCPEgressPolicyReconciler, verdict networkpolicy.EnforcementVerdict) *MCPEgressPolicyReconciler {
+	r.EnforcementProbe = &networkpolicy.EnforcementProbe{Override: verdict}
+	return r
+}
+
+// The #172 cluster: the backstop is written, the API server accepts it, and
+// nothing in that API server will ever read it. Before this, the policy was
+// indistinguishable from one being enforced.
+func TestEgressPolicy_NoEnforcerObserved_ReportsUnenforced(t *testing.T) {
+	p := testPolicy("pol", "default")
+	p.Spec.Mode = mcpv1alpha2.EgressPolicyModeEnforce
+	p.Spec.Upstreams = []mcpv1alpha2.UpstreamRule{
+		{Name: "u", Match: mcpv1alpha2.UpstreamMatch{Host: "10.0.0.0/8"}},
+	}
+	r := withProbe(newEgressReconciler(testServer("srv", "default"), p), networkpolicy.EnforcementNotObserved)
+
+	out := reconcilePolicy(t, r, p)
+
+	_, err := getBackstop(t, r, "pol", "default")
+	require.NoError(t, err, "the backstop is still written -- only the claim about it changes")
+
+	assert.Equal(t, mcpv1alpha2.BackstopUnenforced, out.Status.BackstopEnforcement)
+	enforceable := condStatus(out, EgressPolicyConditionBackstopEnforceable)
+	require.NotNil(t, enforceable)
+	assert.Equal(t, metav1.ConditionFalse, enforceable.Status)
+	assert.Equal(t, "NoEnforcerObserved", enforceable.Reason)
+
+	// BackstopApplied still reports what it means: the object was written.
+	assert.Equal(t, metav1.ConditionTrue, condStatus(out, EgressPolicyConditionBackstopApplied).Status)
+
+	deg := condStatus(out, EgressPolicyConditionDegraded)
+	require.NotNil(t, deg)
+	assert.Equal(t, metav1.ConditionTrue, deg.Status, "an unread backstop is a degradation, not a success")
+	assert.Equal(t, "EnforcementNotObserved", deg.Reason)
+}
+
+func TestEgressPolicy_EnforcerObserved_ReportsEnforcing(t *testing.T) {
+	p := testPolicy("pol", "default")
+	p.Spec.Mode = mcpv1alpha2.EgressPolicyModeEnforce
+	p.Spec.Upstreams = []mcpv1alpha2.UpstreamRule{
+		{Name: "u", Match: mcpv1alpha2.UpstreamMatch{Host: "10.0.0.0/8"}},
+	}
+	r := withProbe(newEgressReconciler(testServer("srv", "default"), p), networkpolicy.EnforcementObserved)
+
+	out := reconcilePolicy(t, r, p)
+
+	assert.Equal(t, mcpv1alpha2.BackstopEnforcing, out.Status.BackstopEnforcement)
+	assert.Equal(t, metav1.ConditionTrue, condStatus(out, EgressPolicyConditionBackstopEnforceable).Status)
+	assert.Equal(t, metav1.ConditionFalse, condStatus(out, EgressPolicyConditionDegraded).Status)
+}
+
+// Doubt must not page anyone: a probe that could not answer leaves the policy
+// undegraded and says so on its own condition.
+func TestEgressPolicy_EnforcementUnknown_IsNotDegraded(t *testing.T) {
+	p := testPolicy("pol", "default")
+	p.Spec.Upstreams = []mcpv1alpha2.UpstreamRule{
+		{Name: "u", Match: mcpv1alpha2.UpstreamMatch{Host: "10.0.0.0/8"}},
+	}
+	r := newEgressReconciler(testServer("srv", "default"), p) // no probe wired
+
+	out := reconcilePolicy(t, r, p)
+
+	assert.Equal(t, mcpv1alpha2.BackstopUnverified, out.Status.BackstopEnforcement)
+	assert.Equal(t, metav1.ConditionUnknown, condStatus(out, EgressPolicyConditionBackstopEnforceable).Status)
+	assert.Equal(t, metav1.ConditionFalse, condStatus(out, EgressPolicyConditionDegraded).Status)
+}
+
+// An unmatched FQDN upstream is a hole in a policy that works; an unread
+// NetworkPolicy is the whole policy missing. The second reason is the one to
+// show.
+func TestEgressPolicy_UnenforcedOutranksFQDNDegradation(t *testing.T) {
+	p := testPolicy("pol", "default")
+	p.Spec.Upstreams = []mcpv1alpha2.UpstreamRule{
+		{Name: "gh", Match: mcpv1alpha2.UpstreamMatch{Host: "api.github.com"}},
+	}
+	r := withProbe(newEgressReconciler(testServer("srv", "default"), p), networkpolicy.EnforcementNotObserved)
+
+	out := reconcilePolicy(t, r, p)
+
+	assert.Equal(t, "EnforcementNotObserved", condStatus(out, EgressPolicyConditionDegraded).Reason)
+}
+
+// Nothing was asked for, so nothing is missing: the paths that deliberately
+// write no backstop must not send anyone hunting for a CNI.
+func TestEgressPolicy_NoBackstopPaths_ReportTheirOwnState(t *testing.T) {
+	disabled := testPolicy("disabled", "default")
+	disabled.Spec.NetworkBackstop = &mcpv1alpha2.NetworkBackstop{Generate: false}
+	r := withProbe(newEgressReconciler(testServer("srv", "default"), disabled), networkpolicy.EnforcementNotObserved)
+	out := reconcilePolicy(t, r, disabled)
+	assert.Equal(t, mcpv1alpha2.BackstopDisabled, out.Status.BackstopEnforcement)
+	assert.Equal(t, metav1.ConditionFalse, condStatus(out, EgressPolicyConditionDegraded).Status)
+
+	missing := testPolicy("missing", "default")
+	r2 := withProbe(newEgressReconciler(missing), networkpolicy.EnforcementNotObserved) // no MCPServer
+	out2 := reconcilePolicy(t, r2, missing)
+	assert.Equal(t, mcpv1alpha2.BackstopPending, out2.Status.BackstopEnforcement)
+	assert.Equal(t, "TargetNotFound", condStatus(out2, EgressPolicyConditionDegraded).Reason)
+}

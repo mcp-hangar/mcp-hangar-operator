@@ -23,6 +23,9 @@ spec:
     - jsonPath: .spec.mode
       name: Mode
       type: string
+    - jsonPath: .status.backstopEnforcement
+      name: Backstop
+      type: string
     - jsonPath: .spec.targetRef.name
       name: Target
       type: string
@@ -341,10 +344,25 @@ spec:
           status:
             description: MCPEgressPolicyStatus is the observed state.
             properties:
+              backstopEnforcement:
+                description: |-
+                  BackstopEnforcement reports whether the applied L3/L4 backstop is in a
+                  position to be enforced. It answers the question spec.mode cannot: a
+                  policy asking for Enforce in a cluster whose CNI never sees this API
+                  server reads Unenforced here, instead of looking exactly like one that
+                  works.
+                enum:
+                - Enforcing
+                - Unenforced
+                - Unverified
+                - Disabled
+                - Pending
+                type: string
               conditions:
                 description: |-
-                  Conditions capture policy state: Compiled, BackstopApplied, and
-                  Degraded (with reason FailOpenRisk when the backstop could not be applied).
+                  Conditions capture policy state: Compiled, BackstopApplied,
+                  BackstopEnforceable, and Degraded (with reason FailOpenRisk when the
+                  backstop could not be applied).
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.

@@ -7,6 +7,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -52,6 +53,7 @@ func main() {
 		gracefulShutdownTimeout time.Duration
 		dnsEgressCIDRs          string
 		imageDigestPolicy       string
+		npEnforcement           string
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
@@ -86,6 +88,13 @@ func main() {
 			"\"off\" ignores. A single MCPServer can opt out with the annotation "+
 			"hangar.io/allow-mutable-image: \"true\".")
 
+	flag.StringVar(&npEnforcement, "networkpolicy-enforcement", "auto",
+		"Whether to treat this cluster as enforcing NetworkPolicy: \"auto\" looks for a CNI that "+
+			"watches this API server and reports an MCPEgressPolicy backstop as Unenforced when it "+
+			"finds none, \"enforced\" asserts enforcement (for a CNI this operator does not "+
+			"recognize), \"unenforced\" asserts the opposite. Only status is affected; nothing "+
+			"stops being written.")
+
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -102,6 +111,12 @@ func main() {
 
 	if err := webhook.SetImageDigestPolicy(imageDigestPolicy); err != nil {
 		setupLog.Error(err, "invalid --image-digest-policy")
+		os.Exit(1)
+	}
+
+	enforcementOverride, err := parseEnforcementOverride(npEnforcement)
+	if err != nil {
+		setupLog.Error(err, "invalid --networkpolicy-enforcement")
 		os.Exit(1)
 	}
 
@@ -190,6 +205,14 @@ func main() {
 		Scheme:       mgr.GetScheme(),
 		Recorder:     mgr.GetEventRecorder("mcpegresspolicy-controller"),
 		HangarClient: hangarClient,
+		EnforcementProbe: &networkpolicy.EnforcementProbe{
+			Mapper: mgr.GetRESTMapper(),
+			// The uncached reader on purpose: the probe asks once per TTL, and
+			// the manager's cache would answer it by watching every DaemonSet
+			// in the cluster for the lifetime of the operator.
+			Reader:   mgr.GetAPIReader(),
+			Override: enforcementOverride,
+		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPEgressPolicy")
 		os.Exit(1)
@@ -265,5 +288,20 @@ func main() {
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
+	}
+}
+
+// parseEnforcementOverride maps the --networkpolicy-enforcement flag onto a
+// probe verdict. "auto" leaves the probe to look for itself.
+func parseEnforcementOverride(value string) (networkpolicy.EnforcementVerdict, error) {
+	switch value {
+	case "auto":
+		return "", nil
+	case "enforced":
+		return networkpolicy.EnforcementObserved, nil
+	case "unenforced":
+		return networkpolicy.EnforcementNotObserved, nil
+	default:
+		return "", fmt.Errorf("must be auto, enforced or unenforced, got %q", value)
 	}
 }

@@ -38,6 +38,11 @@ const (
 	// EgressPolicyConditionDegraded reports a degraded/at-risk state (e.g. FailOpenRisk,
 	// unenforceable FQDN upstreams).
 	EgressPolicyConditionDegraded = "Degraded"
+	// EgressPolicyConditionBackstopEnforceable reports whether anything in this
+	// API server is in a position to enforce the backstop that BackstopApplied
+	// says was written. The two conditions answer different questions, and
+	// collapsing them is what let a policy report Enforce over an inert object.
+	EgressPolicyConditionBackstopEnforceable = "BackstopEnforceable"
 )
 
 // targetNotFoundRequeueAfter is how long to wait before re-checking a policy
@@ -60,6 +65,10 @@ type MCPEgressPolicyReconciler struct {
 	// HangarClient talks to the core REST API to deliver the L7 policy. Nil when
 	// core integration is disabled (no --hangar-url); L7 push is then skipped.
 	HangarClient *hangar.Client
+	// EnforcementProbe reports whether the API server this operator writes to
+	// has anything that enforces a NetworkPolicy. Nil reports Unknown, which
+	// surfaces as Unverified rather than as a claim either way.
+	EnforcementProbe *networkpolicy.EnforcementProbe
 }
 
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpegresspolicies,verbs=get;list;watch;create;update;patch;delete
@@ -67,6 +76,7 @@ type MCPEgressPolicyReconciler struct {
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpegresspolicies/finalizers,verbs=update
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservergroups,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cilium.io,resources=ciliumnetworkpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list
 
 // Reconcile ensures the network backstop for a policy matches its spec, then
 // records the outcome in status.
@@ -115,6 +125,8 @@ func (r *MCPEgressPolicyReconciler) reconcile(ctx context.Context, policy *mcpv1
 		r.setCondition(policy, EgressPolicyConditionCompiled, metav1.ConditionTrue, "Compiled", "Policy compiled")
 		r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionFalse,
 			"BackstopGenerationDisabled", "spec.networkBackstop.generate is false")
+		r.setNoBackstop(policy, mcpv1alpha2.BackstopDisabled, "BackstopGenerationDisabled",
+			"no backstop is generated, so none is enforced")
 		r.clearDegraded(policy)
 		return ctrl.Result{}, nil
 	}
@@ -354,6 +366,8 @@ func (r *MCPEgressPolicyReconciler) resolveTargetSelector(
 			"UnsupportedTargetKind", fmt.Sprintf("targetRef.kind %q is not supported", policy.Spec.TargetRef.Kind))
 		r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionFalse,
 			"UnsupportedTargetKind", "no backstop applied")
+		r.setNoBackstop(policy, mcpv1alpha2.BackstopPending, "UnsupportedTargetKind",
+			"no backstop applied, so none is enforced")
 		r.clearDegraded(policy)
 		return metav1.LabelSelector{}, "", &ctrl.Result{}, nil
 	}
@@ -388,6 +402,7 @@ func (r *MCPEgressPolicyReconciler) groupMemberNames(ctx context.Context, group 
 func (r *MCPEgressPolicyReconciler) targetNotFound(policy *mcpv1alpha2.MCPEgressPolicy, msg string) *ctrl.Result {
 	r.setCondition(policy, EgressPolicyConditionCompiled, metav1.ConditionFalse, "TargetNotFound", msg)
 	r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionFalse, "TargetNotFound", "no backstop applied")
+	r.setNoBackstop(policy, mcpv1alpha2.BackstopPending, "TargetNotFound", "no backstop applied, so none is enforced")
 	r.setCondition(policy, EgressPolicyConditionDegraded, metav1.ConditionTrue, "TargetNotFound", msg)
 	return &ctrl.Result{RequeueAfter: targetNotFoundRequeueAfter * 1e9}
 }
@@ -423,7 +438,7 @@ func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, l
 		r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionTrue,
 			"BackstopApplied", fmt.Sprintf("Cilium backstop %q applied for %q (FQDN + CIDR enforced)%s",
 				cnp.GetName(), targetName, ciliumCIDRCaveat(policy, ciliumAvailable)))
-		r.clearDegraded(policy)
+		r.recordEnforcement(ctx, policy, "", "")
 		logger.Info("Reconciled MCPEgressPolicy backstop", "policy", policy.Name, "target", targetName, "flavor", "Cilium")
 		return nil
 	}
@@ -445,17 +460,18 @@ func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, l
 
 	// A Vanilla NetworkPolicy cannot match FQDNs: hostname upstreams are denied
 	// (fail closed), not opened. Surface the gap.
+	var degradedReason, degradedMsg string
 	switch {
 	case requested == mcpv1alpha2.BackstopFlavorCilium && !ciliumAvailable:
-		r.setCondition(policy, EgressPolicyConditionDegraded, metav1.ConditionTrue, "CiliumUnavailable",
-			"spec.networkBackstop.flavor=Cilium but the CiliumNetworkPolicy CRD is not installed; applied the Vanilla floor (FQDN upstreams not enforced)")
+		degradedReason = "CiliumUnavailable"
+		degradedMsg = "spec.networkBackstop.flavor=Cilium but the CiliumNetworkPolicy CRD is not installed; " +
+			"applied the Vanilla floor (FQDN upstreams not enforced)"
 	case len(unenforceable) > 0:
-		r.setCondition(policy, EgressPolicyConditionDegraded, metav1.ConditionTrue, "FQDNUpstreamsUnenforceable",
-			fmt.Sprintf("FQDN upstreams denied under the Vanilla backstop (need the Cilium flavor): %s",
-				strings.Join(unenforceable, ", ")))
-	default:
-		r.clearDegraded(policy)
+		degradedReason = "FQDNUpstreamsUnenforceable"
+		degradedMsg = fmt.Sprintf("FQDN upstreams denied under the Vanilla backstop (need the Cilium flavor): %s",
+			strings.Join(unenforceable, ", "))
 	}
+	r.recordEnforcement(ctx, policy, degradedReason, degradedMsg)
 	logger.Info("Reconciled MCPEgressPolicy backstop",
 		"policy", policy.Name, "flavor", "Vanilla", "unenforceableUpstreams", len(unenforceable))
 	return nil
@@ -589,6 +605,67 @@ func (r *MCPEgressPolicyReconciler) deleteCiliumBackstopIfExists(ctx context.Con
 		return client.IgnoreNotFound(err)
 	}
 	return nil
+}
+
+// recordEnforcement records whether the backstop just written is one anything
+// will read, and folds that into Degraded.
+//
+// A backstop nobody enforces outranks the flavor-level degradations the caller
+// passes in: an unmatched FQDN upstream is a hole in a policy that works, while
+// an unread NetworkPolicy is the whole policy missing. So when the probe says
+// no enforcer is here, its reason is the one that reaches Degraded.
+//
+// Doubt is not degradation. An Unknown verdict -- the probe could not list
+// DaemonSets, say -- is recorded on BackstopEnforceable and left there; it does
+// not page anyone, because a question nobody could ask is not evidence of a
+// fault.
+func (r *MCPEgressPolicyReconciler) recordEnforcement(
+	ctx context.Context, policy *mcpv1alpha2.MCPEgressPolicy, degradedReason, degradedMsg string,
+) {
+	signal := r.EnforcementProbe.Signal(ctx)
+	switch signal.Verdict {
+	case networkpolicy.EnforcementObserved:
+		policy.Status.BackstopEnforcement = mcpv1alpha2.BackstopEnforcing
+		r.setCondition(policy, EgressPolicyConditionBackstopEnforceable, metav1.ConditionTrue,
+			"EnforcerObserved", signal.Source)
+	case networkpolicy.EnforcementNotObserved:
+		msg := "the backstop was written but nothing here enforces it: " + signal.Source
+		if !r.enforceableIsFalse(policy) {
+			r.Recorder.Eventf(policy, nil, corev1.EventTypeWarning, "BackstopUnenforced", ActionReconcile, "%s", msg)
+		}
+		policy.Status.BackstopEnforcement = mcpv1alpha2.BackstopUnenforced
+		r.setCondition(policy, EgressPolicyConditionBackstopEnforceable, metav1.ConditionFalse,
+			"NoEnforcerObserved", msg)
+		degradedReason, degradedMsg = "EnforcementNotObserved", msg
+	default:
+		policy.Status.BackstopEnforcement = mcpv1alpha2.BackstopUnverified
+		r.setCondition(policy, EgressPolicyConditionBackstopEnforceable, metav1.ConditionUnknown,
+			"EnforcementUnverified", signal.Source)
+	}
+
+	if degradedReason != "" {
+		r.setCondition(policy, EgressPolicyConditionDegraded, metav1.ConditionTrue, degradedReason, degradedMsg)
+		return
+	}
+	r.clearDegraded(policy)
+}
+
+// enforceableIsFalse reports whether the policy already knows its backstop is
+// unenforced, so the warning Event fires on the transition rather than on every
+// reconcile of a cluster that will never grow a CNI.
+func (r *MCPEgressPolicyReconciler) enforceableIsFalse(policy *mcpv1alpha2.MCPEgressPolicy) bool {
+	c := meta.FindStatusCondition(policy.Status.Conditions, EgressPolicyConditionBackstopEnforceable)
+	return c != nil && c.Status == metav1.ConditionFalse
+}
+
+// setNoBackstop records that no backstop exists to enforce, on the paths that
+// deliberately write none. Reporting Unverified there would invite a hunt for a
+// missing CNI when the answer is that nothing was asked for.
+func (r *MCPEgressPolicyReconciler) setNoBackstop(
+	policy *mcpv1alpha2.MCPEgressPolicy, state mcpv1alpha2.BackstopEnforcement, reason, msg string,
+) {
+	policy.Status.BackstopEnforcement = state
+	r.setCondition(policy, EgressPolicyConditionBackstopEnforceable, metav1.ConditionFalse, reason, msg)
 }
 
 func (r *MCPEgressPolicyReconciler) setCondition(policy *mcpv1alpha2.MCPEgressPolicy, condType string, status metav1.ConditionStatus, reason, msg string) {
