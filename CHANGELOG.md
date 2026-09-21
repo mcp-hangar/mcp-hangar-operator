@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.3](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.2...v0.17.3) (2026-09-21)
+
+
+### Fixed
+
+* **controller:** report whether a written backstop has anything to enforce it ([#177](https://github.com/mcp-hangar/mcp-hangar-operator/issues/177)) ([2414d42](https://github.com/mcp-hangar/mcp-hangar-operator/commit/2414d42ef3d6d94817c9f9848281af3baec7d580)), closes [#172](https://github.com/mcp-hangar/mcp-hangar-operator/issues/172)
+
 ## [0.17.2](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.1...v0.17.2) (2026-09-17)
 
 
