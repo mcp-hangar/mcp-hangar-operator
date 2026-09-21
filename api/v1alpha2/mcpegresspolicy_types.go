@@ -55,6 +55,30 @@ const (
 	BackstopFlavorVanilla BackstopFlavor = "Vanilla"
 )
 
+// BackstopEnforcement is the observed state of the L3/L4 backstop, as opposed
+// to spec.mode, which is the state that was asked for. A backstop the API
+// server accepted is not a backstop anything enforces, and before this field
+// existed the two were indistinguishable from `kubectl get` (#172).
+type BackstopEnforcement string
+
+const (
+	// BackstopEnforcing means the backstop is applied and this cluster has
+	// something that enforces NetworkPolicy.
+	BackstopEnforcing BackstopEnforcement = "Enforcing"
+	// BackstopUnenforced means the backstop is applied and nothing in this API
+	// server appears to enforce it -- the object was written and has no reader.
+	BackstopUnenforced BackstopEnforcement = "Unenforced"
+	// BackstopUnverified means the backstop is applied and enforcement could
+	// not be established either way.
+	BackstopUnverified BackstopEnforcement = "Unverified"
+	// BackstopDisabled means spec.networkBackstop.generate is false, so no
+	// backstop is meant to exist.
+	BackstopDisabled BackstopEnforcement = "Disabled"
+	// BackstopPending means no backstop is applied yet, because the target
+	// could not be resolved.
+	BackstopPending BackstopEnforcement = "Pending"
+)
+
 // EgressTargetRef attaches a policy to a server or a group of servers, never to
 // raw pods.
 type EgressTargetRef struct {
@@ -263,8 +287,18 @@ type MCPEgressPolicyStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// Conditions capture policy state: Compiled, BackstopApplied, and
-	// Degraded (with reason FailOpenRisk when the backstop could not be applied).
+	// BackstopEnforcement reports whether the applied L3/L4 backstop is in a
+	// position to be enforced. It answers the question spec.mode cannot: a
+	// policy asking for Enforce in a cluster whose CNI never sees this API
+	// server reads Unenforced here, instead of looking exactly like one that
+	// works.
+	// +kubebuilder:validation:Enum=Enforcing;Unenforced;Unverified;Disabled;Pending
+	// +optional
+	BackstopEnforcement BackstopEnforcement `json:"backstopEnforcement,omitempty"`
+
+	// Conditions capture policy state: Compiled, BackstopApplied,
+	// BackstopEnforceable, and Degraded (with reason FailOpenRisk when the
+	// backstop could not be applied).
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -275,6 +309,7 @@ type MCPEgressPolicyStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:storageversion
 // +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.spec.mode`
+// +kubebuilder:printcolumn:name="Backstop",type=string,JSONPath=`.status.backstopEnforcement`
 // +kubebuilder:printcolumn:name="Target",type=string,JSONPath=`.spec.targetRef.name`
 // +kubebuilder:printcolumn:name="Default",type=string,JSONPath=`.spec.defaultAction`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`

@@ -1,5 +1,34 @@
 # Upgrade notes
 
+## Unreleased -- an `MCPEgressPolicy` can now report `Degraded` where it used to report success
+
+An `MCPEgressPolicy` whose backstop the operator wrote used to report
+`Degraded=False` whether or not anything in the cluster enforced it. It now
+looks for a policy-enforcing API or a known CNI agent in the API server it
+writes to, and when it finds neither it reports
+`status.backstopEnforcement: Unenforced`, a `BackstopEnforceable=False`
+condition, a `BackstopUnenforced` Event, and `Degraded=True` with reason
+`EnforcementNotObserved`.
+
+Nothing changes about what is written, and the L7 rules core enforces are
+untouched. What changes is that a cluster where the backstop was never enforced
+now says so -- so an alert on `Degraded` may fire on policies that have been
+inert since they were created. That is the finding, not a regression: check
+whether those pods actually have the egress the policy denies before silencing
+it.
+
+If your CNI enforces `NetworkPolicy` but is not recognized (the operator knows
+Cilium, Calico, Canal, Antrea, AWS VPC CNI, Kube-OVN, OVN-Kubernetes,
+kube-router, Weave Net and Azure NPM), assert it with the new flag rather than
+living with the warning:
+
+```bash
+--networkpolicy-enforcement=enforced
+```
+
+and please open an issue naming the CNI, so the next person does not need the
+flag.
+
 ## Unreleased — `MCPServer` pod fields are the `corev1` types
 
 `MCPServerSpec` used to re-declare Kubernetes pod primitives as hand-rolled

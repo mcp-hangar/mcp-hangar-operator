@@ -153,6 +153,42 @@ external upstream (an on-prem database at `10.x`). If the destination really is
 in-cluster, set `policyCIDRMatchMode` — a hostname does not route around this,
 since `toFQDNs` resolves to the same CIDR identities. See #152.
 
+### A backstop that was written is not a backstop that is enforced
+
+The operator writes a `NetworkPolicy` (or `CiliumNetworkPolicy`) to the API
+server it holds. Where that is not the API server the CNI watches -- a vcluster
+with `sync.toHost.networkPolicies` off is the case that produced #172, but any
+split control plane has the shape -- the object is stored, the write succeeds,
+and nothing ever reads it. The pod the policy claims to govern keeps its egress.
+
+An `MCPEgressPolicy` therefore reports what it could observe, next to what was
+asked for:
+
+```console
+$ kubectl get mcpegresspolicies -n providers
+NAME               MODE      BACKSTOP     TARGET   DEFAULT   AGE
+notes-local-only   Enforce   Unenforced   notes    Deny      3d15h
+```
+
+`spec.mode` is the request; `status.backstopEnforcement` is the observation.
+`Unenforced` means the operator looked for a policy-enforcing API served here
+and for a known CNI agent running here, found neither, and is telling you the
+backstop it just wrote has no reader. The policy is also `Degraded` with reason
+`EnforcementNotObserved`, and the `BackstopEnforceable` condition names what was
+looked for. `Unverified` means the operator could not tell (it may not list
+DaemonSets, say) -- doubt, recorded but not degraded.
+
+The look is evidence, not proof: an agent can be installed and broken. For a
+CNI this operator does not recognize, or the reverse, override it:
+
+```bash
+--networkpolicy-enforcement=auto|enforced|unenforced   # default: auto
+```
+
+Only status is affected. Nothing stops being written, and the L7 half of a
+policy -- the tool, argument and header rules core enforces -- is unaffected by
+any of this.
+
 ## Examples
 
 See [`config/samples/`](config/samples/) for complete, runnable examples:
