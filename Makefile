@@ -190,6 +190,14 @@ endef
 
 E2E_CLUSTER ?= mcp-np-e2e
 E2E_CNI ?= calico
+# E2E_NODELOCAL_DNS=1 puts NodeLocal DNSCache in the cluster's DNS path and
+# points kubelet at it, so pods resolve through a link-local address instead of
+# the kube-dns endpoints a generated DNS egress rule selects (#145).
+E2E_NODELOCAL_DNS ?=
+NODELOCAL_DNS_IP ?= 169.254.20.10
+# The addon manifest is pinned: master would let an upstream edit change what
+# this leg tests without a commit here.
+NODELOCAL_DNS_K8S_REF ?= v1.34.1
 CALICO_VERSION ?= v3.28.2
 CILIUM_VERSION ?= v1.20.1
 CILIUM_CLI_VERSION ?= v0.19.7
@@ -205,10 +213,17 @@ ifeq ($(E2E_CNI),cilium)
 e2e-cluster: cilium-cli
 endif
 
+# Pointing kubelet at the cache is what makes the cache the resolver every pod
+# uses; installing the DaemonSet alone would leave pods talking to kube-dns and
+# the leg would test nothing.
+ifeq ($(E2E_NODELOCAL_DNS),1)
+KIND_KUBELET_PATCH = kubeadmConfigPatches:\n  - |\n    kind: KubeletConfiguration\n    clusterDNS:\n      - $(NODELOCAL_DNS_IP)\n
+endif
+
 .PHONY: e2e-cluster
 e2e-cluster: ## Create a kind cluster with a NetworkPolicy-enforcing CNI (E2E_CNI=calico|cilium).
 	@kind get clusters 2>/dev/null | grep -qx $(E2E_CLUSTER) || \
-		printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: "192.168.0.0/16"\nnodes:\n  - role: control-plane\n' \
+		printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: "192.168.0.0/16"\n$(KIND_KUBELET_PATCH)nodes:\n  - role: control-plane\n' \
 		| kind create cluster --name $(E2E_CLUSTER) --config -
 	@echo "waiting for the API server..."
 	@until kubectl --context kind-$(E2E_CLUSTER) get --raw /healthz >/dev/null 2>&1; do sleep 5; done
@@ -224,10 +239,15 @@ else
 	@until [ "$$(kubectl --context kind-$(E2E_CLUSTER) get nodes -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}')" = "True" ]; do sleep 10; done
 	@kubectl --context kind-$(E2E_CLUSTER) wait --for=condition=Ready pods -n kube-system -l k8s-app=calico-node --timeout=180s
 endif
+ifeq ($(E2E_NODELOCAL_DNS),1)
+	@kubectl --context kind-$(E2E_CLUSTER) -n kube-system rollout status deployment/coredns --timeout=180s
+	@test/e2e/nodelocaldns.sh kind-$(E2E_CLUSTER) $(NODELOCAL_DNS_IP) $(NODELOCAL_DNS_K8S_REF)
+endif
 
 .PHONY: e2e
 e2e: ## Run reachability tests against the current kube context (E2E_CNI gates CNI-specific tests).
-	E2E_CNI=$(E2E_CNI) go test -tags e2e ./test/e2e/... -v -timeout 20m
+	E2E_CNI=$(E2E_CNI) E2E_NODELOCAL_DNS=$(E2E_NODELOCAL_DNS) NODELOCAL_DNS_IP=$(NODELOCAL_DNS_IP) \
+		go test -tags e2e ./test/e2e/... -v -timeout 20m
 
 .PHONY: e2e-clean
 e2e-clean: ## Delete the e2e cluster.
