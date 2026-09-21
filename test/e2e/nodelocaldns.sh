@@ -19,7 +19,7 @@ LOCAL_DNS_IP="${2:?node-local DNS address}"
 K8S_REF="${3:?kubernetes ref for the addon manifest}"
 DNS_DOMAIN="${DNS_DOMAIN:-cluster.local}"
 
-manifest="$(mktemp -t nodelocaldns)"
+manifest="$(mktemp)"
 trap 'rm -f "$manifest" "$manifest.bak"' EXIT
 
 curl -sSfL -o "$manifest" \
