@@ -189,6 +189,26 @@ Only status is affected. Nothing stops being written, and the L7 half of a
 policy -- the tool, argument and header rules core enforces -- is unaffected by
 any of this.
 
+### A gateway that restarts gets its L7 policies back
+
+The L7 half is pushed to core over `--hangar-url`. Where core has no durable
+persistence backend (the chart default), that policy lives in the gateway's
+memory and is gone after the pod restarts, while the `MCPEgressPolicy` still
+reports `Compiled`. So the operator watches the gateway's pods, and when one
+becomes Ready it reconciles every `MCPEgressPolicy`, re-pushing its L7 policy
+within seconds:
+
+```bash
+--hangar-gateway-selector=app.kubernetes.io/name=mcp-hangar   # default; empty disables
+```
+
+The default matches the mcp-hangar chart. Set it if your gateway pods carry
+other labels. A selector that matches no pod makes this a no-op, so the
+operator logs an error-level line saying so at startup, and again on a push at
+most every ten minutes while it still matches nothing. With more than one gateway replica and no shared backend, a push
+reaches whichever replica the Service routes it to; a durable backend is what
+makes one push reach them all.
+
 ## Examples
 
 See [`config/samples/`](config/samples/) for complete, runnable examples:
