@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -54,6 +55,7 @@ func main() {
 		dnsEgressCIDRs          string
 		imageDigestPolicy       string
 		npEnforcement           string
+		gatewaySelector         string
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
@@ -88,6 +90,9 @@ func main() {
 			"\"off\" ignores. A single MCPServer can opt out with the annotation "+
 			"hangar.io/allow-mutable-image: \"true\".")
 
+	flag.StringVar(&gatewaySelector, "hangar-gateway-selector", controller.DefaultGatewayPodSelector,
+		"Label selector for the core gateway pods. When one becomes Ready, every MCPEgressPolicy is "+
+			"reconciled so its L7 policy is re-delivered to a gateway that restarted without it. Empty disables.")
 	flag.StringVar(&npEnforcement, "networkpolicy-enforcement", "auto",
 		"Whether to treat this cluster as enforcing NetworkPolicy: \"auto\" looks for a CNI that "+
 			"watches this API server and reports an MCPEgressPolicy backstop as Unenforced when it "+
@@ -117,6 +122,12 @@ func main() {
 	enforcementOverride, err := parseEnforcementOverride(npEnforcement)
 	if err != nil {
 		setupLog.Error(err, "invalid --networkpolicy-enforcement")
+		os.Exit(1)
+	}
+
+	gatewayPodSelector, err := parseGatewaySelector(gatewaySelector)
+	if err != nil {
+		setupLog.Error(err, "invalid --hangar-gateway-selector")
 		os.Exit(1)
 	}
 
@@ -201,10 +212,11 @@ func main() {
 
 	// Register MCPEgressPolicy controller.
 	if err := (&controller.MCPEgressPolicyReconciler{
-		Client:       mgr.GetClient(),
-		Scheme:       mgr.GetScheme(),
-		Recorder:     mgr.GetEventRecorder("mcpegresspolicy-controller"),
-		HangarClient: hangarClient,
+		Client:             mgr.GetClient(),
+		Scheme:             mgr.GetScheme(),
+		Recorder:           mgr.GetEventRecorder("mcpegresspolicy-controller"),
+		HangarClient:       hangarClient,
+		GatewayPodSelector: gatewayPodSelector,
 		EnforcementProbe: &networkpolicy.EnforcementProbe{
 			Mapper: mgr.GetRESTMapper(),
 			// The uncached reader on purpose: the probe asks once per TTL, and
@@ -304,4 +316,21 @@ func parseEnforcementOverride(value string) (networkpolicy.EnforcementVerdict, e
 	default:
 		return "", fmt.Errorf("must be auto, enforced or unenforced, got %q", value)
 	}
+}
+
+// parseGatewaySelector parses --hangar-gateway-selector. Empty disables the
+// gateway watch; a selector that matches every pod is refused, since it would
+// re-deliver every policy whenever any pod in the cluster became Ready.
+func parseGatewaySelector(value string) (labels.Selector, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	sel, err := labels.Parse(value)
+	if err != nil {
+		return nil, err
+	}
+	if sel.Empty() {
+		return nil, fmt.Errorf("selector %q matches every pod", value)
+	}
+	return sel, nil
 }

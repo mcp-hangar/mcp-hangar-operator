@@ -15,11 +15,13 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -69,6 +71,11 @@ type MCPEgressPolicyReconciler struct {
 	// has anything that enforces a NetworkPolicy. Nil reports Unknown, which
 	// surfaces as Unverified rather than as a claim either way.
 	EnforcementProbe *networkpolicy.EnforcementProbe
+	// GatewayPodSelector selects the core gateway's pods. When one of them
+	// becomes Ready every policy is reconciled, so a gateway that restarted
+	// without its L7 policies gets them back in seconds. Nil, or no
+	// HangarClient, disables the watch.
+	GatewayPodSelector labels.Selector
 }
 
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpegresspolicies,verbs=get;list;watch;create;update;patch;delete
@@ -77,6 +84,7 @@ type MCPEgressPolicyReconciler struct {
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservergroups,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cilium.io,resources=ciliumnetworkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 
 // Reconcile ensures the network backstop for a policy matches its spec, then
 // records the outcome in status.
@@ -685,9 +693,15 @@ func (r *MCPEgressPolicyReconciler) clearDegraded(policy *mcpv1alpha2.MCPEgressP
 
 // SetupWithManager wires the controller.
 func (r *MCPEgressPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&mcpv1alpha2.MCPEgressPolicy{}).
-		Owns(&networkingv1.NetworkPolicy{}).
-		Named("mcpegresspolicy").
-		Complete(r)
+		Owns(&networkingv1.NetworkPolicy{})
+	if r.HangarClient != nil && r.GatewayPodSelector != nil && !r.GatewayPodSelector.Empty() {
+		// Pods are already in the manager's cache (the MCPServer controller
+		// owns them), so this watch adds a handler, not an informer.
+		b = b.Watches(&corev1.Pod{},
+			r.gatewayPodHandler(),
+			builder.WithPredicates(gatewayPodBecameReady(r.GatewayPodSelector)))
+	}
+	return b.Named("mcpegresspolicy").Complete(r)
 }
