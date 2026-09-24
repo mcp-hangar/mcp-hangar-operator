@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.4](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.3...v0.17.4) (2026-09-24)
+
+
+### Fixed
+
+* **controller:** re-deliver L7 policies when a gateway pod becomes Ready ([#183](https://github.com/mcp-hangar/mcp-hangar-operator/issues/183)) ([804b861](https://github.com/mcp-hangar/mcp-hangar-operator/commit/804b861ac3f6babb59511a6f95ef59fdc9a0cc7f))
+
 ## [0.17.3](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.2...v0.17.3) (2026-09-21)
 
 
