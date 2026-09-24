@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -109,5 +111,50 @@ func (r *MCPEgressPolicyReconciler) gatewayPodHandler() handler.Funcs {
 		UpdateFunc: func(ctx context.Context, e event.UpdateEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 			enqueue(ctx, e.ObjectNew, q)
 		},
+	}
+}
+
+// gatewayCheckInterval bounds how often a push re-checks that the gateway
+// selector still matches a pod, and so how often a zero match is logged.
+const gatewayCheckInterval = 10 * time.Minute
+
+// gatewayMatchCheck remembers when the selector was last checked.
+type gatewayMatchCheck struct {
+	mu   sync.Mutex
+	last time.Time
+}
+
+// gatewayWatchEnabled reports whether the gateway pod watch is installed.
+func (r *MCPEgressPolicyReconciler) gatewayWatchEnabled() bool {
+	return r.HangarClient != nil && r.GatewayPodSelector != nil && !r.GatewayPodSelector.Empty()
+}
+
+// warnIfGatewayUnmatched logs an error-level line when the gateway selector
+// matches no pod. The watch then sees no gateway at all and re-delivery on
+// restart silently does nothing -- the default selector on a gateway that is
+// not labelled the way the chart labels it. force checks regardless of when
+// the last check ran (startup); otherwise one check per gatewayCheckInterval.
+func (r *MCPEgressPolicyReconciler) warnIfGatewayUnmatched(ctx context.Context, force bool) {
+	if !r.gatewayWatchEnabled() {
+		return
+	}
+	r.gatewayCheck.mu.Lock()
+	if !force && !r.gatewayCheck.last.IsZero() && time.Since(r.gatewayCheck.last) < gatewayCheckInterval {
+		r.gatewayCheck.mu.Unlock()
+		return
+	}
+	r.gatewayCheck.last = time.Now()
+	r.gatewayCheck.mu.Unlock()
+
+	logger := log.FromContext(ctx)
+	var pods corev1.PodList
+	if err := r.List(ctx, &pods, client.MatchingLabelsSelector{Selector: r.GatewayPodSelector}); err != nil {
+		logger.V(1).Info("could not list gateway pods to check --hangar-gateway-selector", "error", err.Error())
+		return
+	}
+	if len(pods.Items) == 0 {
+		logger.Error(nil, "--hangar-gateway-selector matches no pod: L7 policies will NOT be re-delivered "+
+			"when the gateway restarts; set it to the gateway pods' labels",
+			"selector", r.GatewayPodSelector.String())
 	}
 }

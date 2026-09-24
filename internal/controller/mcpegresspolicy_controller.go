@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/hangar"
@@ -76,6 +77,8 @@ type MCPEgressPolicyReconciler struct {
 	// without its L7 policies gets them back in seconds. Nil, or no
 	// HangarClient, disables the watch.
 	GatewayPodSelector labels.Selector
+
+	gatewayCheck gatewayMatchCheck
 }
 
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpegresspolicies,verbs=get;list;watch;create;update;patch;delete
@@ -161,6 +164,7 @@ func (r *MCPEgressPolicyReconciler) reconcile(ctx context.Context, policy *mcpv1
 	if err := r.pushL7Policy(ctx, logger, policy, selector); err != nil {
 		return ctrl.Result{}, err
 	}
+	r.warnIfGatewayUnmatched(ctx, false)
 	return ctrl.Result{}, nil
 }
 
@@ -696,12 +700,19 @@ func (r *MCPEgressPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	b := ctrl.NewControllerManagedBy(mgr).
 		For(&mcpv1alpha2.MCPEgressPolicy{}).
 		Owns(&networkingv1.NetworkPolicy{})
-	if r.HangarClient != nil && r.GatewayPodSelector != nil && !r.GatewayPodSelector.Empty() {
+	if r.gatewayWatchEnabled() {
 		// Pods are already in the manager's cache (the MCPServer controller
 		// owns them), so this watch adds a handler, not an informer.
 		b = b.Watches(&corev1.Pod{},
 			r.gatewayPodHandler(),
 			builder.WithPredicates(gatewayPodBecameReady(r.GatewayPodSelector)))
+		// Once the cache is up, say so if the selector matches no gateway at all.
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			r.warnIfGatewayUnmatched(ctx, true)
+			return nil
+		})); err != nil {
+			return err
+		}
 	}
 	return b.Named("mcpegresspolicy").Complete(r)
 }

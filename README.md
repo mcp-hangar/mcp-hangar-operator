@@ -203,7 +203,9 @@ within seconds:
 ```
 
 The default matches the mcp-hangar chart. Set it if your gateway pods carry
-other labels. With more than one gateway replica and no shared backend, a push
+other labels. A selector that matches no pod makes this a no-op, so the
+operator logs an error-level line saying so at startup, and again on a push at
+most every ten minutes while it still matches nothing. With more than one gateway replica and no shared backend, a push
 reaches whichever replica the Service routes it to; a durable backend is what
 makes one push reach them all.
 

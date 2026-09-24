@@ -4,10 +4,13 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/funcr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -20,6 +23,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -204,4 +208,90 @@ func TestEgressPolicy_GatewayPodReady_RedeliversL7Policy(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	assert.Greater(t, pushes.get(), settled, "a gateway pod turning Ready did not re-deliver the L7 policy")
+}
+
+// logCapture collects the messages logged through a context logger.
+type logCapture struct {
+	mu   sync.Mutex
+	msgs []string
+}
+
+func (c *logCapture) logger() logr.Logger {
+	return funcr.New(func(prefix, args string) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.msgs = append(c.msgs, args)
+	}, funcr.Options{})
+}
+
+func (c *logCapture) count(substr string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, m := range c.msgs {
+		if strings.Contains(m, substr) {
+			n++
+		}
+	}
+	return n
+}
+
+const unmatchedMsg = "--hangar-gateway-selector matches no pod"
+
+// A selector that matches no pod makes re-delivery a silent no-op -- the
+// default selector against a gateway labelled some other way. That has to be
+// said, at startup and on a push, and a push must not say it every time.
+func TestWarnIfGatewayUnmatched(t *testing.T) {
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"l7_policy_set":true}`))
+	}))
+	t.Cleanup(core.Close)
+	sel, err := labels.Parse(DefaultGatewayPodSelector)
+	require.NoError(t, err)
+
+	t.Run("zero match warns on push, once per interval, and always at startup", func(t *testing.T) {
+		p := testPolicy("pol", "default")
+		p.Finalizers = []string{l7PolicyFinalizer}
+		frontDoor := gatewayTestPod("frontdoor", "hangar",
+			map[string]string{"app.kubernetes.io/name": "hangar-frontdoor-ha"}, true)
+		r := newEgressReconciler(testServer("srv", "default"), p, frontDoor)
+		r.HangarClient = hangar.NewClient(&hangar.Config{URL: core.URL, MaxRetries: 0})
+		r.GatewayPodSelector = sel
+		logs := &logCapture{}
+		lctx := log.IntoContext(context.Background(), logs.logger())
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "pol", Namespace: "default"}}
+
+		_, err := r.Reconcile(lctx, req)
+		require.NoError(t, err)
+		assert.Equal(t, 1, logs.count(unmatchedMsg), "a push with no gateway pod matched must warn")
+
+		_, err = r.Reconcile(lctx, req)
+		require.NoError(t, err)
+		assert.Equal(t, 1, logs.count(unmatchedMsg), "a second push inside the interval must not warn again")
+
+		r.warnIfGatewayUnmatched(lctx, true)
+		assert.Equal(t, 2, logs.count(unmatchedMsg), "the startup check warns regardless of the interval")
+
+		r.gatewayCheck.last = time.Now().Add(-gatewayCheckInterval - time.Second)
+		r.warnIfGatewayUnmatched(lctx, false)
+		assert.Equal(t, 3, logs.count(unmatchedMsg), "once the interval has passed a push warns again")
+	})
+
+	t.Run("a matched gateway does not warn", func(t *testing.T) {
+		r := newEgressReconciler(gatewayTestPod("gw", "hangar", gatewayLabels, true))
+		r.HangarClient = hangar.NewClient(&hangar.Config{URL: core.URL, MaxRetries: 0})
+		r.GatewayPodSelector = sel
+		logs := &logCapture{}
+		r.warnIfGatewayUnmatched(log.IntoContext(context.Background(), logs.logger()), true)
+		assert.Zero(t, logs.count(unmatchedMsg))
+	})
+
+	t.Run("watch disabled does not warn", func(t *testing.T) {
+		r := newEgressReconciler()
+		r.GatewayPodSelector = sel // no HangarClient: no watch, nothing to warn about
+		logs := &logCapture{}
+		r.warnIfGatewayUnmatched(log.IntoContext(context.Background(), logs.logger()), true)
+		assert.Zero(t, logs.count(unmatchedMsg))
+	})
 }
