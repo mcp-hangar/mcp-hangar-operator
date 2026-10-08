@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -46,6 +47,22 @@ const (
 	// says was written. The two conditions answer different questions, and
 	// collapsing them is what let a policy report Enforce over an inert object.
 	EgressPolicyConditionBackstopEnforceable = "BackstopEnforceable"
+	// EgressPolicyConditionL7Delivered reports whether core holds the compiled
+	// L7 policy. Compiled says the operator could build it; this says core took
+	// it. Without it a 403 from core left a policy reading all green while its
+	// tool rules were enforced nowhere (#191).
+	EgressPolicyConditionL7Delivered = "L7Delivered"
+)
+
+// Reasons on the L7Delivered and Degraded conditions, see pushL7Policy.
+const (
+	l7ReasonDelivered             = "Delivered"
+	l7ReasonDeliveredNotPersisted = "DeliveredNotPersisted"
+	l7ReasonCoreAuthRejected      = "CoreAuthRejected"
+	l7ReasonCoreUnreachable       = "CoreUnreachable"
+	l7ReasonPushFailed            = "PushFailed"
+	l7ReasonCoreIntegrationOff    = "CoreIntegrationOff"
+	degradedReasonL7PushFailed    = "L7PushFailed"
 )
 
 // targetNotFoundRequeueAfter is how long to wait before re-checking a policy
@@ -138,6 +155,8 @@ func (r *MCPEgressPolicyReconciler) reconcile(ctx context.Context, policy *mcpv1
 			"BackstopGenerationDisabled", "spec.networkBackstop.generate is false")
 		r.setNoBackstop(policy, mcpv1alpha2.BackstopDisabled, "BackstopGenerationDisabled",
 			"no backstop is generated, so none is enforced")
+		r.setL7NotPushed(policy, "BackstopGenerationDisabled",
+			"the L7 policy is not pushed to core when spec.networkBackstop.generate is false")
 		r.clearDegraded(policy)
 		return ctrl.Result{}, nil
 	}
@@ -206,21 +225,90 @@ func (r *MCPEgressPolicyReconciler) handleDeletion(ctx context.Context, policy *
 }
 
 // pushL7Policy compiles the policy's L7 rules and delivers them to core for each
-// target server. A push failure requeues (so a transient core outage retries).
+// target server, and records the outcome on L7Delivered. A push failure sets
+// the condition False, folds into Degraded and requeues (so a transient core
+// outage retries); the caller still persists status before the error
+// propagates, which is the whole point -- a Warning Event was the only trace a
+// rejected push used to leave (#191).
 func (r *MCPEgressPolicyReconciler) pushL7Policy(ctx context.Context, logger logr.Logger, policy *mcpv1alpha2.MCPEgressPolicy, selector metav1.LabelSelector) error {
 	if r.HangarClient == nil {
+		r.setL7CoreIntegrationOff(policy)
 		return nil
 	}
 	payload := compileL7Policy(policy)
-	for _, name := range providerNamesFromSelector(selector) {
-		if err := r.HangarClient.SetL7Policy(ctx, name, payload); err != nil {
+	names := providerNamesFromSelector(selector)
+	persisted := true
+	for _, name := range names {
+		p, err := r.HangarClient.SetL7Policy(ctx, name, payload)
+		if err != nil {
+			reason := l7PushReason(err)
+			msg := fmt.Sprintf("L7 policy for %q not delivered to core: %v", name, err)
 			r.Recorder.Eventf(policy, nil, corev1.EventTypeWarning, "L7PushFailed", ActionReconcile,
 				"Failed to deliver L7 policy to core for %q: %v", name, err)
+			r.setCondition(policy, EgressPolicyConditionL7Delivered, metav1.ConditionFalse, reason, msg)
+			r.degradeForL7(policy, msg)
 			return fmt.Errorf("push L7 policy for %q: %w", name, err)
 		}
-		logger.Info("Delivered L7 policy to core", "policy", policy.Name, "server", name)
+		persisted = persisted && p
+		logger.Info("Delivered L7 policy to core", "policy", policy.Name, "server", name, "persisted", p)
 	}
+	if persisted {
+		r.setCondition(policy, EgressPolicyConditionL7Delivered, metav1.ConditionTrue, l7ReasonDelivered,
+			fmt.Sprintf("L7 policy delivered to core for %s", strings.Join(names, ", ")))
+		return nil
+	}
+	r.setCondition(policy, EgressPolicyConditionL7Delivered, metav1.ConditionTrue, l7ReasonDeliveredNotPersisted,
+		fmt.Sprintf("L7 policy delivered to core for %s; core does not persist it, so it is "+
+			"re-delivered when a gateway pod becomes Ready", strings.Join(names, ", ")))
 	return nil
+}
+
+// l7PushReason maps a SetL7Policy error to the L7Delivered reason. A status
+// core answered with is a refusal (auth or otherwise); anything else never got
+// an answer.
+func l7PushReason(err error) string {
+	var se *hangar.StatusError
+	if !errors.As(err, &se) {
+		return l7ReasonCoreUnreachable
+	}
+	if se.StatusCode == 401 || se.StatusCode == 403 {
+		return l7ReasonCoreAuthRejected
+	}
+	return l7ReasonPushFailed
+}
+
+// setL7CoreIntegrationOff records that there is no core to deliver to. That is
+// Unknown, not False: running without --hangar-url is a deployment choice, not
+// a failed push.
+func (r *MCPEgressPolicyReconciler) setL7CoreIntegrationOff(policy *mcpv1alpha2.MCPEgressPolicy) {
+	r.setCondition(policy, EgressPolicyConditionL7Delivered, metav1.ConditionUnknown, l7ReasonCoreIntegrationOff,
+		"core integration is off (no --hangar-url); the L7 policy is not delivered anywhere")
+}
+
+// setL7NotPushed records that this reconcile skipped the push for a
+// policy-level reason, repeating the reason the other conditions carry, so an
+// L7Delivered=True from an earlier generation cannot outlive the push that
+// earned it.
+func (r *MCPEgressPolicyReconciler) setL7NotPushed(policy *mcpv1alpha2.MCPEgressPolicy, reason, msg string) {
+	if r.HangarClient == nil {
+		r.setL7CoreIntegrationOff(policy)
+		return
+	}
+	r.setCondition(policy, EgressPolicyConditionL7Delivered, metav1.ConditionFalse, reason, msg)
+}
+
+// degradeForL7 sets Degraded for a failed L7 push. The backstop verdict of
+// this reconcile is already on Degraded by the time the push runs; a backstop
+// hole and a missing L7 half are both worth knowing, so the earlier reason is
+// kept in the message rather than overwritten. L7PushFailed takes the reason
+// slot because it is the one that clears by itself on the next good push,
+// whereas the backstop reasons return on their own the moment it does.
+func (r *MCPEgressPolicyReconciler) degradeForL7(policy *mcpv1alpha2.MCPEgressPolicy, msg string) {
+	if c := meta.FindStatusCondition(policy.Status.Conditions, EgressPolicyConditionDegraded); c != nil &&
+		c.Status == metav1.ConditionTrue && c.Reason != degradedReasonL7PushFailed {
+		msg = fmt.Sprintf("%s; also %s: %s", msg, c.Reason, c.Message)
+	}
+	r.setCondition(policy, EgressPolicyConditionDegraded, metav1.ConditionTrue, degradedReasonL7PushFailed, msg)
 }
 
 // providerNamesFromSelector extracts the concrete provider (server) names a
@@ -380,6 +468,7 @@ func (r *MCPEgressPolicyReconciler) resolveTargetSelector(
 			"UnsupportedTargetKind", "no backstop applied")
 		r.setNoBackstop(policy, mcpv1alpha2.BackstopPending, "UnsupportedTargetKind",
 			"no backstop applied, so none is enforced")
+		r.setL7NotPushed(policy, "UnsupportedTargetKind", "no L7 policy pushed")
 		r.clearDegraded(policy)
 		return metav1.LabelSelector{}, "", &ctrl.Result{}, nil
 	}
@@ -415,6 +504,7 @@ func (r *MCPEgressPolicyReconciler) targetNotFound(policy *mcpv1alpha2.MCPEgress
 	r.setCondition(policy, EgressPolicyConditionCompiled, metav1.ConditionFalse, "TargetNotFound", msg)
 	r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionFalse, "TargetNotFound", "no backstop applied")
 	r.setNoBackstop(policy, mcpv1alpha2.BackstopPending, "TargetNotFound", "no backstop applied, so none is enforced")
+	r.setL7NotPushed(policy, "TargetNotFound", "no L7 policy pushed")
 	r.setCondition(policy, EgressPolicyConditionDegraded, metav1.ConditionTrue, "TargetNotFound", msg)
 	return &ctrl.Result{RequeueAfter: targetNotFoundRequeueAfter * 1e9}
 }
