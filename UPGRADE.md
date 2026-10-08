@@ -1,5 +1,34 @@
 # Upgrade notes
 
+## Unreleased -- an `MCPEgressPolicy` with `networkBackstop.generate: false` now delivers its L7 rules
+
+An `MCPEgressPolicy` that opted out of the L3/L4 backstop with
+`spec.networkBackstop.generate: false` used to lose its tool, argument and
+header rules with it: the reconcile stopped at the backstop decision and never
+pushed the compiled L7 policy to core. The policy read `Compiled=True` and
+`BackstopApplied=False` / `BackstopGenerationDisabled`, which says only that the
+backstop is off; nothing said that core held no rules for its servers either.
+
+The two layers are now independent. Such a policy still writes no backstop and
+still reports `BackstopApplied=False` / `BackstopGenerationDisabled`, and its L7
+policy is pushed to core for every target server, reported on `L7Delivered`
+like any other policy's (`True` / `Delivered`, or `False` with the push
+failure's reason and `Degraded=True` / `L7PushFailed`). The finalizer clears it
+from core on delete, as it already did.
+
+What changes in the cluster is enforcement: a `generate: false` policy in
+`Enforce` mode whose tool rules were silently dropped until now is enforced by
+core after the upgrade. If such a policy was written with a narrow `allow`
+list, or a `defaultAction: Deny`, on the assumption that only its backstop
+mattered, tool calls it never blocked before will be blocked, or routed to
+approval, on the next reconcile. Review those policies before upgrading, or set
+them to `Audit` mode first and read the decisions core logs.
+
+A `generate: false` policy whose target does not exist now reports
+`Compiled=False` / `TargetNotFound` and `Degraded=True`, and is re-checked
+every 30 seconds, as a `generate: true` policy with a missing target always
+did. It used to read `Compiled=True` with nothing to compile for.
+
 ## Unreleased -- an `MCPEgressPolicy` now says whether core took its L7 policy
 
 An `MCPEgressPolicy` whose compiled L7 policy core refused -- a 403 from an API
