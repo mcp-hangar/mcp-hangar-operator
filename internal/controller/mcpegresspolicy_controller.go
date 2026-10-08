@@ -25,8 +25,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/hangar"
@@ -101,6 +103,7 @@ type MCPEgressPolicyReconciler struct {
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpegresspolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpegresspolicies/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpegresspolicies/finalizers,verbs=update
+// +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservergroups,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cilium.io,resources=ciliumnetworkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list
@@ -789,7 +792,22 @@ func (r *MCPEgressPolicyReconciler) clearDegraded(policy *mcpv1alpha2.MCPEgressP
 func (r *MCPEgressPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	b := ctrl.NewControllerManagedBy(mgr).
 		For(&mcpv1alpha2.MCPEgressPolicy{}).
-		Owns(&networkingv1.NetworkPolicy{})
+		Owns(&networkingv1.NetworkPolicy{}).
+		// The targets (#190): a server appearing, going away or changing
+		// labels moves it in or out of a policy's backstop, and a server
+		// recreated under the same name comes back without core's L7 policy
+		// (a push is attach-or-replace, so pushing again is safe). A spec
+		// change is included too: it is when core's discovery re-reads the
+		// server, and the cost is one request per member. Status-only
+		// updates do not pass.
+		Watches(&mcpv1alpha2.MCPServer{},
+			handler.EnqueueRequestsFromMapFunc(r.policiesForMCPServer),
+			builder.WithPredicates(predicate.Or(
+				predicate.GenerationChangedPredicate{}, predicate.LabelChangedPredicate{}))).
+		// A group's selector decides who its members are.
+		Watches(&mcpv1alpha2.MCPServerGroup{},
+			handler.EnqueueRequestsFromMapFunc(r.policiesForMCPServerGroup),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}))
 	if r.gatewayWatchEnabled() {
 		// Pods are already in the manager's cache (the MCPServer controller
 		// owns them), so this watch adds a handler, not an informer.
