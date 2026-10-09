@@ -412,6 +412,42 @@ func TestBuildPodForMCPServer_WithServiceAccount(t *testing.T) {
 	assert.Equal(t, "custom-sa", pod.Spec.ServiceAccountName)
 }
 
+// A provider pod must not carry an API-server bearer token unless the spec
+// asks for one (#207).
+func TestBuildPodForMCPServer_AutomountServiceAccountToken(t *testing.T) {
+	tests := []struct {
+		name string
+		spec *bool
+		want bool
+	}{
+		{name: "unset defaults to false", spec: nil, want: false},
+		{name: "explicit true opts in", spec: ptr.To(true), want: true},
+		{name: "explicit false stays false", spec: ptr.To(false), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &mcpv1alpha2.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-provider",
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha2.MCPServerSpec{
+					Mode:                         "container",
+					Image:                        "test-image:latest",
+					AutomountServiceAccountToken: tt.spec,
+				},
+			}
+
+			pod, err := BuildPodForMCPServer(provider)
+
+			require.NoError(t, err)
+			require.NotNil(t, pod.Spec.AutomountServiceAccountToken, "the mount decision must be explicit on the pod")
+			assert.Equal(t, tt.want, *pod.Spec.AutomountServiceAccountToken)
+		})
+	}
+}
+
 func TestBuildLabels(t *testing.T) {
 	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
