@@ -310,6 +310,19 @@ The operator uses this block to:
 were the Tetragon / hangar-agent path, retired by ADR-010, and nothing read
 them. Do not re-add them: a declaration nothing enforces reads as enforcement.
 
+## Changelog and upgrade notes
+
+Same mechanism as mcp-hangar core. Never edit `CHANGELOG.md` or `UPGRADE.md`
+directly: both are assembled on the release PR.
+
+- Every non-trivial PR adds **one new file** `changelog.d/<id>-<slug>.<kind>.md`
+  (`kind`: `added`, `changed`, `deprecated`, `removed`, `fixed`, `security`).
+  `chore(deps)`, `ci`, `style`, `test` and pure `docs` PRs are exempt. The
+  `changelog / check` workflow enforces it. See `changelog.d/README.md`.
+- A change a reader has to act on also adds **one new file**
+  `upgrade.d/<id>-<slug>.md` whose first line is `### <headline>`. Do not add an
+  `## Unreleased` section to `UPGRADE.md`. See `upgrade.d/README.md`.
+
 ## What NOT to Do
 
 - No `panic()` in production paths -- return errors

@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Requires a changelog FRAGMENT on every non-trivial PR. See changelog.d/README.md.
+#
+# Ported from mcp-hangar core's script of the same name. What differs is only
+# TRIGGERING_PATTERN: the paths that ship in the operator's image, CRDs and
+# manifests. Keep the rest in step.
+#
+# Core used to require a diff in CHANGELOG.md itself, under `## [Unreleased]`.
+# That made one anchor in one file the write target for every open PR at once,
+# so any two of them conflicted and the second to merge got a hand-resolve.
+# A fragment is a new file per PR, so there is nothing for git to merge.
+# `scripts/build_changelog.py` folds them into CHANGELOG.md at release time.
+
+# Inputs from environment
+: "${BASE_SHA:?BASE_SHA must be set}"
+: "${HEAD_SHA:?HEAD_SHA must be set}"
+: "${PR_LABELS:=}"
+: "${PR_TITLE:=}"
+
+# What a user of the operator runs or applies: the Go code, the CRDs and
+# manifests under config/, the module's dependencies and the image.
+TRIGGERING_PATTERN='^(api/|cmd/|internal/|pkg/|config/|go\.mod$|go\.sum$|Dockerfile$)'
+FRAGMENT_PATTERN='^changelog\.d/[A-Za-z0-9._-]+\.(added|changed|deprecated|removed|fixed|security)\.md$'
+
+# Diff from the merge base, never from BASE_SHA itself. The workflow passes the
+# base branch TIP, and a two-dot diff from it counts everything main did since
+# the branch point as this PR's (#1337): a test-only PR owed a fragment for
+# main's `src/` changes, and a release deleting the pending fragments made them
+# look ADDED by every branch cut before it. No fallback to two dots: without a
+# merge base the gate cannot tell the PR's changes from main's.
+if ! merge_base=$(git merge-base "$BASE_SHA" "$HEAD_SHA"); then
+  echo "::error::Cannot resolve the merge base of BASE_SHA ($BASE_SHA) and HEAD_SHA ($HEAD_SHA)."
+  echo "::error::The clone lacks the history between them (shallow?). Check out with fetch-depth: 0."
+  exit 1
+fi
+
+changed_files=$(git diff --name-only "$merge_base" "$HEAD_SHA")
+
+# Checked before anything else, and on every PR rather than only the ones that
+# owe an entry: the mistake this catches -- writing the entry into CHANGELOG.md
+# the way the old convention said to -- is most likely on a PR that owes no
+# entry at all, where the fragment requirement below never runs. A hand edit is
+# still legitimate for a typo in an already-released section, so this warns.
+if echo "$changed_files" | grep -qx "CHANGELOG.md"; then
+  echo "::warning file=CHANGELOG.md::CHANGELOG.md is generated from changelog.d/ at release time. A new entry belongs in a fragment; only edits to already-released sections survive. See changelog.d/README.md."
+fi
+
+if ! echo "$changed_files" | grep -qE "$TRIGGERING_PATTERN"; then
+  echo "No triggering files changed. Changelog fragment not required."
+  exit 0
+fi
+
+if echo "$PR_LABELS" | grep -q "skip-changelog"; then
+  echo "skip-changelog label present. Skipping check."
+  exit 0
+fi
+
+# changelog.d/README.md names the PR kinds that owe no fragment: `chore(deps)`,
+# `ci`, `style`, `test` and pure `docs`. The gate did not implement any of it,
+# and the paths that trigger it are broad enough to catch all of them -- a
+# dependency bump edits `go.mod`, a test-only PR adds `*_test.go` under
+# `internal/`, a docs PR edits a Go doc comment. So every such PR failed a REQUIRED
+# check and waited for somebody to hand-apply `skip-changelog`.
+#
+# Read from the title rather than the author or the paths: a human doing a
+# dependency bump is treated like Dependabot, and the Conventional Commit type
+# is the author's own statement about what the PR is. `pr-title / validate`
+# already constrains that vocabulary.
+#
+# This lifts the requirement, not the possibility: a `test` PR that does
+# something a reader upgrading needs to know about can still add a fragment.
+if echo "$PR_TITLE" | grep -qE '^(chore|ci|build)\(deps(-dev)?\)|^(ci|test|style|docs)(\([a-z-]+\))?:'; then
+  echo "Trivial by Conventional Commit type ($PR_TITLE). Changelog fragment not required."
+  exit 0
+fi
+
+# Only files ADDED by this PR count. An edit to someone else's pending fragment
+# is not this PR's changelog entry.
+added_fragments=$(git diff --name-only --diff-filter=A "$merge_base" "$HEAD_SHA" \
+  | grep -E "$FRAGMENT_PATTERN" || true)
+
+if [ -z "$added_fragments" ]; then
+  echo "::error::No changelog fragment added. Create \`changelog.d/<id>-<slug>.<kind>.md\`"
+  echo "::error::(kind: added|changed|deprecated|removed|fixed|security) or apply the \`skip-changelog\` label."
+  echo "::error::See changelog.d/README.md. Do NOT edit CHANGELOG.md directly -- it is assembled at release time."
+  exit 1
+fi
+
+# The fragment has to render, not merely exist: a malformed one fails the
+# release assembly instead, which is the worst possible moment to find out.
+# shellcheck disable=SC2086
+python3 scripts/build_changelog.py check $added_fragments
+
+echo "Changelog fragment found:"
+# Splitting is the point: one line per fragment path.
+# shellcheck disable=SC2086
+printf '  %s\n' $added_fragments
+exit 0

@@ -8,6 +8,10 @@
 # GITHUB_TOKEN fallback, events caused by the default token do not cascade,
 # so this workflow dispatches release.yml on the fresh tag explicitly --
 # gated to the fallback path to avoid running the image build twice.
+#
+# release-please no longer writes CHANGELOG.md (`skip-changelog: true`). The
+# last step folds the per-PR fragments in changelog.d/ and upgrade.d/ into
+# CHANGELOG.md and UPGRADE.md on the release branch, as mcp-hangar core does.
 name: Release Please
 
 on:
@@ -27,12 +31,41 @@ jobs:
     env:
       RELEASE_BOT_APP_ID: ${{ secrets.RELEASE_BOT_APP_ID }}
     steps:
+      # Only the assembly step reads the tree. Full history and tags, not a
+      # shallow clone: it reads the squash commit that ADDED each fragment
+      # (that is where the PR number comes from) and the newest tag (the
+      # compare link). Both are invisible at fetch-depth 1.
+      #
+      # No persisted credential. Checkout otherwise leaves GITHUB_TOKEN in
+      # git's config as an Authorization header, which git sends in preference
+      # to the app token the assembly step puts in its push URL -- so the push
+      # would be attributed to `github-actions[bot]` and start no checks on the
+      # release PR (core #1379). release-please writes through the API, and the
+      # repository is public, so the assembler's fetch needs no credential.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
       - uses: actions/create-github-app-token@v3
         id: app-token
         if: ${{ env.RELEASE_BOT_APP_ID != '' }}
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      # An app that is configured and yields no token is a credential problem,
+      # and everything downstream silently degrades to GITHUB_TOKEN: the
+      # assembly push starts no checks on the release PR (core #1180).
+      - name: Say so when the release app produced no token
+        if: ${{ env.RELEASE_BOT_APP_ID != '' && steps.app-token.outputs.token == '' }}
+        run: |
+          echo "::warning::RELEASE_BOT_APP_ID is configured but the app token step produced nothing;"\
+               "falling back to GITHUB_TOKEN. Check the app installation and its permissions."
 
       - uses: googleapis/release-please-action@v5
         id: release
@@ -46,3 +79,22 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "${{ steps.release.outputs.tag_name }}"
+
+      # Fold changelog.d/ and upgrade.d/ into a version section on the release
+      # branch, so the release PR carries the notes and merging it lands bump +
+      # notes in one squash commit.
+      #
+      # Pushed with the app token so the push starts the release PR's checks:
+      # a push made with GITHUB_TOKEN starts no workflows, and the required
+      # checks would sit "expected" on the new head. Without the app token the
+      # script falls back to GITHUB_TOKEN, then re-fires the checks by closing
+      # and reopening the PR, and says what to run by hand if that is not
+      # enough.
+      #
+      # Deliberately last: it checks out the release branch.
+      - name: Assemble the changelog on the release PR
+        if: ${{ steps.release.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUSH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+        run: bash scripts/assemble_release_changelog.sh

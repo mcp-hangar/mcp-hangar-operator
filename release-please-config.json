@@ -10,6 +10,7 @@
       "bump-patch-for-minor-pre-major": true,
       "draft": false,
       "prerelease": false,
+      "skip-changelog": true,
       "pull-request-title-pattern": "chore(release): release ${version}"
     }
   },

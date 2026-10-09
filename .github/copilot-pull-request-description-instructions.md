@@ -13,9 +13,10 @@ The PR body MUST contain these five `##` sections, in this exact wording
 2. `## What` -- bulleted list of changes in imperative voice.
 3. `## How tested` -- commands run, scenarios verified.
 4. `## Risk and rollback` -- what could break and how to revert.
-5. `## CHANGELOG note` -- paste the entry the PR adds, or write
-   `skip-changelog: <reason>` when the change does not touch a triggering
-   path (`api/`, `internal/`, `config/`, `go.mod`).
+5. `## CHANGELOG note` -- paste the `changelog.d/` fragment the PR adds, or
+   write `skip-changelog: <reason>` when the change does not touch a triggering
+   path (`api/`, `cmd/`, `internal/`, `pkg/`, `config/`, `go.mod`,
+   `Dockerfile`).
 
 Optionally append `## Agent metadata` for agent-authored PRs.
 

@@ -1,0 +1,52 @@
+# Validates the changelog FRAGMENT for non-trivial PRs. Ported from mcp-hangar
+# core's workflow of the same name; see changelog.d/README.md.
+#
+# Entries live in `changelog.d/` as one file per PR, and upgrade notes in
+# `upgrade.d/`, not as sections every PR prepends to a shared file -- that was
+# a single anchor every open PR wrote to, so concurrent PRs conflicted by
+# construction.
+name: changelog
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+# Not cancel-in-progress, matching pr-title. This workflow reacts to `labeled`
+# and `unlabeled`, which do not move the head, so a cancelled run lands on the
+# SAME commit as the successful one -- and branch protection can read the
+# cancelled one, leaving a pull request blocked with nothing failing (core
+# #1250). Cancelling is safe where the head moved; here it is not.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # The release PR is where the fragments are consumed, not added.
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # The check renders each added fragment rather than only looking for it,
+      # so a malformed one fails here instead of at release assembly.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Run changelog check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          # Read as data, never interpolated into the shell: a PR title is
+          # attacker-controlled text.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: bash scripts/check_changelog.sh
