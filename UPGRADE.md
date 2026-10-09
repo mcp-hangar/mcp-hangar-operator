@@ -1,5 +1,32 @@
 # Upgrade notes
 
+## Unreleased -- provider pods no longer mount a ServiceAccount token
+
+A container-mode `MCPServer` pod used to get a ServiceAccount token projected
+into it, the way any pod does when nothing says otherwise: with
+`serviceAccountName` empty that was the namespace default ServiceAccount, so
+every MCP server had a bearer token for the API server on disk whether or not
+it ever used one. A NetworkPolicy does not block the API server on many CNIs,
+so an egress policy did not close that path.
+
+The operator now writes `automountServiceAccountToken: false` on every
+provider pod it builds unless the `MCPServer` opts in:
+
+```yaml
+spec:
+  serviceAccountName: my-server
+  automountServiceAccountToken: true
+```
+
+If a server reads `/var/run/secrets/kubernetes.io/serviceaccount` -- it talks
+to the Kubernetes API, or uses an in-cluster client library that does -- it
+will start failing with "unable to load in-cluster configuration" or a `401`
+after the upgrade. Add `automountServiceAccountToken: true` to that server,
+preferably together with a dedicated `serviceAccountName` carrying only the
+RBAC it needs. A server that never touched the token sees no change beyond the
+missing mount; nothing is rewritten on existing pods until their next
+generation rolls them.
+
 ## Unreleased -- an `MCPEgressPolicy` with `networkBackstop.generate: false` now delivers its L7 rules
 
 An `MCPEgressPolicy` that opted out of the L3/L4 backstop with

@@ -7,6 +7,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
@@ -78,6 +79,7 @@ func BuildPodForMCPServer(provider *mcpv1alpha2.MCPServer) (*corev1.Pod, error) 
 			Volumes:                       provider.Spec.Volumes,
 			RestartPolicy:                 corev1.RestartPolicyNever, // Operator manages restarts
 			ServiceAccountName:            provider.Spec.ServiceAccountName,
+			AutomountServiceAccountToken:  automountServiceAccountToken(provider),
 			NodeSelector:                  provider.Spec.NodeSelector,
 			ImagePullSecrets:              provider.Spec.ImagePullSecrets,
 			PriorityClassName:             provider.Spec.PriorityClassName,
@@ -95,6 +97,18 @@ func BuildPodForMCPServer(provider *mcpv1alpha2.MCPServer) (*corev1.Pod, error) 
 	}
 
 	return pod, nil
+}
+
+// automountServiceAccountToken is the pod's token mount decision. Nil in the
+// spec means false: left to Kubernetes, the pod would inherit the namespace
+// default ServiceAccount and a bearer token for the API server on disk, and a
+// NetworkPolicy does not block the API server on many CNIs (#207). A server
+// that needs the API says so with spec.automountServiceAccountToken: true.
+func automountServiceAccountToken(provider *mcpv1alpha2.MCPServer) *bool {
+	if provider.Spec.AutomountServiceAccountToken != nil {
+		return ptr.To(*provider.Spec.AutomountServiceAccountToken)
+	}
+	return ptr.To(false)
 }
 
 // buildContainer creates the main provider container
