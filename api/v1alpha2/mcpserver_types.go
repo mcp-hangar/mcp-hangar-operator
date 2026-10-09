@@ -40,6 +40,7 @@ type MCPServerSpec struct {
 	Mode MCPServerMode `json:"mode"`
 
 	// Image is the container image for the provider (required for container mode)
+	// +kubebuilder:validation:MaxLength=1024
 	// +optional
 	Image string `json:"image,omitempty"`
 
@@ -55,7 +56,9 @@ type MCPServerSpec struct {
 	// +optional
 	WorkingDir string `json:"workingDir,omitempty"`
 
-	// Endpoint is the HTTP endpoint for remote providers
+	// Endpoint is the HTTP endpoint for remote providers (required for remote
+	// mode): an absolute http or https URL with a host.
+	// +kubebuilder:validation:MaxLength=2048
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
 
@@ -68,11 +71,13 @@ type MCPServerSpec struct {
 
 	// StartupTimeout is the maximum time to wait for provider startup.
 	// Uses standard Kubernetes duration format (e.g. "30s").
+	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('0s')",message="must be a non-negative duration such as 30s"
 	// +optional
 	StartupTimeout *metav1.Duration `json:"startupTimeout,omitempty"`
 
 	// ShutdownGracePeriod is the grace period for graceful shutdown.
 	// Uses standard Kubernetes duration format (e.g. "30s").
+	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('0s')",message="must be a non-negative duration such as 30s"
 	// +optional
 	ShutdownGracePeriod *metav1.Duration `json:"shutdownGracePeriod,omitempty"`
 
@@ -195,7 +200,15 @@ type EgressRuleSpec struct {
 	// +optional
 	Protocol string `json:"protocol,omitempty"`
 
-	// CIDR is an IP range (alternative to host, for K8s-native rules)
+	// The pattern stands in for CEL isCIDR(), which a 1.30 apiserver does not
+	// yet accept in a new CRD rule: it compiles new rules against the 1.29
+	// library set (#196).
+
+	// CIDR is an IP range (alternative to host, for K8s-native rules): an IPv4
+	// CIDR such as 10.0.0.0/8, or an IPv6 one such as fd00::/8. The IPv4 form
+	// is checked exactly, the IPv6 form only for its shape and prefix length.
+	// +kubebuilder:validation:MaxLength=43
+	// +kubebuilder:validation:Pattern=`^((((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9]))|([0-9a-fA-F.]*:[0-9a-fA-F:.]*/(12[0-8]|1[01][0-9]|[1-9]?[0-9])))$`
 	// +optional
 	CIDR string `json:"cidr,omitempty"`
 }
@@ -214,7 +227,12 @@ type ToolCapabilitiesSpec struct {
 
 	// ExpectedTools is the list of tool names the provider is expected to expose.
 	// Used for runtime drift detection: tools present at runtime but not in this
-	// list trigger a schema_mismatch violation.
+	// list trigger a schema_mismatch violation. Names must be non-empty and
+	// unique.
+	// +kubebuilder:validation:MaxItems=256
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=256
+	// +kubebuilder:validation:XValidation:rule="self.all(t, self.exists_one(u, u == t))",message="expectedTools must not contain duplicates"
 	// +optional
 	ExpectedTools []string `json:"expectedTools,omitempty"`
 }
@@ -275,6 +293,7 @@ type MCPServerStatus struct {
 	Capabilities *MCPServerCapabilities `json:"capabilities,omitempty"`
 
 	// Violations records detected capability violations (most recent MaxViolationRecords entries)
+	// +kubebuilder:validation:MaxItems=100
 	// +optional
 	Violations []ViolationRecord `json:"violations,omitempty"`
 }
@@ -322,6 +341,16 @@ type MCPServer struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
+	// The mode rules sit on this field, not on MCPServerSpec: the discovery
+	// source's providerTemplate.spec embeds MCPServerSpec, and a template may
+	// leave the image to the discovered entry. They used to live only in the
+	// webhook, which is off by default, so with it off the apiserver stored a
+	// container server with no image and a remote one with any endpoint (#196).
+
+	// +kubebuilder:validation:XValidation:rule="self.mode != 'container' || (has(self.image) && size(self.image) > 0)",message="spec.image is required when mode is container"
+	// +kubebuilder:validation:XValidation:rule="self.mode != 'remote' || (has(self.endpoint) && size(self.endpoint) > 0)",message="spec.endpoint is required when mode is remote"
+	// +kubebuilder:validation:XValidation:rule="self.mode != 'remote' || !has(self.endpoint) || size(self.endpoint) == 0 || (isURL(self.endpoint) && url(self.endpoint).getScheme() in ['http', 'https'] && size(url(self.endpoint).getHostname()) > 0)",message="spec.endpoint must be an absolute http or https URL with a host"
+	// +kubebuilder:validation:XValidation:rule="self.mode == oldSelf.mode",message="spec.mode is immutable: delete and recreate the MCPServer to change it"
 	Spec   MCPServerSpec   `json:"spec,omitempty"`
 	Status MCPServerStatus `json:"status,omitempty"`
 }

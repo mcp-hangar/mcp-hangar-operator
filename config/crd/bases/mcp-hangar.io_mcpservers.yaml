@@ -1014,8 +1014,12 @@ spec:
                             destination
                           properties:
                             cidr:
-                              description: CIDR is an IP range (alternative to host,
-                                for K8s-native rules)
+                              description: |-
+                                CIDR is an IP range (alternative to host, for K8s-native rules): an IPv4
+                                CIDR such as 10.0.0.0/8, or an IPv6 one such as fd00::/8. The IPv4 form
+                                is checked exactly, the IPv6 form only for its shape and prefix length.
+                              maxLength: 43
+                              pattern: ^((((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9]))|([0-9a-fA-F.]*:[0-9a-fA-F:.]*/(12[0-8]|1[01][0-9]|[1-9]?[0-9])))$
                               type: string
                             host:
                               description: Host is a hostname or glob pattern (e.g.
@@ -1055,10 +1059,17 @@ spec:
                         description: |-
                           ExpectedTools is the list of tool names the provider is expected to expose.
                           Used for runtime drift detection: tools present at runtime but not in this
-                          list trigger a schema_mismatch violation.
+                          list trigger a schema_mismatch violation. Names must be non-empty and
+                          unique.
                         items:
+                          maxLength: 256
+                          minLength: 1
                           type: string
+                        maxItems: 256
                         type: array
+                        x-kubernetes-validations:
+                        - message: expectedTools must not contain duplicates
+                          rule: self.all(t, self.exists_one(u, u == t))
                       maxCount:
                         description: MaxCount is the maximum number of tools the provider
                           may advertise (0 = unlimited)
@@ -1269,7 +1280,10 @@ spec:
                     type: object
                 type: object
               endpoint:
-                description: Endpoint is the HTTP endpoint for remote providers
+                description: |-
+                  Endpoint is the HTTP endpoint for remote providers (required for remote
+                  mode): an absolute http or https URL with a host.
+                maxLength: 2048
                 type: string
               env:
                 description: Env defines environment variables for the provider container.
@@ -1433,6 +1447,7 @@ spec:
               image:
                 description: Image is the container image for the provider (required
                   for container mode)
+                maxLength: 1024
                 type: string
               imagePullSecrets:
                 description: ImagePullSecrets for pulling the container image
@@ -1774,11 +1789,17 @@ spec:
                   ShutdownGracePeriod is the grace period for graceful shutdown.
                   Uses standard Kubernetes duration format (e.g. "30s").
                 type: string
+                x-kubernetes-validations:
+                - message: must be a non-negative duration such as 30s
+                  rule: duration(self) >= duration('0s')
               startupTimeout:
                 description: |-
                   StartupTimeout is the maximum time to wait for provider startup.
                   Uses standard Kubernetes duration format (e.g. "30s").
                 type: string
+                x-kubernetes-validations:
+                - message: must be a non-negative duration such as 30s
+                  rule: duration(self) >= duration('0s')
               tolerations:
                 description: Tolerations for pod scheduling
                 items:
@@ -3903,6 +3924,21 @@ spec:
             required:
             - mode
             type: object
+            x-kubernetes-validations:
+            - message: spec.image is required when mode is container
+              rule: self.mode != 'container' || (has(self.image) && size(self.image)
+                > 0)
+            - message: spec.endpoint is required when mode is remote
+              rule: self.mode != 'remote' || (has(self.endpoint) && size(self.endpoint)
+                > 0)
+            - message: spec.endpoint must be an absolute http or https URL with a
+                host
+              rule: self.mode != 'remote' || !has(self.endpoint) || size(self.endpoint)
+                == 0 || (isURL(self.endpoint) && url(self.endpoint).getScheme() in
+                ['http', 'https'] && size(url(self.endpoint).getHostname()) > 0)
+            - message: 'spec.mode is immutable: delete and recreate the MCPServer
+                to change it'
+              rule: self.mode == oldSelf.mode
           status:
             description: MCPServerStatus defines the observed state of MCPServer
             properties:
@@ -3936,8 +3972,12 @@ spec:
                             destination
                           properties:
                             cidr:
-                              description: CIDR is an IP range (alternative to host,
-                                for K8s-native rules)
+                              description: |-
+                                CIDR is an IP range (alternative to host, for K8s-native rules): an IPv4
+                                CIDR such as 10.0.0.0/8, or an IPv6 one such as fd00::/8. The IPv4 form
+                                is checked exactly, the IPv6 form only for its shape and prefix length.
+                              maxLength: 43
+                              pattern: ^((((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9]))|([0-9a-fA-F.]*:[0-9a-fA-F:.]*/(12[0-8]|1[01][0-9]|[1-9]?[0-9])))$
                               type: string
                             host:
                               description: Host is a hostname or glob pattern (e.g.
@@ -3977,10 +4017,17 @@ spec:
                         description: |-
                           ExpectedTools is the list of tool names the provider is expected to expose.
                           Used for runtime drift detection: tools present at runtime but not in this
-                          list trigger a schema_mismatch violation.
+                          list trigger a schema_mismatch violation. Names must be non-empty and
+                          unique.
                         items:
+                          maxLength: 256
+                          minLength: 1
                           type: string
+                        maxItems: 256
                         type: array
+                        x-kubernetes-validations:
+                        - message: expectedTools must not contain duplicates
+                          rule: self.all(t, self.exists_one(u, u == t))
                       maxCount:
                         description: MaxCount is the maximum number of tools the provider
                           may advertise (0 = unlimited)
@@ -4162,6 +4209,7 @@ spec:
                   - timestamp
                   - type
                   type: object
+                maxItems: 100
                 type: array
             type: object
         type: object

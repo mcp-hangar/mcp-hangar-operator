@@ -28,6 +28,7 @@ const (
 )
 
 // MCPDiscoverySourceSpec defines the desired state of MCPDiscoverySource
+// +kubebuilder:validation:XValidation:rule="self.type != 'ConfigMap' || has(self.configMapRef)",message="spec.configMapRef is required when spec.type is ConfigMap"
 type MCPDiscoverySourceSpec struct {
 	// Type is the discovery source type
 	// +kubebuilder:validation:Required

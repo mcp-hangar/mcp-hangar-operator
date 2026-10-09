@@ -33,10 +33,8 @@ type discoveryConstraints struct {
 func validateDiscoveryConstraints(c discoveryConstraints) error {
 	var errs []string
 
-	// ConfigMap-type sources must reference a ConfigMap.
-	if c.discoveryType == "ConfigMap" && !c.hasConfigMapRef {
-		errs = append(errs, "spec.configMapRef is required when spec.type is \"ConfigMap\"")
-	}
+	// A ConfigMap-type source without a configMapRef is a CRD CEL rule (#196):
+	// the apiserver refuses it before this webhook is called.
 
 	// A ConfigMap source may only read its own namespace (#234). The
 	// controller refuses a cross-namespace reference too, with the webhook
