@@ -20,6 +20,62 @@ applies its backstop only once that policy is gone. If you see the Event,
 remove or rename the foreign policy; until then the namespace has whatever
 egress that policy allows, not the operator's DNS-only default.
 
+## Unreleased -- provider pods no longer mount a ServiceAccount token
+
+A container-mode `MCPServer` pod used to get a ServiceAccount token projected
+into it, the way any pod does when nothing says otherwise: with
+`serviceAccountName` empty that was the namespace default ServiceAccount, so
+every MCP server had a bearer token for the API server on disk whether or not
+it ever used one. A NetworkPolicy does not block the API server on many CNIs,
+so an egress policy did not close that path.
+
+The operator now writes `automountServiceAccountToken: false` on every
+provider pod it builds unless the `MCPServer` opts in:
+
+```yaml
+spec:
+  serviceAccountName: my-server
+  automountServiceAccountToken: true
+```
+
+If a server reads `/var/run/secrets/kubernetes.io/serviceaccount` -- it talks
+to the Kubernetes API, or uses an in-cluster client library that does -- it
+will start failing with "unable to load in-cluster configuration" or a `401`
+after the upgrade. Add `automountServiceAccountToken: true` to that server,
+preferably together with a dedicated `serviceAccountName` carrying only the
+RBAC it needs. A server that never touched the token sees no change beyond the
+missing mount; nothing is rewritten on existing pods until their next
+generation rolls them.
+
+## Unreleased -- an `MCPEgressPolicy` with `networkBackstop.generate: false` now delivers its L7 rules
+
+An `MCPEgressPolicy` that opted out of the L3/L4 backstop with
+`spec.networkBackstop.generate: false` used to lose its tool, argument and
+header rules with it: the reconcile stopped at the backstop decision and never
+pushed the compiled L7 policy to core. The policy read `Compiled=True` and
+`BackstopApplied=False` / `BackstopGenerationDisabled`, which says only that the
+backstop is off; nothing said that core held no rules for its servers either.
+
+The two layers are now independent. Such a policy still writes no backstop and
+still reports `BackstopApplied=False` / `BackstopGenerationDisabled`, and its L7
+policy is pushed to core for every target server, reported on `L7Delivered`
+like any other policy's (`True` / `Delivered`, or `False` with the push
+failure's reason and `Degraded=True` / `L7PushFailed`). The finalizer clears it
+from core on delete, as it already did.
+
+What changes in the cluster is enforcement: a `generate: false` policy in
+`Enforce` mode whose tool rules were silently dropped until now is enforced by
+core after the upgrade. If such a policy was written with a narrow `allow`
+list, or a `defaultAction: Deny`, on the assumption that only its backstop
+mattered, tool calls it never blocked before will be blocked, or routed to
+approval, on the next reconcile. Review those policies before upgrading, or set
+them to `Audit` mode first and read the decisions core logs.
+
+A `generate: false` policy whose target does not exist now reports
+`Compiled=False` / `TargetNotFound` and `Degraded=True`, and is re-checked
+every 30 seconds, as a `generate: true` policy with a missing target always
+did. It used to read `Compiled=True` with nothing to compile for.
+
 ## Unreleased -- the pod-registration webhook now gates pod UPDATE, and the provider label is immutable
 
 In an `mcp-hangar.io/enforce-egress=true` namespace the pod-registration
