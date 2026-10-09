@@ -1,5 +1,42 @@
 # Upgrade notes
 
+## Unreleased -- a ConfigMap discovery source can no longer read another namespace
+
+An `MCPDiscoverySource` of type `ConfigMap` used to read
+`spec.configMapRef.namespace` from any namespace, with the operator's
+cluster-wide ConfigMap access, and create the `MCPServer`s its entries describe
+in the source's own namespace. Since `mode: container` entries keep their image,
+command and args, that let whoever could write a ConfigMap in one namespace,
+together with whoever could create a source in another, start containers in the
+second namespace without permission to create pods there.
+
+`spec.configMapRef.namespace` must now be empty or the source's own namespace.
+
+- With the admission webhook on, creating such a source, or changing its
+  reference to another namespace, is rejected. An existing source whose
+  reference is unchanged can still be updated -- labels, annotations, the
+  finalizer -- with an admission warning, so it can be deleted.
+- With the webhook off (the chart default), the controller reads nothing and
+  creates nothing. It reports `Synced=False` and `Ready=False` with reason
+  `CrossNamespaceRefused`, a message naming both namespaces, and one Warning
+  Event with the same reason.
+
+`MCPServer`s such a source created before the upgrade are left running: the
+refusal deletes nothing, even for an `Authoritative` source. Find the sources
+before upgrading:
+
+```sh
+kubectl get mcpdiscoverysources -A -o json | jq -r '.items[]
+  | select(.spec.type == "ConfigMap")
+  | select(.spec.configMapRef.namespace // "" | . != "")
+  | select(.spec.configMapRef.namespace != .metadata.namespace)
+  | "\(.metadata.namespace)/\(.metadata.name) -> \(.spec.configMapRef.namespace)"'
+```
+
+Copy the ConfigMap into the source's namespace and drop
+`configMapRef.namespace`, or delete the source, which removes the servers it
+created.
+
 ## Unreleased -- the namespace default-deny backstop is owned by its Namespace and a foreign one is refused
 
 The `mcp-default-deny-egress` NetworkPolicy the operator writes into a

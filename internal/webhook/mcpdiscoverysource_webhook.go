@@ -17,8 +17,12 @@ import (
 type discoveryConstraints struct {
 	discoveryType   string
 	hasConfigMapRef bool
-	includePatterns []string
-	excludePatterns []string
+	// namespace is the source's own namespace; configMapNamespace is
+	// spec.configMapRef.namespace (empty means the source's namespace).
+	namespace          string
+	configMapNamespace string
+	includePatterns    []string
+	excludePatterns    []string
 	// durations holds free-form duration strings (field path -> raw value).
 	// Populated only for v1alpha1, whose duration fields are plain strings;
 	// v1alpha2 models them as *metav1.Duration and leaves this nil.
@@ -32,6 +36,13 @@ func validateDiscoveryConstraints(c discoveryConstraints) error {
 	// ConfigMap-type sources must reference a ConfigMap.
 	if c.discoveryType == "ConfigMap" && !c.hasConfigMapRef {
 		errs = append(errs, "spec.configMapRef is required when spec.type is \"ConfigMap\"")
+	}
+
+	// A ConfigMap source may only read its own namespace (#234). The
+	// controller refuses a cross-namespace reference too, with the webhook
+	// off; this gives the clear admission error.
+	if c.crossNamespace() {
+		errs = append(errs, crossNamespaceMessage(c))
 	}
 
 	// Duration strings must parse, else conversion to v1alpha2 hard-fails and
@@ -57,6 +68,18 @@ func validateDiscoveryConstraints(c discoveryConstraints) error {
 	return nil
 }
 
+// crossNamespace reports whether a ConfigMap source references a ConfigMap
+// outside its own namespace.
+func (c discoveryConstraints) crossNamespace() bool {
+	return c.discoveryType == "ConfigMap" && c.hasConfigMapRef &&
+		c.configMapNamespace != "" && c.configMapNamespace != c.namespace
+}
+
+func crossNamespaceMessage(c discoveryConstraints) string {
+	return fmt.Sprintf("spec.configMapRef.namespace %q must be empty or equal to the source namespace %q: "+
+		"a ConfigMap source may only read its own namespace", c.configMapNamespace, c.namespace)
+}
+
 // +kubebuilder:webhook:path=/validate-mcp-hangar-io-v1alpha2-mcpdiscoverysource,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcp-hangar.io,resources=mcpdiscoverysources,verbs=create;update,versions=v1alpha2,name=vmcpdiscoverysource-v1alpha2.kb.io,admissionReviewVersions=v1
 
 // MCPDiscoverySourceV1alpha2Validator validates v1alpha2 (storage)
@@ -69,6 +92,10 @@ func discoveryConstraintsFromV1alpha2(d *mcpv1alpha2.MCPDiscoverySource) discove
 	c := discoveryConstraints{
 		discoveryType:   string(d.Spec.Type),
 		hasConfigMapRef: d.Spec.ConfigMapRef != nil,
+		namespace:       d.Namespace,
+	}
+	if d.Spec.ConfigMapRef != nil {
+		c.configMapNamespace = d.Spec.ConfigMapRef.Namespace
 	}
 	if d.Spec.Filters != nil {
 		c.includePatterns = d.Spec.Filters.IncludePatterns
@@ -86,11 +113,30 @@ func (v *MCPDiscoverySourceV1alpha2Validator) ValidateCreate(_ context.Context, 
 }
 
 // ValidateUpdate validates a v1alpha2 MCPDiscoverySource on update.
-func (v *MCPDiscoverySourceV1alpha2Validator) ValidateUpdate(_ context.Context, _, newObj *mcpv1alpha2.MCPDiscoverySource) (admission.Warnings, error) {
+//
+// A cross-namespace configMapRef stored before #234 is still admitted on
+// update when it is unchanged, with a warning, and so is any update of an
+// object being deleted: otherwise label, annotation and finalizer updates on
+// such a source -- including the controller removing its finalizer -- would be
+// rejected. The controller refuses to sync it either way.
+func (v *MCPDiscoverySourceV1alpha2Validator) ValidateUpdate(_ context.Context, oldObj, newObj *mcpv1alpha2.MCPDiscoverySource) (admission.Warnings, error) {
 	if newObj == nil {
 		return nil, fmt.Errorf("MCPDiscoverySource object is nil")
 	}
-	return nil, validateDiscoveryConstraints(discoveryConstraintsFromV1alpha2(newObj))
+	c := discoveryConstraintsFromV1alpha2(newObj)
+	if c.crossNamespace() && oldObj != nil &&
+		(newObj.DeletionTimestamp != nil || sameConfigMapRef(oldObj, newObj)) {
+		warning := crossNamespaceMessage(c) + "; the controller does not sync this source"
+		c.configMapNamespace = ""
+		return admission.Warnings{warning}, validateDiscoveryConstraints(c)
+	}
+	return nil, validateDiscoveryConstraints(c)
+}
+
+// sameConfigMapRef reports whether an update leaves spec.configMapRef as it was.
+func sameConfigMapRef(oldObj, newObj *mcpv1alpha2.MCPDiscoverySource) bool {
+	o, n := oldObj.Spec.ConfigMapRef, newObj.Spec.ConfigMapRef
+	return o != nil && n != nil && *o == *n && oldObj.Spec.Type == newObj.Spec.Type
 }
 
 // ValidateDelete is a no-op; deletion is always allowed.

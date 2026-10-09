@@ -97,7 +97,12 @@ spec:
                     description: Name of the ConfigMap
                     type: string
                   namespace:
-                    description: Namespace of the ConfigMap (defaults to same namespace)
+                    description: |-
+                      Namespace of the ConfigMap. Leave it empty, or set it to the source's
+                      own namespace: a ConfigMap source may only read its own namespace. A
+                      different namespace is rejected at admission and, with the webhook off,
+                      refused by the controller (Synced=False, reason CrossNamespaceRefused),
+                      which then reads and creates nothing.
                     type: string
                 required:
                 - name

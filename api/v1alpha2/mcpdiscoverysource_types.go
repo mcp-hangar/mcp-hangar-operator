@@ -93,7 +93,11 @@ type ConfigMapReference struct {
 	// Name of the ConfigMap
 	Name string `json:"name"`
 
-	// Namespace of the ConfigMap (defaults to same namespace)
+	// Namespace of the ConfigMap. Leave it empty, or set it to the source's
+	// own namespace: a ConfigMap source may only read its own namespace. A
+	// different namespace is rejected at admission and, with the webhook off,
+	// refused by the controller (Synced=False, reason CrossNamespaceRefused),
+	// which then reads and creates nothing.
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
 
