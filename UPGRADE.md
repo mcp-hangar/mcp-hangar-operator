@@ -1,5 +1,32 @@
 # Upgrade notes
 
+## Unreleased -- an `MCPEgressPolicy` now says whether core took its L7 policy
+
+An `MCPEgressPolicy` whose compiled L7 policy core refused -- a 403 from an API
+key without `policy:write`, a core that was down, a payload core rejected --
+used to keep reporting `Compiled=True`, `BackstopApplied=True` and
+`Degraded=False`, with a Warning Event as the only trace. The network half was
+enforced; the tool, argument and header rules were never anywhere.
+
+It now carries an `L7Delivered` condition, also shown as the `L7` column of
+`kubectl get mcpegresspolicies`:
+
+- `True` / `Delivered` once every target server accepted the push.
+- `True` / `DeliveredNotPersisted` when core took it but has no persistence
+  backend, so the policy is gone after a gateway restart. The operator re-pushes
+  it when a gateway pod becomes Ready; this reason only tells you the gap exists.
+- `False` / `CoreAuthRejected`, `CoreUnreachable` or `PushFailed`, naming the
+  server whose push failed. The policy is also `Degraded=True` with reason
+  `L7PushFailed`.
+- `Unknown` / `CoreIntegrationOff` when the operator runs without
+  `--hangar-url` and pushes nothing.
+
+`Compiled` and `BackstopApplied` mean what they did. What changes is that a
+policy core has been rejecting since it was created now says so -- so an alert
+on `Degraded` may fire on policies that read green until now. That is the
+finding, not a regression: fix the key's permissions (or core's reachability)
+and the next reconcile clears it.
+
 ## Unreleased -- an `MCPEgressPolicy` can now report `Degraded` where it used to report success
 
 An `MCPEgressPolicy` whose backstop the operator wrote used to report

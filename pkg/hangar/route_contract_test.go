@@ -95,7 +95,7 @@ func recordingClient(t *testing.T, seen *[]string) *Client {
 func exercise(ctx context.Context, c *Client) {
 	_, _ = c.GetMCPServerTools(ctx, "srv", "ns")
 	_, _ = c.GetMCPServerHealth(ctx, "srv", "ns")
-	_ = c.SetL7Policy(ctx, "srv", &L7PolicyPayload{})
+	_, _ = c.SetL7Policy(ctx, "srv", &L7PolicyPayload{})
 	_ = c.ClearL7Policy(ctx, "srv")
 	_ = c.DeregisterMCPServer(ctx, "srv", "ns")
 	_ = c.Ping(ctx)
