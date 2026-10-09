@@ -151,6 +151,145 @@ func TestMCPDiscoverySource_ConfigMapDiscovery(t *testing.T) {
 	assert.Equal(t, int32(2), source.Status.DiscoveredCount)
 }
 
+// containerProviderYAML returns YAML for one remote and one container provider (#206).
+const containerProviderYAML = `provider-a:
+  mode: remote
+  endpoint: http://provider-a:8080
+provider-c:
+  mode: container
+  image: busybox
+  command: ["/bin/sh", "-c"]
+  args: ["echo hello"]
+`
+
+// imagelessContainerYAML returns YAML for one remote provider and one
+// container provider that names no image (#206).
+const imagelessContainerYAML = `provider-a:
+  mode: remote
+  endpoint: http://provider-a:8080
+provider-d:
+  mode: container
+`
+
+// getManagedServer fetches the MCPServer a ConfigMap entry became.
+func getManagedServer(t *testing.T, sourceName, namespace, entry string) *mcpv1alpha2.MCPServer {
+	t.Helper()
+	server := &mcpv1alpha2.MCPServer{}
+	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: sourceName + "-" + entry, Namespace: namespace}, server))
+	return server
+}
+
+func TestMCPDiscoverySource_ConfigMapContainerEntry(t *testing.T) {
+	ns := createNamespace(t, "test-disc-cm-container")
+	defer k8sClient.Delete(ctx, ns)
+
+	sourceName := "cm-container"
+	cmName := "container-cm"
+
+	createConfigMap(t, cmName, ns.Name, containerProviderYAML)
+	createDiscoverySource(t, sourceName, ns.Name, cmName, mcpv1alpha2.DiscoveryModeAdditive)
+
+	waitForDiscoveryCondition(t, sourceName, ns.Name, ConditionSynced, metav1.ConditionTrue)
+	waitForManagedProviderCount(t, sourceName, ns.Name, 2)
+
+	// The container entry carries its image, command and args into the spec
+	c := getManagedServer(t, sourceName, ns.Name, "provider-c")
+	assert.Equal(t, mcpv1alpha2.MCPServerModeContainer, c.Spec.Mode)
+	assert.Equal(t, "busybox", c.Spec.Image)
+	assert.Equal(t, []string{"/bin/sh", "-c"}, c.Spec.Command)
+	assert.Equal(t, []string{"echo hello"}, c.Spec.Args)
+	assert.Empty(t, c.Spec.Endpoint)
+
+	// The remote entry is unchanged
+	a := getManagedServer(t, sourceName, ns.Name, "provider-a")
+	assert.Equal(t, mcpv1alpha2.MCPServerModeRemote, a.Spec.Mode)
+	assert.Equal(t, "http://provider-a:8080", a.Spec.Endpoint)
+	assert.Empty(t, a.Spec.Image)
+	assert.Empty(t, a.Spec.Command)
+	assert.Empty(t, a.Spec.Args)
+}
+
+func TestMCPDiscoverySource_ConfigMapContainerEntryWithoutImage(t *testing.T) {
+	ns := createNamespace(t, "test-disc-cm-noimage")
+	defer k8sClient.Delete(ctx, ns)
+
+	sourceName := "cm-noimage"
+	cmName := "noimage-cm"
+
+	createConfigMap(t, cmName, ns.Name, imagelessContainerYAML)
+	createDiscoverySource(t, sourceName, ns.Name, cmName, mcpv1alpha2.DiscoveryModeAdditive)
+
+	// The remote entry is managed; the imageless container entry is a
+	// per-entry error, not a Dead MCPServer
+	waitForDiscoveryCondition(t, sourceName, ns.Name, ConditionSynced, metav1.ConditionFalse)
+	waitForManagedProviderCount(t, sourceName, ns.Name, 1)
+	getManagedServer(t, sourceName, ns.Name, "provider-a")
+
+	missing := &mcpv1alpha2.MCPServer{}
+	err := k8sClient.Get(ctx, types.NamespacedName{Name: sourceName + "-provider-d", Namespace: ns.Name}, missing)
+	require.Error(t, err, "a container entry without an image must not become an MCPServer")
+
+	source := &mcpv1alpha2.MCPDiscoverySource{}
+	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: sourceName, Namespace: ns.Name}, source))
+	assert.Equal(t, int32(2), source.Status.DiscoveredCount)
+	assert.Equal(t, int32(1), source.Status.ManagedCount)
+	assert.Contains(t, source.Status.LastSyncError, sourceName+"-provider-d")
+	assert.Contains(t, source.Status.LastSyncError, "image")
+
+	synced := getCondition(source.Status.Conditions, ConditionSynced)
+	require.NotNil(t, synced)
+	assert.Equal(t, "PartialFailure", synced.Reason)
+
+	var entry *mcpv1alpha2.DiscoveredMCPServer
+	for i := range source.Status.DiscoveredMCPServers {
+		if source.Status.DiscoveredMCPServers[i].Name == sourceName+"-provider-d" {
+			entry = &source.Status.DiscoveredMCPServers[i]
+		}
+	}
+	require.NotNil(t, entry, "the skipped entry must still be listed in status")
+	assert.False(t, entry.Managed)
+	assert.Contains(t, entry.Error, "image")
+}
+
+func TestMCPDiscoverySource_ConfigMapTemplateImageIsDefault(t *testing.T) {
+	ns := createNamespace(t, "test-disc-cm-template")
+	defer k8sClient.Delete(ctx, ns)
+
+	sourceName := "cm-template"
+	cmName := "template-cm"
+
+	// provider-c names busybox; provider-d names nothing and falls back to the template
+	createConfigMap(t, cmName, ns.Name, containerProviderYAML+"provider-d:\n  mode: container\n")
+	source := &mcpv1alpha2.MCPDiscoverySource{
+		ObjectMeta: metav1.ObjectMeta{Name: sourceName, Namespace: ns.Name},
+		Spec: mcpv1alpha2.MCPDiscoverySourceSpec{
+			Type:         mcpv1alpha2.DiscoveryTypeConfigMap,
+			Mode:         mcpv1alpha2.DiscoveryModeAdditive,
+			ConfigMapRef: &mcpv1alpha2.ConfigMapReference{Name: cmName},
+			MCPServerTemplate: &mcpv1alpha2.MCPServerTemplateConfig{
+				Spec: &mcpv1alpha2.MCPServerSpec{
+					Mode:    mcpv1alpha2.MCPServerModeContainer,
+					Image:   "template-image:1",
+					Command: []string{"/template"},
+				},
+			},
+		},
+	}
+	require.NoError(t, k8sClient.Create(ctx, source))
+
+	waitForDiscoveryCondition(t, sourceName, ns.Name, ConditionSynced, metav1.ConditionTrue)
+	waitForManagedProviderCount(t, sourceName, ns.Name, 3)
+
+	c := getManagedServer(t, sourceName, ns.Name, "provider-c")
+	assert.Equal(t, "busybox", c.Spec.Image)
+	assert.Equal(t, []string{"/bin/sh", "-c"}, c.Spec.Command)
+
+	d := getManagedServer(t, sourceName, ns.Name, "provider-d")
+	assert.Equal(t, mcpv1alpha2.MCPServerModeContainer, d.Spec.Mode)
+	assert.Equal(t, "template-image:1", d.Spec.Image)
+	assert.Equal(t, []string{"/template"}, d.Spec.Command)
+}
+
 func TestMCPDiscoverySource_AdditiveNeverDeletes(t *testing.T) {
 	ns := createNamespace(t, "test-disc-additive")
 	defer k8sClient.Delete(ctx, ns)

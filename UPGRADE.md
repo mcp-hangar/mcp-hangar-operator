@@ -1,5 +1,27 @@
 # Upgrade notes
 
+## Unreleased -- a ConfigMap discovery entry in `mode: container` now keeps its image
+
+An `MCPDiscoverySource` of type `ConfigMap` used to drop `image`, `command` and
+`args` from every entry: a `mode: container` entry became an `MCPServer` with
+no image, which the server controller marked `Dead` with `InvalidSpec`
+("Container mode requires image"), and the source reported `Synced=True` as if
+nothing was wrong.
+
+It now carries the three fields into the `MCPServer` spec. The
+`providerTemplate` is the default and an entry that sets a field wins, which is
+what already happened to `endpoint`. Existing managed servers pick the fields up
+on the next sync, so a container entry that has been `Dead` since it was
+created starts for the first time after the upgrade -- check that is what you
+want before upgrading an operator that manages such a ConfigMap.
+
+A container entry that names no image, and whose source has no
+`providerTemplate.spec.image` to fall back on, no longer becomes a `Dead`
+server at all. The source skips it, lists it in
+`status.discoveredProviders` with `managed: false` and the reason in `error`,
+and reports `Synced=False` with reason `PartialFailure`. A server such an entry
+created before the upgrade is left alone; delete it or give the entry an image.
+
 ## Unreleased -- an `MCPEgressPolicy` now says whether core took its L7 policy
 
 An `MCPEgressPolicy` whose compiled L7 policy core refused -- a 403 from an API
