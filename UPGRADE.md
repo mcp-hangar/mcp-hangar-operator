@@ -20,6 +20,55 @@ applies its backstop only once that policy is gone. If you see the Event,
 remove or rename the foreign policy; until then the namespace has whatever
 egress that policy allows, not the operator's DNS-only default.
 
+## Unreleased -- a ConfigMap discovery entry in `mode: container` now keeps its image
+
+An `MCPDiscoverySource` of type `ConfigMap` used to drop `image`, `command` and
+`args` from every entry: a `mode: container` entry became an `MCPServer` with
+no image, which the server controller marked `Dead` with `InvalidSpec`
+("Container mode requires image"), and the source reported `Synced=True` as if
+nothing was wrong.
+
+It now carries the three fields into the `MCPServer` spec. The
+`providerTemplate` is the default and an entry that sets a field wins, which is
+what already happened to `endpoint`. Existing managed servers pick the fields up
+on the next sync, so a container entry that has been `Dead` since it was
+created starts for the first time after the upgrade -- check that is what you
+want before upgrading an operator that manages such a ConfigMap.
+
+A container entry that names no image, and whose source has no
+`providerTemplate.spec.image` to fall back on, no longer becomes a `Dead`
+server at all. The source skips it, lists it in
+`status.discoveredProviders` with `managed: false` and the reason in `error`,
+and reports `Synced=False` with reason `PartialFailure`. A server such an entry
+created before the upgrade is left alone; delete it or give the entry an image.
+
+## Unreleased -- an `MCPEgressPolicy` now says whether core took its L7 policy
+
+An `MCPEgressPolicy` whose compiled L7 policy core refused -- a 403 from an API
+key without `policy:write`, a core that was down, a payload core rejected --
+used to keep reporting `Compiled=True`, `BackstopApplied=True` and
+`Degraded=False`, with a Warning Event as the only trace. The network half was
+enforced; the tool, argument and header rules were never anywhere.
+
+It now carries an `L7Delivered` condition, also shown as the `L7` column of
+`kubectl get mcpegresspolicies`:
+
+- `True` / `Delivered` once every target server accepted the push.
+- `True` / `DeliveredNotPersisted` when core took it but has no persistence
+  backend, so the policy is gone after a gateway restart. The operator re-pushes
+  it when a gateway pod becomes Ready; this reason only tells you the gap exists.
+- `False` / `CoreAuthRejected`, `CoreUnreachable` or `PushFailed`, naming the
+  server whose push failed. The policy is also `Degraded=True` with reason
+  `L7PushFailed`.
+- `Unknown` / `CoreIntegrationOff` when the operator runs without
+  `--hangar-url` and pushes nothing.
+
+`Compiled` and `BackstopApplied` mean what they did. What changes is that a
+policy core has been rejecting since it was created now says so -- so an alert
+on `Degraded` may fire on policies that read green until now. That is the
+finding, not a regression: fix the key's permissions (or core's reachability)
+and the next reconcile clears it.
+
 ## Unreleased -- an `MCPEgressPolicy` can now report `Degraded` where it used to report success
 
 An `MCPEgressPolicy` whose backstop the operator wrote used to report
