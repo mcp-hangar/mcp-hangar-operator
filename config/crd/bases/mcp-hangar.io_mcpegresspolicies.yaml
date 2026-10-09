@@ -102,7 +102,9 @@ spec:
                 - generate
                 type: object
               targetRef:
-                description: TargetRef is the server or group this policy governs.
+                description: |-
+                  TargetRef is the server or group this policy governs. It is immutable:
+                  to govern a different target, delete and recreate the policy (#196).
                 properties:
                   kind:
                     description: Kind is the referent type.
@@ -120,6 +122,10 @@ spec:
                 - kind
                 - name
                 type: object
+                x-kubernetes-validations:
+                - message: 'spec.targetRef is immutable: delete and recreate the MCPEgressPolicy
+                    to retarget it'
+                  rule: self == oldSelf
               upstreams:
                 description: |-
                   Upstreams is the allow-list. With DefaultAction=Deny (the default), an

@@ -29,14 +29,6 @@ func dur(d string) *metav1.Duration {
 	return &metav1.Duration{Duration: pd}
 }
 
-func TestV2_ContainerMode_MissingImage(t *testing.T) {
-	v := &webhook.MCPServerV1alpha2Validator{}
-	p := newProviderV2("no-image", mcpv1alpha2.MCPServerModeContainer)
-
-	_, err := v.ValidateCreate(context.Background(), p)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "spec.image is required")
-}
 
 func TestV2_ContainerMode_Valid(t *testing.T) {
 	v := &webhook.MCPServerV1alpha2Validator{}
@@ -60,36 +52,8 @@ func TestV2_ContainerMode_EndpointWarning(t *testing.T) {
 	assert.Contains(t, warnings[0], "spec.endpoint is ignored")
 }
 
-func TestV2_RemoteMode_MissingEndpoint(t *testing.T) {
-	v := &webhook.MCPServerV1alpha2Validator{}
-	p := newProviderV2("no-endpoint", mcpv1alpha2.MCPServerModeRemote)
 
-	_, err := v.ValidateCreate(context.Background(), p)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "spec.endpoint is required")
-}
 
-func TestV2_RemoteMode_InvalidEndpoint(t *testing.T) {
-	v := &webhook.MCPServerV1alpha2Validator{}
-	p := newProviderV2("bad-endpoint", mcpv1alpha2.MCPServerModeRemote)
-	p.Spec.Endpoint = "not-a-url"
-
-	_, err := v.ValidateCreate(context.Background(), p)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "http or https")
-}
-
-func TestV2_NegativeDuration(t *testing.T) {
-	v := &webhook.MCPServerV1alpha2Validator{}
-	p := newProviderV2("neg-dur", mcpv1alpha2.MCPServerModeContainer)
-	p.Spec.Image = "test:latest"
-	p.Spec.StartupTimeout = dur("-5s")
-
-	_, err := v.ValidateCreate(context.Background(), p)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "spec.startupTimeout")
-	assert.Contains(t, err.Error(), "must not be negative")
-}
 
 func TestV2_ValidDurations(t *testing.T) {
 	v := &webhook.MCPServerV1alpha2Validator{}
@@ -103,18 +67,6 @@ func TestV2_ValidDurations(t *testing.T) {
 	assert.Empty(t, warnings)
 }
 
-func TestV2_DuplicateExpectedTools(t *testing.T) {
-	v := &webhook.MCPServerV1alpha2Validator{}
-	p := newProviderV2("dup-tools", mcpv1alpha2.MCPServerModeContainer)
-	p.Spec.Image = "test:latest"
-	p.Spec.Capabilities = &mcpv1alpha2.MCPServerCapabilities{
-		Tools: &mcpv1alpha2.ToolCapabilitiesSpec{ExpectedTools: []string{"calc", "calc"}},
-	}
-
-	_, err := v.ValidateCreate(context.Background(), p)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "duplicate")
-}
 
 func TestV2_EgressHostOnlyWarns(t *testing.T) {
 	v := &webhook.MCPServerV1alpha2Validator{}
@@ -149,15 +101,20 @@ func TestV2_EgressValidCIDR(t *testing.T) {
 }
 
 func TestV2_ValidateUpdate(t *testing.T) {
+	// The update path runs the same annotation-gated rules as create.
 	v := &webhook.MCPServerV1alpha2Validator{}
 	old := newProviderV2("upd", mcpv1alpha2.MCPServerModeContainer)
 	old.Spec.Image = "test:v1"
 	updated := old.DeepCopy()
-	updated.Spec.Image = ""
+	updated.Spec.Capabilities = &mcpv1alpha2.MCPServerCapabilities{
+		Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+			Egress: []mcpv1alpha2.EgressRuleSpec{{Host: "*", CIDR: "0.0.0.0/0"}},
+		},
+	}
 
 	_, err := v.ValidateUpdate(context.Background(), old, updated)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "spec.image is required")
+	assert.Contains(t, err.Error(), "unrestricted egress")
 }
 
 func TestV2_ValidateDelete(t *testing.T) {
@@ -179,24 +136,7 @@ func TestV2_TypedNilRejected(t *testing.T) {
 
 // ── Remote endpoint scheme (#22) ──────────────────────────────────────
 
-func TestV2_RemoteMode_JavascriptSchemeRejected(t *testing.T) {
-	v := &webhook.MCPServerV1alpha2Validator{}
-	p := newProviderV2("js-endpoint", mcpv1alpha2.MCPServerModeRemote)
-	p.Spec.Endpoint = "javascript:alert(1)"
 
-	_, err := v.ValidateCreate(context.Background(), p)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "http or https")
-}
-
-func TestV2_RemoteMode_BarePathRejected(t *testing.T) {
-	v := &webhook.MCPServerV1alpha2Validator{}
-	p := newProviderV2("bare-path", mcpv1alpha2.MCPServerModeRemote)
-	p.Spec.Endpoint = "/only/path"
-
-	_, err := v.ValidateCreate(context.Background(), p)
-	require.Error(t, err)
-}
 
 func TestV2_RemoteMode_HTTPAccepted(t *testing.T) {
 	v := &webhook.MCPServerV1alpha2Validator{}

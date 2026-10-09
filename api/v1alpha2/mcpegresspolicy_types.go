@@ -259,7 +259,9 @@ type MCPEgressPolicySpec struct {
 	// +optional
 	Mode EgressPolicyMode `json:"mode,omitempty"`
 
-	// TargetRef is the server or group this policy governs.
+	// TargetRef is the server or group this policy governs. It is immutable:
+	// to govern a different target, delete and recreate the policy (#196).
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec.targetRef is immutable: delete and recreate the MCPEgressPolicy to retarget it"
 	TargetRef EgressTargetRef `json:"targetRef"`
 
 	// DefaultAction is applied to traffic not matched by any upstream rule.

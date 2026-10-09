@@ -41,17 +41,6 @@ func TestGroupV2_MissingSelector(t *testing.T) {
 
 // ── MCPDiscoverySource (v1alpha2) ─────────────────────────────────────
 
-func TestDiscoveryV2_ConfigMapTypeRequiresRef(t *testing.T) {
-	v := &webhook.MCPDiscoverySourceV1alpha2Validator{}
-	d := &mcpv1alpha2.MCPDiscoverySource{
-		ObjectMeta: metav1.ObjectMeta{Name: "d", Namespace: "default"},
-		Spec:       mcpv1alpha2.MCPDiscoverySourceSpec{Type: mcpv1alpha2.DiscoveryTypeConfigMap},
-	}
-
-	_, err := v.ValidateCreate(context.Background(), d)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "spec.configMapRef is required")
-}
 
 func TestDiscoveryV2_InvalidIncludeRegexp(t *testing.T) {
 	v := &webhook.MCPDiscoverySourceV1alpha2Validator{}

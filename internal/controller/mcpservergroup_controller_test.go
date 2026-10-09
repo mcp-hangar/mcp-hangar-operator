@@ -130,6 +130,8 @@ func createMCPServer(t *testing.T, name, namespace string, state mcpv1alpha2.MCP
 		},
 		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode: mcpv1alpha2.MCPServerModeRemote,
+			// A remote server needs an http(s) endpoint (CRD rule, #196).
+			Endpoint: "http://" + name + ".example.com/mcp",
 		},
 	}
 	require.NoError(t, k8sClient.Create(ctx, provider))

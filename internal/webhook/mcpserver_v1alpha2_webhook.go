@@ -3,10 +3,8 @@ package webhook
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strings"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
@@ -39,12 +37,16 @@ func (v *MCPServerV1alpha2Validator) ValidateDelete(_ context.Context, _ *mcpv1a
 	return nil, nil
 }
 
-// validateProviderV2 runs all validation rules on a v1alpha2 MCPServer.
+// validateProviderV2 runs the rules on a v1alpha2 MCPServer that the CRD schema
+// cannot express.
 //
-// Unlike v1alpha1 (where durations are free-form strings), v1alpha2 models
-// durations as *metav1.Duration, so the apiserver already rejects unparseable
-// values structurally. The remaining semantic check is that a duration must not
-// be negative.
+// The structural rules -- image required in container mode, an http(s)
+// endpoint with a host in remote mode, non-negative durations, non-empty and
+// unique expectedTools, a well-formed cidr, mode immutable -- are CEL and
+// schema rules on the CRD (#196). The apiserver evaluates them before any
+// validating webhook is called, and with the webhook off as well, so a copy
+// here could never fire. What remains needs an annotation or a cluster fact:
+// the image digest policy, the wildcard egress opt-in, and the warnings.
 func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 	// A typed-nil *MCPServer satisfies the generic handler signature, so guard
 	// here rather than dereferencing p.Spec and panicking the webhook.
@@ -58,9 +60,6 @@ func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 	// Mode-specific field requirements.
 	switch p.Spec.Mode {
 	case mcpv1alpha2.MCPServerModeContainer:
-		if p.Spec.Image == "" {
-			errs = append(errs, "spec.image is required when mode is \"container\"")
-		}
 		if e, w := checkImageDigest(p.Spec.Image, p.Annotations); e != "" {
 			errs = append(errs, e)
 		} else if w != "" {
@@ -70,38 +69,14 @@ func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 			warnings = append(warnings, "spec.endpoint is ignored when mode is \"container\"")
 		}
 	case mcpv1alpha2.MCPServerModeRemote:
-		if p.Spec.Endpoint == "" {
-			errs = append(errs, "spec.endpoint is required when mode is \"remote\"")
-		}
 		if p.Spec.Image != "" {
 			warnings = append(warnings, "spec.image is ignored when mode is \"remote\"")
 		}
-		if p.Spec.Endpoint != "" {
-			if err := validateRemoteEndpoint(p.Spec.Endpoint); err != nil {
-				errs = append(errs, err.Error())
-			}
-		}
 	}
 
-	// Duration fields: reject negative values.
-	durationFields := map[string]*metav1.Duration{
-		"spec.startupTimeout":      p.Spec.StartupTimeout,
-		"spec.shutdownGracePeriod": p.Spec.ShutdownGracePeriod,
-	}
-	for field, val := range durationFields {
-		if val == nil {
-			continue
-		}
-		if val.Duration < 0 {
-			errs = append(errs, fmt.Sprintf("%s must not be negative", field))
-		}
-	}
-
-	// Capabilities validation.
+	// Capabilities warnings.
 	if p.Spec.Capabilities != nil {
-		capErrs, capWarnings := validateCapabilitiesV2(p.Spec.Capabilities)
-		errs = append(errs, capErrs...)
-		warnings = append(warnings, capWarnings...)
+		warnings = append(warnings, capabilityWarningsV2(p.Spec.Capabilities)...)
 	}
 
 	// Wildcard egress needs the explicit opt-in annotation. Ported from the
@@ -148,10 +123,9 @@ func hasWildcardEgressV2(p *mcpv1alpha2.MCPServer) bool {
 	return false
 }
 
-// validateCapabilitiesV2 validates the v1alpha2 capabilities block. It returns
-// hard validation errors and non-fatal admission warnings.
-func validateCapabilitiesV2(caps *mcpv1alpha2.MCPServerCapabilities) ([]string, admission.Warnings) {
-	var errs []string
+// capabilityWarningsV2 returns the non-fatal admission warnings for the
+// v1alpha2 capabilities block. Its hard rules are CRD schema rules (#196).
+func capabilityWarningsV2(caps *mcpv1alpha2.MCPServerCapabilities) admission.Warnings {
 	var warnings admission.Warnings
 
 	// Egress rules. In v1alpha2 the schema requires host (MinLength=1), but a
@@ -161,10 +135,6 @@ func validateCapabilitiesV2(caps *mcpv1alpha2.MCPServerCapabilities) ([]string, 
 	// rule is inert until the Tetragon backend (ADR-006 v1.5) enforces it.
 	if caps.Network != nil {
 		for i, rule := range caps.Network.Egress {
-			if rule.Host == "" && rule.CIDR == "" {
-				errs = append(errs, fmt.Sprintf("spec.capabilities.network.egress[%d]: host or cidr must be set", i))
-				continue
-			}
 			if rule.CIDR == "" {
 				warnings = append(warnings, fmt.Sprintf(
 					"spec.capabilities.network.egress[%d] (host %q) is not enforceable by the NetworkPolicy backend and will NOT be applied; specify a cidr for network-level enforcement. FQDN egress enforcement is deferred to the Tetragon backend (ADR-006 v1.5).",
@@ -184,38 +154,5 @@ func validateCapabilitiesV2(caps *mcpv1alpha2.MCPServerCapabilities) ([]string, 
 		}
 	}
 
-	// Duplicate / empty expected tools.
-	if caps.Tools != nil && len(caps.Tools.ExpectedTools) > 0 {
-		seen := make(map[string]bool, len(caps.Tools.ExpectedTools))
-		for _, tool := range caps.Tools.ExpectedTools {
-			if tool == "" {
-				errs = append(errs, "spec.capabilities.tools.expectedTools contains empty string")
-				continue
-			}
-			if seen[tool] {
-				errs = append(errs, fmt.Sprintf("spec.capabilities.tools.expectedTools has duplicate: %q", tool))
-			}
-			seen[tool] = true
-		}
-	}
-
-	return errs, warnings
-}
-
-// validateRemoteEndpoint checks that a remote MCPServer endpoint is an absolute
-// http(s) URL with a non-empty host. url.ParseRequestURI alone accepts
-// non-HTTP schemes (e.g. "javascript:alert(1)") and bare paths ("/only/path"),
-// neither of which is a reachable remote endpoint.
-func validateRemoteEndpoint(endpoint string) error {
-	u, err := url.Parse(endpoint)
-	if err != nil {
-		return fmt.Errorf("spec.endpoint is not a valid URL: %v", err)
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("spec.endpoint must be an http or https URL, got scheme %q", u.Scheme)
-	}
-	if u.Host == "" {
-		return fmt.Errorf("spec.endpoint must include a host")
-	}
-	return nil
+	return warnings
 }
