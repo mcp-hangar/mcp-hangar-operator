@@ -1,5 +1,38 @@
 # Upgrade notes
 
+## Unreleased -- the pod-registration webhook now gates pod UPDATE, and the provider label is immutable
+
+In an `mcp-hangar.io/enforce-egress=true` namespace the pod-registration
+webhook used to be called on pod CREATE only. A pod admitted without the
+`mcp-hangar.io/provider` label could then be labelled with a registered
+server's name -- `kubectl label pod <pod> mcp-hangar.io/provider=<name>` --
+with no admission call at all, and because the per-server allow
+`NetworkPolicy` selects pods by exactly that label, the pod inherited that
+server's egress. The README's "shadow provider pods fail to deploy" held only
+at creation.
+
+The webhook is now called on UPDATE as well, and once a pod is admitted its
+provider label is immutable:
+
+| Write on an admitted pod in an enforced namespace | Before | Now |
+| --- | --- | --- |
+| Add `mcp-hangar.io/provider=<name>` (registered or not) | Allowed, no admission call | Denied |
+| Change `mcp-hangar.io/provider` from one name to another (both registered or not) | Allowed, no admission call | Denied |
+| Remove `mcp-hangar.io/provider` | Allowed | Allowed -- the pod leaves the server's allow-policy |
+| Any update that leaves the label as it was (finalizers, ownerRefs, annotations, other labels) | Allowed | Allowed, without a lookup -- a pod whose `MCPServer` was deleted can still be cleaned up |
+
+Pod CREATE is unchanged: a labelled pod is admitted when the named `MCPServer`
+exists in the namespace. The operator's own pods carry the label from creation
+and the controller never relabels a pod, so none of its writes are affected.
+Kubelet status writes go through the `pods/status` subresource, which the rule
+(`resources: pods`) does not match, so they never reach the webhook.
+
+If a workflow of yours relied on labelling a running pod into a server, create
+the pod with the label instead. The Helm chart's
+`ValidatingWebhookConfiguration` must list `UPDATE` alongside `CREATE` for the
+`vpod-registration.kb.io` rule for this to take effect; the chart release that
+pairs with this operator version does.
+
 ## Unreleased -- a ConfigMap discovery entry in `mode: container` now keeps its image
 
 An `MCPDiscoverySource` of type `ConfigMap` used to drop `image`, `command` and
