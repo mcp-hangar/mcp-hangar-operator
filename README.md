@@ -121,7 +121,7 @@ Inside an enforced namespace three controls apply:
 | Control | Behaviour | Where |
 |---------|-----------|-------|
 | **Default-deny egress** | A server with no egress policy gets DNS only — not "all egress". Egress opens only when a policy is generated for it. | `pkg/networkpolicy/builder.go` |
-| **Admission registration** | A Pod labelled `mcp-hangar.io/provider=<name>` is **denied at admission** unless an `MCPServer` named `<name>` exists in the namespace. Shadow/unregistered provider pods fail to deploy. | `internal/webhook/pod_registration_webhook.go` (OWASP MCP09) |
+| **Admission registration** | A Pod labelled `mcp-hangar.io/provider=<name>` is **denied at admission** unless an `MCPServer` named `<name>` exists in the namespace, and the label is **immutable once the Pod is admitted** (it can be removed, not added or changed). Shadow/unregistered provider pods fail to deploy, and an admitted Pod cannot be relabelled into a registered server's egress. | `internal/webhook/pod_registration_webhook.go` (OWASP MCP09) |
 | **Pin coupling** | A registered container-mode server's egress allow-policy is opened **only if its image is digest-pinned** (`image@sha256:...`). An unpinned server stays under default-deny (DNS only) and gets an `EgressWithheldUnpinnedImage` event. Opt out per server with the `hangar.io/allow-mutable-image="true"` annotation. | `internal/controller/mcpserver_controller.go` |
 
 FQDN/host egress rules **fail closed** — a rule that a Kubernetes
