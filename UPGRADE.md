@@ -1,5 +1,25 @@
 # Upgrade notes
 
+## Unreleased -- the namespace default-deny backstop is owned by its Namespace and a foreign one is refused
+
+The `mcp-default-deny-egress` NetworkPolicy the operator writes into a
+namespace labelled `mcp-hangar.io/enforce-egress=true` used to carry no owner
+and was not watched: deleting or editing it left the namespace fail-open until
+the Namespace object changed or the next resync, hours later. It is now
+controlled by the Namespace (an owner reference) and watched, so a deleted
+policy is recreated and an edited one restored within seconds, and it is
+garbage-collected with the namespace.
+
+Policies written by an earlier operator carry no owner but do carry
+`app.kubernetes.io/managed-by: mcp-hangar-operator`; the upgrade adopts those
+in place. A policy under that name that is neither -- owned by another
+controller, or written by hand without the label -- used to be silently
+overwritten. It is now left alone: the operator emits a Warning Event
+`DefaultDenyNotOwned` on the Namespace, re-checks every five minutes, and
+applies its backstop only once that policy is gone. If you see the Event,
+remove or rename the foreign policy; until then the namespace has whatever
+egress that policy allows, not the operator's DNS-only default.
+
 ## Unreleased -- an `MCPEgressPolicy` can now report `Degraded` where it used to report success
 
 An `MCPEgressPolicy` whose backstop the operator wrote used to report
