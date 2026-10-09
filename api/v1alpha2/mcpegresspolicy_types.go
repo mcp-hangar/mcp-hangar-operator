@@ -297,8 +297,19 @@ type MCPEgressPolicyStatus struct {
 	BackstopEnforcement BackstopEnforcement `json:"backstopEnforcement,omitempty"`
 
 	// Conditions capture policy state: Compiled, BackstopApplied,
-	// BackstopEnforceable, and Degraded (with reason FailOpenRisk when the
-	// backstop could not be applied).
+	// BackstopEnforceable, L7Delivered, and Degraded (with reason FailOpenRisk
+	// when the backstop could not be applied, L7PushFailed when core did not
+	// take the L7 policy).
+	//
+	// L7Delivered answers the question Compiled cannot: whether core actually
+	// holds the tool, argument and header rules this policy compiles to. True
+	// with reason Delivered once every target server accepted the push in the
+	// last reconcile, or DeliveredNotPersisted when core took it but will not
+	// have it after a restart (it is re-pushed when a gateway pod becomes
+	// Ready). False with reason CoreAuthRejected (401/403), CoreUnreachable
+	// (transport failure or timeout) or PushFailed (any other refusal), naming
+	// the server that failed. Unknown with reason CoreIntegrationOff when the
+	// operator runs without --hangar-url and pushes nothing.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -310,6 +321,7 @@ type MCPEgressPolicyStatus struct {
 // +kubebuilder:storageversion
 // +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.spec.mode`
 // +kubebuilder:printcolumn:name="Backstop",type=string,JSONPath=`.status.backstopEnforcement`
+// +kubebuilder:printcolumn:name="L7",type=string,JSONPath=`.status.conditions[?(@.type=="L7Delivered")].status`
 // +kubebuilder:printcolumn:name="Target",type=string,JSONPath=`.spec.targetRef.name`
 // +kubebuilder:printcolumn:name="Default",type=string,JSONPath=`.spec.defaultAction`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`

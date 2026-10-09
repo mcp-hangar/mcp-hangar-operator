@@ -3,6 +3,7 @@ package hangar
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -337,4 +338,61 @@ func TestClient_GetMCPServerHealth_NotRegistered(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not registered")
+}
+
+func TestClient_SetL7Policy_ReportsPersisted(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"mcp_server_id":"srv","l7_policy_set":true,"persisted":true}`))
+	}))
+	defer server.Close()
+
+	persisted, err := NewClient(&Config{URL: server.URL}).SetL7Policy(context.Background(), "srv", &L7PolicyPayload{})
+	require.NoError(t, err)
+	assert.True(t, persisted)
+}
+
+// A core that does not say whether it persisted the policy has not said it
+// did; the operator must not claim a durability it was never told about.
+func TestClient_SetL7Policy_UnreportedPersistedIsFalse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"l7_policy_set":true}`))
+	}))
+	defer server.Close()
+
+	persisted, err := NewClient(&Config{URL: server.URL}).SetL7Policy(context.Background(), "srv", &L7PolicyPayload{})
+	require.NoError(t, err)
+	assert.False(t, persisted)
+}
+
+// The status core answered with reaches the caller, so a 403 can be told from
+// an outage -- both on the non-retried 4xx path and after 5xx retries run out.
+func TestClient_SetL7Policy_StatusErrorCarriesCoreStatus(t *testing.T) {
+	for _, code := range []int{http.StatusForbidden, http.StatusServiceUnavailable} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(code)
+			_, _ = w.Write([]byte("no"))
+		}))
+		client := NewClient(&Config{URL: server.URL, MaxRetries: 1, BaseDelay: time.Millisecond})
+
+		_, err := client.SetL7Policy(context.Background(), "srv", &L7PolicyPayload{})
+		server.Close()
+
+		require.Error(t, err)
+		var se *StatusError
+		require.ErrorAs(t, err, &se, "status %d was not wrapped as a StatusError: %v", code, err)
+		assert.Equal(t, code, se.StatusCode)
+		assert.Equal(t, "no", se.Body)
+	}
+}
+
+// A transport failure carries no StatusError: there was no answer to carry.
+func TestClient_SetL7Policy_TransportErrorHasNoStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	server.Close()
+	client := NewClient(&Config{URL: server.URL, MaxRetries: 1, BaseDelay: time.Millisecond})
+
+	_, err := client.SetL7Policy(context.Background(), "srv", &L7PolicyPayload{})
+	require.Error(t, err)
+	var se *StatusError
+	assert.False(t, errors.As(err, &se))
 }

@@ -141,7 +141,7 @@ func (c *Client) doWithRetry(ctx context.Context, method, url string, body []byt
 		if resp.StatusCode >= 500 {
 			respBody, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			lastErr = fmt.Errorf("server error %d: %s", resp.StatusCode, string(respBody))
+			lastErr = fmt.Errorf("server error: %w", &StatusError{StatusCode: resp.StatusCode, Body: string(respBody)})
 			continue
 		}
 
@@ -296,27 +296,51 @@ type L7PolicyPayload struct {
 	Mode          string         `json:"mode,omitempty"`
 }
 
+// StatusError is a core response the client did not accept. A caller that needs
+// to tell an auth refusal from an outage or a rejected payload unwraps it with
+// errors.As; a transport failure never carries one.
+type StatusError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("status %d: %s", e.StatusCode, e.Body)
+}
+
 // SetL7Policy pushes a compiled L7 egress policy for an mcp_server to core.
-func (c *Client) SetL7Policy(ctx context.Context, mcpServerID string, policy *L7PolicyPayload) (err error) {
+//
+// persisted is core's own answer to whether a restart of that gateway gives
+// the policy back (core #1306). It is true only when core says so: a core that
+// does not report the field counts as not persisted, because the operator
+// cannot claim a durability it was never told about. A non-2xx response is
+// returned wrapping a *StatusError.
+func (c *Client) SetL7Policy(ctx context.Context, mcpServerID string, policy *L7PolicyPayload) (persisted bool, err error) {
 	defer c.observe("set_l7_policy")(&err)
 	url := fmt.Sprintf("%s/api/mcp_servers/%s/l7_policy", c.baseURL, mcpServerID)
 
 	body, err := json.Marshal(policy)
 	if err != nil {
-		return fmt.Errorf("failed to marshal L7 policy: %w", err)
+		return false, fmt.Errorf("failed to marshal L7 policy: %w", err)
 	}
 
 	resp, err := c.doWithRetry(ctx, http.MethodPost, url, body)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer resp.Body.Close()
 
+	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("set L7 policy failed with status %d: %s", resp.StatusCode, string(respBody))
+		return false, fmt.Errorf("set L7 policy failed: %w", &StatusError{StatusCode: resp.StatusCode, Body: string(respBody)})
 	}
-	return nil
+	var ack struct {
+		Persisted bool `json:"persisted"`
+	}
+	// A 2xx whose body does not parse is still a delivery; only the durability
+	// claim is withheld.
+	_ = json.Unmarshal(respBody, &ack)
+	return ack.Persisted, nil
 }
 
 // ClearL7Policy removes the L7 egress policy for an mcp_server. A 404 is treated

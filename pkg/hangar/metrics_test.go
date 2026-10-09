@@ -23,7 +23,7 @@ func TestClientRecordsErrorsPerOperation(t *testing.T) {
 	}))
 	defer bad.Close()
 	c := NewClient(&Config{URL: bad.URL, MaxRetries: 0})
-	err := c.SetL7Policy(context.Background(), "srv", &L7PolicyPayload{DefaultAction: "Deny"})
+	_, err := c.SetL7Policy(context.Background(), "srv", &L7PolicyPayload{DefaultAction: "Deny"})
 	require.Error(t, err)
 	assert.InDelta(t, before+1, testutil.ToFloat64(metrics.HangarClientErrors.WithLabelValues("set_l7_policy")), 0.001)
 
