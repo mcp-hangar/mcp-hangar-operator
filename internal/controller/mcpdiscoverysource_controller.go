@@ -62,6 +62,10 @@ const (
 	ReasonSyncFailed    = "SyncFailed"
 	ReasonProviderFound = "ProviderFound"
 	ReasonProviderGone  = "ProviderRemoved"
+
+	// ReasonCrossNamespaceRefused is the Synced/Ready reason and Warning event
+	// reason for a ConfigMap source whose configMapRef names another namespace.
+	ReasonCrossNamespaceRefused = "CrossNamespaceRefused"
 )
 
 // DiscoveredMCPServerInfo holds information about a discovered provider
@@ -159,6 +163,14 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 
 	// Update ObservedGeneration
 	source.Status.ObservedGeneration = source.Generation
+
+	// A configMapRef into another namespace is refused before anything is
+	// read (#234): its entries would become MCPServers -- running containers
+	// since #233 -- in this namespace, with the operator's ServiceAccount as
+	// the confused deputy. This holds with the admission webhook off.
+	if cmNamespace, refused := crossNamespaceConfigMap(source); refused {
+		return r.refuseCrossNamespace(ctx, source, cmNamespace)
+	}
 
 	// v1alpha2 carries the interval pre-parsed; non-positive falls back.
 	refreshInterval := defaultRefreshInterval
@@ -367,11 +379,13 @@ func (r *MCPDiscoverySourceReconciler) discoverConfigMap(ctx context.Context, so
 		return discovered, nil, nil
 	}
 
-	// Determine ConfigMap namespace
-	cmNamespace := source.Spec.ConfigMapRef.Namespace
-	if cmNamespace == "" {
-		cmNamespace = source.Namespace
+	// The ConfigMap is always read from the source's own namespace.
+	// reconcileNormal refuses a cross-namespace reference first; this guard
+	// keeps any other caller from reading one (#234).
+	if cmNamespace, refused := crossNamespaceConfigMap(source); refused {
+		return nil, nil, fmt.Errorf("configMapRef namespace %q differs from the source namespace %q", cmNamespace, source.Namespace)
 	}
+	cmNamespace := source.Namespace
 
 	// Determine ConfigMap key
 	cmKey := source.Spec.ConfigMapRef.Key
@@ -422,6 +436,45 @@ func (r *MCPDiscoverySourceReconciler) discoverConfigMap(ctx context.Context, so
 	}
 
 	return discovered, nil, nil
+}
+
+// crossNamespaceConfigMap reports whether a ConfigMap source references a
+// ConfigMap outside its own namespace, and returns that namespace.
+func crossNamespaceConfigMap(source *mcpv1alpha2.MCPDiscoverySource) (string, bool) {
+	if source.Spec.Type != mcpv1alpha2.DiscoveryTypeConfigMap || source.Spec.ConfigMapRef == nil {
+		return "", false
+	}
+	ns := source.Spec.ConfigMapRef.Namespace
+	return ns, ns != "" && ns != source.Namespace
+}
+
+// refuseCrossNamespace reports a refused cross-namespace configMapRef. It reads
+// nothing, creates nothing and deletes nothing: servers the source created
+// before the refusal are left as they are, so the message says so. The
+// Warning event is emitted once, on the transition into the refusal.
+func (r *MCPDiscoverySourceReconciler) refuseCrossNamespace(ctx context.Context, source *mcpv1alpha2.MCPDiscoverySource, cmNamespace string) (ctrl.Result, error) {
+	msg := fmt.Sprintf("configMapRef names ConfigMap %s/%s but this source is in namespace %q; "+
+		"a ConfigMap source may only read its own namespace. Nothing was read or created; "+
+		"MCPServers this source created earlier are left as they are",
+		cmNamespace, source.Spec.ConfigMapRef.Name, source.Namespace)
+
+	prev := apimeta.FindStatusCondition(source.Status.Conditions, ConditionSynced)
+	transition := prev == nil || prev.Reason != ReasonCrossNamespaceRefused
+
+	source.Status.LastSyncError = msg
+	setCondition(source, ConditionSynced, metav1.ConditionFalse, ReasonCrossNamespaceRefused, msg)
+	setCondition(source, ConditionReady, metav1.ConditionFalse, ReasonCrossNamespaceRefused, msg)
+	if err := r.Status().Update(ctx, source); err != nil {
+		return ctrl.Result{}, err
+	}
+	if transition {
+		log.FromContext(ctx).Info("Refusing cross-namespace configMapRef",
+			"configMapNamespace", cmNamespace, "sourceNamespace", source.Namespace)
+		r.Recorder.Eventf(source, nil, corev1.EventTypeWarning, ReasonCrossNamespaceRefused, ActionReconcile,
+			"%s", msg)
+	}
+	// No requeue: fixing the reference is a spec change, which reconciles.
+	return ctrl.Result{}, nil
 }
 
 // discoverAnnotations discovers providers from annotated Pods and Services
