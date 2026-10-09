@@ -114,29 +114,73 @@ func TestNamespaceEgress_UnlabeledNamespaceIsUntouched(t *testing.T) {
 
 // A policy written by an operator before #204 has the managed-by label and no
 // owner. It is ours: the upgrade adopts it and restores its spec.
+//
+// The pre-#204 policy is made from the operator's own one (owner stripped,
+// spec drifted) rather than created before the namespace is labelled: the
+// reconcile of a still-unlabelled namespace legitimately deletes a policy the
+// operator owns, so creating one first raced it (#236).
 func TestNamespaceEgress_AdoptsPreOwnershipPolicy(t *testing.T) {
 	const nsName = "ns-egress-adopt"
 
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsName}}
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+		Name:   nsName,
+		Labels: map[string]string{networkpolicy.EnforceEgressLabel: "true"},
+	}}
 	require.NoError(t, k8sClient.Create(ctx, ns))
 	defer func() { _ = k8sClient.Delete(ctx, ns) }()
 	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, ns))
 
-	legacy := networkpolicy.BuildNamespaceDefaultDenyEgress(nsName)
-	legacy.Spec.Egress = nil // drifted: deny DNS too
-	require.NoError(t, k8sClient.Create(ctx, legacy))
-	require.Empty(t, legacy.OwnerReferences)
-
-	labelNamespace(t, nsName, true)
-
 	var np networkingv1.NetworkPolicy
+	require.Eventually(t, func() bool {
+		return k8sClient.Get(ctx, defaultDenyKey(nsName), &np) == nil && metav1.IsControlledBy(&np, ns)
+	}, nsEgressWait, nsEgressTick, "default-deny created for an opted-in namespace")
+
+	// Turn it into what an operator before #204 wrote: no owner, and drifted.
+	require.Eventually(t, func() bool {
+		if err := k8sClient.Get(ctx, defaultDenyKey(nsName), &np); err != nil {
+			return false
+		}
+		np.OwnerReferences = nil
+		np.Spec.Egress = nil // drifted: deny DNS too
+		return k8sClient.Update(ctx, &np) == nil
+	}, nsEgressWait, nsEgressTick, "strip the owner")
+	legacyUID := np.UID
+	require.Equal(t, networkpolicy.DefaultManagerName, np.Labels[networkpolicy.LabelManagedBy])
+
 	require.Eventually(t, func() bool {
 		if err := k8sClient.Get(ctx, defaultDenyKey(nsName), &np); err != nil {
 			return false
 		}
 		return metav1.IsControlledBy(&np, ns) && len(np.Spec.Egress) == 1
 	}, nsEgressWait, nsEgressTick, "legacy policy adopted and its spec restored")
-	assert.Equal(t, legacy.UID, np.UID, "adopted in place, not replaced")
+	assert.Equal(t, legacyUID, np.UID, "adopted in place, not replaced")
+}
+
+// A namespace that is not opted in keeps a same-named policy it does not own:
+// only the operator's own default-deny is removed on opt-out (#236).
+func TestNamespaceEgress_UnlabelledKeepsForeignPolicy(t *testing.T) {
+	const nsName = "ns-egress-unlabelled-foreign"
+
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsName}}
+	require.NoError(t, k8sClient.Create(ctx, ns))
+	defer func() { _ = k8sClient.Delete(ctx, ns) }()
+
+	foreign := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: networkpolicy.DefaultDenyEgressName, Namespace: nsName},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "theirs"}},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+		},
+	}
+	require.NoError(t, k8sClient.Create(ctx, foreign))
+
+	r := &NamespaceEgressReconciler{Client: k8sClient, Scheme: scheme.Scheme, Recorder: &fakeEventRecorder{}}
+	_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Name: nsName}})
+	require.NoError(t, err)
+
+	var np networkingv1.NetworkPolicy
+	require.NoError(t, k8sClient.Get(ctx, defaultDenyKey(nsName), &np), "a policy the operator does not own is not deleted")
+	assert.Equal(t, foreign.UID, np.UID)
 }
 
 // A same-named policy controlled by something else is not adopted: it keeps
