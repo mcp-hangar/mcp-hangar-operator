@@ -29,8 +29,17 @@ Two updates that used to be accepted are now refused by the apiserver:
   for the new target.
 
 Objects stored before the upgrade that break a new rule stay readable and are
-not rewritten. Kubernetes 1.30+ ratchets CRD validation, so an update that
-leaves the offending field unchanged (labels, finalizers, status) still goes
-through; an update that touches it must make it valid. Find them before
-upgrading with, for example,
+not rewritten. Kubernetes 1.30+ ratchets CRD validation (the
+`CRDValidationRatcheting` feature gate, on by default from 1.30): a rule is
+re-checked only when the value it is attached to changes. For the per-field
+rules (durations, `cidr`, `expectedTools`, the length limits) that means an
+update that leaves the offending field alone still goes through. The `image`
+and `endpoint` rules are attached to the whole `spec`, so a stored container
+server with no image, or a remote one with a bad endpoint, refuses *any* spec
+change -- `replicas`, `kubectl scale`, a discovery re-sync -- until the
+same update fixes it; metadata and status updates still go through. A stored
+bad `cidr` or `expectedTools` entry can also block the controller's status
+write when it copies the capabilities into a `status.capabilities` that did not
+already hold them. Find such objects
+before upgrading, for example
 `kubectl get mcpservers -A -o json | jq -r '.items[] | select(.spec.mode == "container" and ((.spec.image // "") == "")) | .metadata.namespace + "/" + .metadata.name'`.
