@@ -70,7 +70,12 @@ type DiscoveredMCPServerInfo struct {
 	Source   string
 	Endpoint string
 	Mode     mcpv1alpha2.MCPServerMode
-	Labels   map[string]string
+	// Image, Command and Args are set by ConfigMap entries only; the other
+	// discovery types find remote endpoints and leave them empty (#206).
+	Image   string
+	Command []string
+	Args    []string
+	Labels  map[string]string
 }
 
 // ConfigMapMCPServerEntry defines a provider entry in a ConfigMap
@@ -405,6 +410,9 @@ func (r *MCPDiscoverySourceReconciler) discoverConfigMap(ctx context.Context, so
 			Source:   fmt.Sprintf("configmap/%s", source.Spec.ConfigMapRef.Name),
 			Endpoint: entry.Endpoint,
 			Mode:     mode,
+			Image:    entry.Image,
+			Command:  entry.Command,
+			Args:     entry.Args,
 			Labels: map[string]string{
 				"discovery-configmap": source.Spec.ConfigMapRef.Name,
 				"discovery-entry":     name,
@@ -600,6 +608,14 @@ func (r *MCPDiscoverySourceReconciler) discoverServices(ctx context.Context, sou
 
 // createOrUpdateMCPServer creates or updates an MCPServer CR for a discovered provider
 func (r *MCPDiscoverySourceReconciler) createOrUpdateMCPServer(ctx context.Context, source *mcpv1alpha2.MCPDiscoverySource, info DiscoveredMCPServerInfo) error {
+	// A container entry with no image from either the entry or the template
+	// would only become an MCPServer the server controller marks Dead
+	// (InvalidSpec). Refuse it here so the source status names the entry
+	// instead of a Dead server appearing with no explanation (#206).
+	if info.Mode == mcpv1alpha2.MCPServerModeContainer && info.Image == "" && templateImage(source) == "" {
+		return fmt.Errorf("container mode requires an image, and neither the entry nor providerTemplate sets one")
+	}
+
 	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      info.Name,
@@ -641,10 +657,20 @@ func (r *MCPDiscoverySourceReconciler) createOrUpdateMCPServer(ctx context.Conte
 			provider.Spec = *source.Spec.MCPServerTemplate.Spec.DeepCopy()
 		}
 
-		// Override with discovered values
+		// Override with discovered values: the template is the default, an
+		// entry that sets a field wins.
 		provider.Spec.Mode = info.Mode
 		if info.Endpoint != "" {
 			provider.Spec.Endpoint = info.Endpoint
+		}
+		if info.Image != "" {
+			provider.Spec.Image = info.Image
+		}
+		if len(info.Command) > 0 {
+			provider.Spec.Command = append([]string(nil), info.Command...)
+		}
+		if len(info.Args) > 0 {
+			provider.Spec.Args = append([]string(nil), info.Args...)
 		}
 
 		// Set controller owner reference if configured
@@ -658,6 +684,14 @@ func (r *MCPDiscoverySourceReconciler) createOrUpdateMCPServer(ctx context.Conte
 	})
 
 	return err
+}
+
+// templateImage returns the image the source's providerTemplate sets, or "".
+func templateImage(source *mcpv1alpha2.MCPDiscoverySource) string {
+	if source.Spec.MCPServerTemplate == nil || source.Spec.MCPServerTemplate.Spec == nil {
+		return ""
+	}
+	return source.Spec.MCPServerTemplate.Spec.Image
 }
 
 // authoritativeSync deletes MCPServers that are no longer discovered (scoped to successfully-scanned sources only)
