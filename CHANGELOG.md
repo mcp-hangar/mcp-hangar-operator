@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.17.6](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.5...v0.17.6) (2026-10-09)
+
+### Changed
+
+- **api:** the apiserver now enforces the MCPServer, MCPDiscoverySource and
+  MCPEgressPolicy rules that used to live only in the validating webhooks, which
+  are off by default: a container-mode MCPServer needs an `image`, a remote-mode
+  one an absolute `http`/`https` `endpoint` with a host, `startupTimeout` and
+  `shutdownGracePeriod` must be non-negative durations, `expectedTools` entries
+  must be non-empty and unique, an egress `cidr` must be a well-formed CIDR, and a
+  `ConfigMap` discovery source needs a `configMapRef`. `MCPServer.spec.mode` and
+  `MCPEgressPolicy.spec.targetRef` are now immutable. The webhook keeps only the
+  checks the schema cannot express (annotation opt-ins, the cross-namespace
+  ConfigMap reference, filter regexps) and its warnings; see UPGRADE.md ([#240](https://github.com/mcp-hangar/mcp-hangar-operator/pull/240))
+
+### Security
+
+- **controller:** an MCPServer no longer reports `NetworkPolicyApplied=True` for a
+  per-server NetworkPolicy that nothing in the cluster enforces. The condition now
+  consults the same enforcement probe as the MCPEgressPolicy backstop:
+  `True/PolicyApplied` only when an enforcer is observed,
+  `False/PolicyWrittenUnenforced` (plus one `NetworkPolicyUnenforced` Warning) when
+  none is, and `Unknown/PolicyWrittenUnverified` when the probe cannot tell. An
+  enforce-egress namespace gets a `DefaultDenyUnenforced` Warning when its
+  default-deny is written where nothing enforces it. Policies are still written in
+  every case; see UPGRADE.md ([#239](https://github.com/mcp-hangar/mcp-hangar-operator/pull/239))
+
 ## [0.17.5](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.4...v0.17.5) (2026-10-09)
 
 
