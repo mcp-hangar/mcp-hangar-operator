@@ -68,8 +68,10 @@ func (r *NamespaceEgressReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	getErr := r.Get(ctx, key, &existing)
 
 	if !optedIn {
-		// Not opted in: remove our default-deny policy if we created one.
-		if getErr == nil {
+		// Not opted in: remove our default-deny policy if we created one. A
+		// same-named policy someone else controls is not ours to delete (#236),
+		// the same rule the opted-in path applies before adopting.
+		if getErr == nil && defaultDenyOwnedByOperator(&ns, &existing) {
 			if err := r.Delete(ctx, &existing); err != nil && !apierrors.IsNotFound(err) {
 				return ctrl.Result{}, fmt.Errorf("delete default-deny egress: %w", err)
 			}
