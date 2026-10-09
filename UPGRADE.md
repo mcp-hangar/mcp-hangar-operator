@@ -35,6 +35,7 @@ kubectl get mcpdiscoverysources -A -o json | jq -r '.items[]
 Copy the ConfigMap into the source's namespace and drop
 `configMapRef.namespace`, or delete the source, which removes the servers it
 created.
+
 ## Unreleased -- the pod-registration webhook now gates pod UPDATE, and the provider label is immutable
 
 In an `mcp-hangar.io/enforce-egress=true` namespace the pod-registration
