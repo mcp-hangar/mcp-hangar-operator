@@ -37,6 +37,12 @@ const ReasonDefaultDenyNotOwned = "DefaultDenyNotOwned"
 // Namespace, so its deletion never reaches the Owns() watch (#204).
 const foreignDefaultDenyRequeue = 5 * time.Minute
 
+// ReasonDefaultDenyUnenforced is the Warning Event reason emitted on a
+// Namespace when the operator writes its default-deny egress backstop into an
+// API server where nothing enforces NetworkPolicy (#199). The policy is still
+// written; the Event says it restricts nothing.
+const ReasonDefaultDenyUnenforced = "DefaultDenyUnenforced"
+
 // NamespaceEgressReconciler maintains the namespace-wide default-deny egress
 // NetworkPolicy for namespaces that opt into enforcement via the
 // mcp-hangar.io/enforce-egress=true label (#51). In an opted-in namespace, pods
@@ -46,6 +52,10 @@ type NamespaceEgressReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder events.EventRecorder
+	// EnforcementProbe reports whether anything in this API server enforces
+	// the default-deny it writes (#199). Nil reports Unknown, which says
+	// nothing either way.
+	EnforcementProbe *networkpolicy.EnforcementProbe
 }
 
 // Reconcile ensures the default-deny egress policy exists in opted-in namespaces
@@ -94,6 +104,7 @@ func (r *NamespaceEgressReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, fmt.Errorf("create default-deny egress: %w", err)
 		}
 		logger.Info("created default-deny egress", "namespace", ns.Name)
+		r.warnIfUnenforced(ctx, &ns)
 		return ctrl.Result{}, nil
 	}
 	if getErr != nil {
@@ -132,9 +143,25 @@ func (r *NamespaceEgressReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, fmt.Errorf("update default-deny egress: %w", err)
 		}
 		logger.Info("reconciled default-deny egress spec", "namespace", ns.Name)
+		r.warnIfUnenforced(ctx, &ns)
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// warnIfUnenforced says so on the Namespace when the default-deny just written
+// has no reader (#199). The Namespace carries no status to hold a condition,
+// so the write -- create, or repair of drift -- is the transition the Warning
+// marks; the idempotent path stays quiet. An Unknown verdict is doubt, not a
+// fault, and emits nothing.
+func (r *NamespaceEgressReconciler) warnIfUnenforced(ctx context.Context, ns *corev1.Namespace) {
+	signal := r.EnforcementProbe.Signal(ctx)
+	if signal.Verdict != networkpolicy.EnforcementNotObserved {
+		return
+	}
+	r.Recorder.Eventf(ns, nil, corev1.EventTypeWarning, ReasonDefaultDenyUnenforced, ActionReconcile,
+		"default-deny egress NetworkPolicy %s/%s was written but nothing here enforces it: %s",
+		ns.Name, networkpolicy.DefaultDenyEgressName, signal.Source)
 }
 
 // defaultDenyOwnedByOperator reports whether np is the operator's backstop for

@@ -95,8 +95,9 @@ func main() {
 			"reconciled so its L7 policy is re-delivered to a gateway that restarted without it. Empty disables.")
 	flag.StringVar(&npEnforcement, "networkpolicy-enforcement", "auto",
 		"Whether to treat this cluster as enforcing NetworkPolicy: \"auto\" looks for a CNI that "+
-			"watches this API server and reports an MCPEgressPolicy backstop as Unenforced when it "+
-			"finds none, \"enforced\" asserts enforcement (for a CNI this operator does not "+
+			"watches this API server and, when it finds none, reports an MCPEgressPolicy backstop as "+
+			"Unenforced, an MCPServer's NetworkPolicyApplied as False and warns on an enforce-egress "+
+			"namespace, \"enforced\" asserts enforcement (for a CNI this operator does not "+
 			"recognize), \"unenforced\" asserts the opposite. Only status is affected; nothing "+
 			"stops being written.")
 
@@ -168,21 +169,35 @@ func main() {
 		setupLog.Info("Hangar core client configured", "url", hangarURL)
 	}
 
+	// One enforcement probe for every writer of a NetworkPolicy (#199): the
+	// per-server policy, the namespace default-deny and the MCPEgressPolicy
+	// backstop all report against the same cached verdict.
+	enforcementProbe := &networkpolicy.EnforcementProbe{
+		Mapper: mgr.GetRESTMapper(),
+		// The uncached reader on purpose: the probe asks once per TTL, and
+		// the manager's cache would answer it by watching every DaemonSet
+		// in the cluster for the lifetime of the operator.
+		Reader:   mgr.GetAPIReader(),
+		Override: enforcementOverride,
+	}
+
 	// Register MCPServer controller.
 	if err := (&controller.MCPServerReconciler{
-		Client:       mgr.GetClient(),
-		Scheme:       mgr.GetScheme(),
-		Recorder:     mgr.GetEventRecorder("mcpserver-controller"),
-		HangarClient: hangarClient,
+		Client:           mgr.GetClient(),
+		Scheme:           mgr.GetScheme(),
+		Recorder:         mgr.GetEventRecorder("mcpserver-controller"),
+		HangarClient:     hangarClient,
+		EnforcementProbe: enforcementProbe,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPServer")
 		os.Exit(1)
 	}
 
 	if err := (&controller.NamespaceEgressReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorder("namespace-egress-controller"),
+		Client:           mgr.GetClient(),
+		Scheme:           mgr.GetScheme(),
+		Recorder:         mgr.GetEventRecorder("namespace-egress-controller"),
+		EnforcementProbe: enforcementProbe,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "NamespaceEgress")
 		os.Exit(1)
@@ -218,14 +233,7 @@ func main() {
 		Recorder:           mgr.GetEventRecorder("mcpegresspolicy-controller"),
 		HangarClient:       hangarClient,
 		GatewayPodSelector: gatewayPodSelector,
-		EnforcementProbe: &networkpolicy.EnforcementProbe{
-			Mapper: mgr.GetRESTMapper(),
-			// The uncached reader on purpose: the probe asks once per TTL, and
-			// the manager's cache would answer it by watching every DaemonSet
-			// in the cluster for the lifetime of the operator.
-			Reader:   mgr.GetAPIReader(),
-			Override: enforcementOverride,
-		},
+		EnforcementProbe:   enforcementProbe,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPEgressPolicy")
 		os.Exit(1)
