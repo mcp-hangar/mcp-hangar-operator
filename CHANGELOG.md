@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.17.5](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.4...v0.17.5) (2026-10-09)
+
+
+### Fixed
+
+* **controller:** carry image, command and args from ConfigMap discovery entries ([#233](https://github.com/mcp-hangar/mcp-hangar-operator/issues/233)) ([eb6f131](https://github.com/mcp-hangar/mcp-hangar-operator/commit/eb6f1319337d23d1d1cfbc469dbe77dfd8191dc5)), closes [#206](https://github.com/mcp-hangar/mcp-hangar-operator/issues/206)
+* **controller:** delete only the operator's own default-deny when a namespace opts out ([#237](https://github.com/mcp-hangar/mcp-hangar-operator/issues/237)) ([12c7693](https://github.com/mcp-hangar/mcp-hangar-operator/commit/12c76936df9883f123a4686bf2f81d3262b9ce64)), closes [#236](https://github.com/mcp-hangar/mcp-hangar-operator/issues/236)
+* **controller:** deliver the L7 rules of an MCPEgressPolicy with networkBackstop.generate=false ([#229](https://github.com/mcp-hangar/mcp-hangar-operator/issues/229)) ([c86dc50](https://github.com/mcp-hangar/mcp-hangar-operator/commit/c86dc500f40d822c4292356dc6fb3c8ef6cf68d5))
+* **controller:** follow membership changes of a policy's target ([#226](https://github.com/mcp-hangar/mcp-hangar-operator/issues/226)) ([f4f01c1](https://github.com/mcp-hangar/mcp-hangar-operator/commit/f4f01c1e7f1ef05f0feaf2a4c7bb2fee5d854438)), closes [#190](https://github.com/mcp-hangar/mcp-hangar-operator/issues/190)
+* **controller:** own and watch the namespace default-deny backstop ([#232](https://github.com/mcp-hangar/mcp-hangar-operator/issues/232)) ([e83dca6](https://github.com/mcp-hangar/mcp-hangar-operator/commit/e83dca638937e92c8af0ec6e85890f24245b3dca)), closes [#204](https://github.com/mcp-hangar/mcp-hangar-operator/issues/204)
+* **controller:** provider pods mount a ServiceAccount token by default ([#231](https://github.com/mcp-hangar/mcp-hangar-operator/issues/231)) ([8c6af36](https://github.com/mcp-hangar/mcp-hangar-operator/commit/8c6af36dcb9bbdce9b8415f24cdecb66e1986d43)), closes [#207](https://github.com/mcp-hangar/mcp-hangar-operator/issues/207)
+* **controller:** refuse a ConfigMap discovery source that references another namespace ([#235](https://github.com/mcp-hangar/mcp-hangar-operator/issues/235)) ([de0ee99](https://github.com/mcp-hangar/mcp-hangar-operator/commit/de0ee9930ecef17ab2d131c1103598cdacc512b4))
+* **controller:** report a failed L7 push on MCPEgressPolicy as L7Delivered=False and Degraded ([#227](https://github.com/mcp-hangar/mcp-hangar-operator/issues/227)) ([b8cf708](https://github.com/mcp-hangar/mcp-hangar-operator/commit/b8cf7089a826a6dcf67e9bbb4fc7b1ba21ac1751))
+* **webhook:** gate pod UPDATE so an admitted pod cannot be relabelled into a registered server's egress ([#225](https://github.com/mcp-hangar/mcp-hangar-operator/issues/225)) ([c72bca5](https://github.com/mcp-hangar/mcp-hangar-operator/commit/c72bca51bda15692d95f924deb285e5e60451d81)), closes [#189](https://github.com/mcp-hangar/mcp-hangar-operator/issues/189)
+
 ## [0.17.4](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.3...v0.17.4) (2026-09-24)
 
 
