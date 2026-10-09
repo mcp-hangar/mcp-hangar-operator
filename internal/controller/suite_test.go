@@ -120,6 +120,16 @@ func TestMain(m *testing.M) {
 		panic("failed to setup MCPDiscoverySource controller: " + err.Error())
 	}
 
+	// Register NamespaceEgress controller: the watch on the default-deny
+	// policy it owns is what the namespace_egress tests exercise (#204).
+	if err := (&NamespaceEgressReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorder("namespace-egress-controller"),
+	}).SetupWithManager(mgr); err != nil {
+		panic("failed to setup NamespaceEgress controller: " + err.Error())
+	}
+
 	// Start manager in background
 	go func() {
 		if err := mgr.Start(ctx); err != nil {
