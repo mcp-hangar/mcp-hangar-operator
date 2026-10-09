@@ -7,8 +7,9 @@
 
 <!-- ─────────────────────────────────────────────────────────────────────────
      Optional sections below — add the ones that carry signal, delete the rest.
-     The CHANGELOG is enforced separately (add a `## [Unreleased]` entry in
-     CHANGELOG.md, or apply the `skip-changelog` label) — no note needed here.
+     The CHANGELOG is enforced separately (add a `changelog.d/` fragment, and an
+     `upgrade.d/` note when a reader has to act; or apply the `skip-changelog`
+     label) — no note needed here. Never edit CHANGELOG.md or UPGRADE.md.
      ───────────────────────────────────────────────────────────────────────── -->
 
 ## What

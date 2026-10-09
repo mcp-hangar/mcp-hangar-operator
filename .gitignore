@@ -35,3 +35,6 @@ Thumbs.db
 # Build artifacts
 dist/
 
+
+# Python bytecode from the scripts/ tests
+__pycache__/

@@ -80,6 +80,23 @@ jobs:
         with:
           version: ${{ steps.golangci.outputs.version }}
 
+  # The release-note tooling in scripts/ (changelog.d/ and upgrade.d/ folding,
+  # the changelog gate, the release-branch push). It runs unattended on the
+  # release PR, so a break has to surface here rather than on release day.
+  release-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Install pytest
+        run: python -m pip install --quiet pytest pyyaml
+      - name: Script tests
+        run: python -m pytest scripts/tests -q
+      - name: Pending fragments render
+        run: python scripts/build_changelog.py check
+
   # Does what this repo generates actually install on a current Kubernetes?
   #
   # `make test` could not answer that for the CRDs' CEL rules, and for a while

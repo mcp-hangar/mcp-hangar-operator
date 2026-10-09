@@ -1,6 +1,8 @@
 # Upgrade notes
 
-## Unreleased -- a ConfigMap discovery source can no longer read another namespace
+## Upgrade to 0.17.5
+
+### a ConfigMap discovery source can no longer read another namespace
 
 An `MCPDiscoverySource` of type `ConfigMap` used to read
 `spec.configMapRef.namespace` from any namespace, with the operator's
@@ -37,7 +39,7 @@ Copy the ConfigMap into the source's namespace and drop
 `configMapRef.namespace`, or delete the source, which removes the servers it
 created.
 
-## Unreleased -- the namespace default-deny backstop is owned by its Namespace and a foreign one is refused
+### the namespace default-deny backstop is owned by its Namespace and a foreign one is refused
 
 The `mcp-default-deny-egress` NetworkPolicy the operator writes into a
 namespace labelled `mcp-hangar.io/enforce-egress=true` used to carry no owner
@@ -57,7 +59,7 @@ applies its backstop only once that policy is gone. If you see the Event,
 remove or rename the foreign policy; until then the namespace has whatever
 egress that policy allows, not the operator's DNS-only default.
 
-## Unreleased -- provider pods no longer mount a ServiceAccount token
+### provider pods no longer mount a ServiceAccount token
 
 A container-mode `MCPServer` pod used to get a ServiceAccount token projected
 into it, the way any pod does when nothing says otherwise: with
@@ -84,7 +86,7 @@ RBAC it needs. A server that never touched the token sees no change beyond the
 missing mount; nothing is rewritten on existing pods until their next
 generation rolls them.
 
-## Unreleased -- an `MCPEgressPolicy` with `networkBackstop.generate: false` now delivers its L7 rules
+### an `MCPEgressPolicy` with `networkBackstop.generate: false` now delivers its L7 rules
 
 An `MCPEgressPolicy` that opted out of the L3/L4 backstop with
 `spec.networkBackstop.generate: false` used to lose its tool, argument and
@@ -113,7 +115,7 @@ A `generate: false` policy whose target does not exist now reports
 every 30 seconds, as a `generate: true` policy with a missing target always
 did. It used to read `Compiled=True` with nothing to compile for.
 
-## Unreleased -- the pod-registration webhook now gates pod UPDATE, and the provider label is immutable
+### the pod-registration webhook now gates pod UPDATE, and the provider label is immutable
 
 In an `mcp-hangar.io/enforce-egress=true` namespace the pod-registration
 webhook used to be called on pod CREATE only. A pod admitted without the
@@ -146,7 +148,7 @@ the pod with the label instead. The Helm chart's
 `vpod-registration.kb.io` rule for this to take effect; the chart release that
 pairs with this operator version does.
 
-## Unreleased -- a ConfigMap discovery entry in `mode: container` now keeps its image
+### a ConfigMap discovery entry in `mode: container` now keeps its image
 
 An `MCPDiscoverySource` of type `ConfigMap` used to drop `image`, `command` and
 `args` from every entry: a `mode: container` entry became an `MCPServer` with
@@ -168,7 +170,7 @@ server at all. The source skips it, lists it in
 and reports `Synced=False` with reason `PartialFailure`. A server such an entry
 created before the upgrade is left alone; delete it or give the entry an image.
 
-## Unreleased -- an `MCPEgressPolicy` now says whether core took its L7 policy
+### an `MCPEgressPolicy` now says whether core took its L7 policy
 
 An `MCPEgressPolicy` whose compiled L7 policy core refused -- a 403 from an API
 key without `policy:write`, a core that was down, a payload core rejected --
@@ -195,7 +197,9 @@ on `Degraded` may fire on policies that read green until now. That is the
 finding, not a regression: fix the key's permissions (or core's reachability)
 and the next reconcile clears it.
 
-## Unreleased -- an `MCPEgressPolicy` can now report `Degraded` where it used to report success
+## Upgrade to 0.17.3
+
+### an `MCPEgressPolicy` can now report `Degraded` where it used to report success
 
 An `MCPEgressPolicy` whose backstop the operator wrote used to report
 `Degraded=False` whether or not anything in the cluster enforced it. It now
@@ -224,7 +228,9 @@ living with the warning:
 and please open an issue naming the CNI, so the next person does not need the
 flag.
 
-## Unreleased — `MCPServer` pod fields are the `corev1` types
+## Upgrade to 0.17.0
+
+### `MCPServer` pod fields are the `corev1` types
 
 `MCPServerSpec` used to re-declare Kubernetes pod primitives as hand-rolled
 subsets. They are now the `k8s.io/api/core/v1` types verbatim, in `v1alpha2`
