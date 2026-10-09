@@ -106,6 +106,15 @@ type MCPServerSpec struct {
 	// +optional
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
 
+	// AutomountServiceAccountToken controls whether the provider pod gets a
+	// ServiceAccount token projected into it. Unset means false: an MCP server
+	// is a workload whose premise is least-privilege egress, and a bearer token
+	// for the API server on disk is a credential most of them never use (#207).
+	// Set true only when the server needs the API, usually together with a
+	// dedicated serviceAccountName.
+	// +optional
+	AutomountServiceAccountToken *bool `json:"automountServiceAccountToken,omitempty"`
+
 	// ImagePullSecrets for pulling the container image
 	// +optional
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`

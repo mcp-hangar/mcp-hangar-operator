@@ -364,3 +364,80 @@ func TestEgressPolicy_L7CoreIntegrationOff(t *testing.T) {
 	assert.Equal(t, "CoreIntegrationOff", l7.Reason)
 	assert.Equal(t, metav1.ConditionFalse, condStatus(out, EgressPolicyConditionDegraded).Status)
 }
+
+// The #228 shape: a policy that opts out of the backstop
+// (networkBackstop.generate=false) used to return before the push, so core
+// never held its tool rules while the policy read Compiled=True. The two layers
+// are independent: the backstop stays off and reported so, the L7 policy is
+// delivered for every member, and the finalizer clears it again on delete.
+func TestEgressPolicy_GenerateFalse_StillDeliversL7(t *testing.T) {
+	const nsName = "l7-generate-false"
+	var mu sync.Mutex
+	calls := map[string]int{} // "METHOD path" -> count
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls[r.Method+" "+r.URL.Path]++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"l7_policy_set":true,"persisted":true}`))
+	}))
+	t.Cleanup(core.Close)
+	count := func(method, server string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		return calls[method+" /api/mcp_servers/"+server+"/l7_policy"]
+	}
+
+	ensureNamespace(t, nsName)
+	gold := map[string]string{"tier": "gold"}
+	require.NoError(t, k8sClient.Create(ctx, testGroup("grp", nsName, gold)))
+	for _, name := range []string{"m1", "m2"} {
+		srv := labeledServer(name, nsName, gold)
+		require.NoError(t, k8sClient.Create(ctx, srv))
+		t.Cleanup(func() { _ = k8sClient.Delete(ctx, srv) })
+	}
+	policy := testPolicy("pol", nsName)
+	policy.Spec.TargetRef = mcpv1alpha2.EgressTargetRef{Kind: "MCPServerGroup", Name: "grp"}
+	policy.Spec.NetworkBackstop = &mcpv1alpha2.NetworkBackstop{Generate: false}
+	policy.Spec.Upstreams = []mcpv1alpha2.UpstreamRule{{
+		Name:  "gh",
+		Match: mcpv1alpha2.UpstreamMatch{Host: "10.0.0.0/8"},
+		Tools: &mcpv1alpha2.ToolRules{Allow: []string{"get_*"}},
+	}}
+	createPolicyWithCleanup(t, policy)
+	r := &MCPEgressPolicyReconciler{
+		Client:       k8sClient,
+		Scheme:       scheme.Scheme,
+		Recorder:     events.NewFakeRecorder(20),
+		HangarClient: l7EnvtestClient(core.URL),
+	}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "pol", Namespace: nsName}}
+
+	_, err := r.Reconcile(ctx, req) // adds the finalizer
+	require.NoError(t, err)
+	_, err = r.Reconcile(ctx, req)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, count(http.MethodPost, "m1"), "no L7 push for m1")
+	assert.Equal(t, 1, count(http.MethodPost, "m2"), "no L7 push for m2")
+	assert.Nil(t, backstopProviders(t, "pol", nsName), "generate=false must still write no backstop")
+
+	out := getPolicyStatus(t, req)
+	l7 := condStatus(out, EgressPolicyConditionL7Delivered)
+	require.NotNil(t, l7)
+	assert.Equal(t, metav1.ConditionTrue, l7.Status)
+	assert.Equal(t, "Delivered", l7.Reason)
+	assert.Equal(t, metav1.ConditionTrue, condStatus(out, EgressPolicyConditionCompiled).Status)
+	ba := condStatus(out, EgressPolicyConditionBackstopApplied)
+	assert.Equal(t, metav1.ConditionFalse, ba.Status)
+	assert.Equal(t, "BackstopGenerationDisabled", ba.Reason)
+	assert.Equal(t, mcpv1alpha2.BackstopDisabled, out.Status.BackstopEnforcement)
+	assert.Equal(t, metav1.ConditionFalse, condStatus(out, EgressPolicyConditionDegraded).Status)
+
+	// Delivered rules are cleared on delete like any other policy's.
+	require.NoError(t, k8sClient.Delete(ctx, out))
+	_, err = r.Reconcile(ctx, req)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count(http.MethodDelete, "m1"), "L7 policy for m1 not cleared on delete")
+	assert.Equal(t, 1, count(http.MethodDelete, "m2"), "L7 policy for m2 not cleared on delete")
+}
