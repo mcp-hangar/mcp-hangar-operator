@@ -148,23 +148,10 @@ func (r *MCPEgressPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 func (r *MCPEgressPolicyReconciler) reconcile(ctx context.Context, policy *mcpv1alpha2.MCPEgressPolicy) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Backstop generation opted out: remove any backstop, report not-applied.
-	if policy.Spec.NetworkBackstop != nil && !policy.Spec.NetworkBackstop.Generate {
-		if err := r.deleteBackstopIfExists(ctx, policy); err != nil {
-			return ctrl.Result{}, err
-		}
-		r.setCondition(policy, EgressPolicyConditionCompiled, metav1.ConditionTrue, "Compiled", "Policy compiled")
-		r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionFalse,
-			"BackstopGenerationDisabled", "spec.networkBackstop.generate is false")
-		r.setNoBackstop(policy, mcpv1alpha2.BackstopDisabled, "BackstopGenerationDisabled",
-			"no backstop is generated, so none is enforced")
-		r.setL7NotPushed(policy, "BackstopGenerationDisabled",
-			"the L7 policy is not pushed to core when spec.networkBackstop.generate is false")
-		r.clearDegraded(policy)
-		return ctrl.Result{}, nil
-	}
-
-	// Resolve the target (MCPServer or MCPServerGroup) to a pod selector.
+	// Resolve the target (MCPServer or MCPServerGroup) to a pod selector. The
+	// L7 push below addresses core by the same provider names, so this comes
+	// before the backstop decision: a policy that opts out of the backstop
+	// still has targets.
 	selector, targetName, done, err := r.resolveTargetSelector(ctx, policy)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -177,7 +164,20 @@ func (r *MCPEgressPolicyReconciler) reconcile(ctx context.Context, policy *mcpv1
 		return *done, nil
 	}
 
-	if err := r.applyFlavoredBackstop(ctx, logger, policy, selector, targetName); err != nil {
+	if policy.Spec.NetworkBackstop != nil && !policy.Spec.NetworkBackstop.Generate {
+		// Backstop generation opted out: remove any backstop, report
+		// not-applied. The L7 rules are a separate layer and are still
+		// delivered; returning here used to drop them with the backstop (#228).
+		if err := r.deleteBackstopIfExists(ctx, policy); err != nil {
+			return ctrl.Result{}, err
+		}
+		r.setCondition(policy, EgressPolicyConditionCompiled, metav1.ConditionTrue, "Compiled", "Policy compiled")
+		r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionFalse,
+			"BackstopGenerationDisabled", "spec.networkBackstop.generate is false")
+		r.setNoBackstop(policy, mcpv1alpha2.BackstopDisabled, "BackstopGenerationDisabled",
+			"no backstop is generated, so none is enforced")
+		r.clearDegraded(policy)
+	} else if err := r.applyFlavoredBackstop(ctx, logger, policy, selector, targetName); err != nil {
 		return ctrl.Result{}, err
 	}
 
