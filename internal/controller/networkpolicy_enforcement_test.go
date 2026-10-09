@@ -189,3 +189,37 @@ func TestNamespaceEgress_NoEnforcer_WarnsOnWrite(t *testing.T) {
 		})
 	}
 }
+
+// Through the full Reconcile the condition is persisted between passes, which
+// is what keeps the Warning to the transition in a running operator, and the
+// apiserver accepts the new False/Unknown condition values (#174's lesson).
+func TestMCPServerNetworkPolicy_NoEnforcer_FullReconcileWarnsOnce(t *testing.T) {
+	srv := egressServer("np-full-199", "np-enforcement-199")
+	createEgressServer(t, srv)
+	key := types.NamespacedName{Name: srv.Name, Namespace: srv.Namespace}
+	t.Cleanup(func() {
+		cur := &mcpv1alpha2.MCPServer{}
+		if err := k8sClient.Get(ctx, key, cur); err != nil {
+			return
+		}
+		cur.Finalizers = nil
+		_ = k8sClient.Update(ctx, cur)
+	})
+
+	rec := &fakeEventRecorder{}
+	r := &MCPServerReconciler{Client: k8sClient, Scheme: scheme.Scheme, Recorder: rec, EnforcementProbe: liveProbe()}
+	// Finalizer, Pod creation, then a pass over the existing Pod.
+	for range 3 {
+		_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: key})
+		require.NoError(t, err)
+	}
+
+	stored := &mcpv1alpha2.MCPServer{}
+	require.NoError(t, k8sClient.Get(ctx, key, stored))
+	cond := getCondition(stored.Status.Conditions, ConditionNetworkPolicyApplied)
+	require.NotNil(t, cond, "the condition is persisted")
+	assert.Equal(t, metav1.ConditionFalse, cond.Status)
+	assert.Equal(t, ReasonPolicyWrittenUnenforced, cond.Reason)
+	assert.Equal(t, 1, countEvents(rec, "NetworkPolicyUnenforced"), "one Warning across reconciles")
+	assert.Empty(t, stored.Status.Violations)
+}
