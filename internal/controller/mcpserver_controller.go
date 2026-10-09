@@ -84,6 +84,11 @@ type MCPServerReconciler struct {
 	Scheme       *runtime.Scheme
 	Recorder     events.EventRecorder
 	HangarClient *hangar.Client
+	// EnforcementProbe reports whether the API server this operator writes to
+	// has anything that enforces a NetworkPolicy (#199). NetworkPolicyApplied
+	// is True only when it does; nil reports Unknown, which surfaces as
+	// Unknown rather than as a claim either way.
+	EnforcementProbe *networkpolicy.EnforcementProbe
 }
 
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservers,verbs=get;list;watch;create;update;patch;delete
@@ -637,8 +642,7 @@ func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpSer
 		}
 		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, "NetworkPolicyCreated", ActionReconcile,
 			"Created NetworkPolicy %s", desired.Name)
-		setServerCondition(mcpServer, ConditionNetworkPolicyApplied, metav1.ConditionTrue,
-			"PolicyApplied", fmt.Sprintf("NetworkPolicy %s created", desired.Name))
+		r.recordPolicyEnforcement(ctx, mcpServer, fmt.Sprintf("NetworkPolicy %s created", desired.Name))
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("failed to get NetworkPolicy: %w", err)
@@ -658,9 +662,48 @@ func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpSer
 			"Updated NetworkPolicy %s", desired.Name)
 	}
 
-	setServerCondition(mcpServer, ConditionNetworkPolicyApplied, metav1.ConditionTrue,
-		"PolicyApplied", fmt.Sprintf("NetworkPolicy %s applied", desired.Name))
+	r.recordPolicyEnforcement(ctx, mcpServer, fmt.Sprintf("NetworkPolicy %s applied", desired.Name))
 	return nil
+}
+
+// Reasons on NetworkPolicyApplied for a policy that was written but whose
+// enforcement the probe could not confirm (#199).
+const (
+	// ReasonPolicyWrittenUnenforced: the policy exists, and nothing in this
+	// API server enforces NetworkPolicy, so it restricts nothing.
+	ReasonPolicyWrittenUnenforced = "PolicyWrittenUnenforced"
+	// ReasonPolicyWrittenUnverified: the policy exists, and the probe could
+	// not tell whether anything enforces it.
+	ReasonPolicyWrittenUnverified = "PolicyWrittenUnverified"
+)
+
+// recordPolicyEnforcement sets NetworkPolicyApplied for a policy that was just
+// written, according to whether anything here will enforce it (#199).
+//
+// Writing a NetworkPolicy succeeds whether or not a CNI reads it, so the write
+// alone is no evidence the provider's egress is restricted. True is reserved
+// for an observed enforcer; a cluster with none reads False, and one the probe
+// could not answer for reads Unknown -- doubt, not a claim either way. The
+// Warning fires on the transition into PolicyWrittenUnenforced, not on every
+// reconcile of a cluster that will never grow a CNI.
+func (r *MCPServerReconciler) recordPolicyEnforcement(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer, written string) {
+	signal := r.EnforcementProbe.Signal(ctx)
+	switch signal.Verdict {
+	case networkpolicy.EnforcementObserved:
+		setServerCondition(mcpServer, ConditionNetworkPolicyApplied, metav1.ConditionTrue,
+			"PolicyApplied", written+"; enforcer observed: "+signal.Source)
+	case networkpolicy.EnforcementNotObserved:
+		msg := written + " but nothing here enforces it: " + signal.Source
+		prev := getCondition(mcpServer.Status.Conditions, ConditionNetworkPolicyApplied)
+		if prev == nil || prev.Reason != ReasonPolicyWrittenUnenforced {
+			r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, "NetworkPolicyUnenforced", ActionReconcile, "%s", msg)
+		}
+		setServerCondition(mcpServer, ConditionNetworkPolicyApplied, metav1.ConditionFalse,
+			ReasonPolicyWrittenUnenforced, msg)
+	default:
+		setServerCondition(mcpServer, ConditionNetworkPolicyApplied, metav1.ConditionUnknown,
+			ReasonPolicyWrittenUnverified, written+"; enforcement unverified: "+signal.Source)
+	}
 }
 
 // reconcileViolationDetection checks for capability violations and records them.
@@ -681,10 +724,15 @@ func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, m
 	var newViolations []mcpv1alpha2.ViolationRecord
 
 	// Detection 1: NetworkPolicy drift -- capabilities declare network egress
-	// but NetworkPolicyApplied condition is not True
+	// but NetworkPolicyApplied condition is not True. A policy that was written
+	// but whose enforcement is not observed is not drift: the policy is there,
+	// and the condition plus its one transition Warning already carry the
+	// enforcement gap (#199). Counting it here would record a violation and a
+	// Warning on every reconcile of every server on such a cluster.
 	if mcpServer.Spec.Capabilities.Network != nil && len(mcpServer.Spec.Capabilities.Network.Egress) > 0 {
 		npCond := getCondition(mcpServer.Status.Conditions, ConditionNetworkPolicyApplied)
-		if npCond == nil || npCond.Status != metav1.ConditionTrue {
+		if npCond == nil || (npCond.Status != metav1.ConditionTrue &&
+			npCond.Reason != ReasonPolicyWrittenUnenforced && npCond.Reason != ReasonPolicyWrittenUnverified) {
 			newViolations = append(newViolations, mcpv1alpha2.ViolationRecord{
 				Type:      "capability_drift",
 				Detail:    "Network capabilities declared but NetworkPolicy not applied",

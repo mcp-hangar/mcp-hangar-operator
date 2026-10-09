@@ -189,6 +189,14 @@ Only status is affected. Nothing stops being written, and the L7 half of a
 policy -- the tool, argument and header rules core enforces -- is unaffected by
 any of this.
 
+The same look governs the other two NetworkPolicies the operator writes (#199).
+An `MCPServer`'s `NetworkPolicyApplied` condition is `True` only when an
+enforcer is observed; with none it is `False/PolicyWrittenUnenforced` (plus one
+`NetworkPolicyUnenforced` Warning), and `Unknown/PolicyWrittenUnverified` when
+the operator could not tell. An `enforce-egress` namespace gets a
+`DefaultDenyUnenforced` Warning when its default-deny is written with no
+enforcer observed.
+
 ### A gateway that restarts gets its L7 policies back
 
 The L7 half is pushed to core over `--hangar-url`. Where core has no durable

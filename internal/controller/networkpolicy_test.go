@@ -35,6 +35,9 @@ func newTestReconciler(objs ...runtime.Object) *MCPServerReconciler {
 		Client:   fakeClient,
 		Scheme:   scheme,
 		Recorder: events.NewFakeRecorder(10),
+		// An observed enforcer, so NetworkPolicyApplied reads True when a
+		// policy is written; the unenforced paths set their own (#199).
+		EnforcementProbe: &networkpolicy.EnforcementProbe{Override: networkpolicy.EnforcementObserved},
 	}
 }
 

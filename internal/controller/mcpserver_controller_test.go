@@ -21,6 +21,7 @@ import (
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/hangar"
+	"github.com/mcp-hangar/operator/pkg/networkpolicy"
 	"github.com/mcp-hangar/operator/pkg/provider"
 )
 
@@ -40,6 +41,9 @@ func newMCPServerReconciler(objs ...runtime.Object) *MCPServerReconciler {
 		Client:   fakeClient,
 		Scheme:   scheme,
 		Recorder: events.NewFakeRecorder(10),
+		// An observed enforcer, so NetworkPolicyApplied reads True when a
+		// policy is written; the unenforced paths set their own (#199).
+		EnforcementProbe: &networkpolicy.EnforcementProbe{Override: networkpolicy.EnforcementObserved},
 	}
 }
 
