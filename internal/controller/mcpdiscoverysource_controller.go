@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -227,6 +228,17 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 			Source:       info.Source,
 			DiscoveredAt: metav1.Now(),
 			Managed:      true,
+		}
+
+		// The name comes from an annotation value or a ConfigMap key. Refuse
+		// one Kubernetes would refuse anyway, here and with a reason, instead
+		// of a Create that fails per entry (#213).
+		if err := validateDiscoveredName(name); err != nil {
+			createErrors = append(createErrors, fmt.Sprintf("%s: %v", name, err))
+			dp.Managed = false
+			dp.Error = err.Error()
+			discoveredProviderStatuses = append(discoveredProviderStatuses, dp)
+			continue
 		}
 
 		if err := r.createOrUpdateMCPServer(ctx, source, info); err != nil {
@@ -854,14 +866,34 @@ func (r *MCPDiscoverySourceReconciler) applyFilters(source *mcpv1alpha2.MCPDisco
 	return filtered
 }
 
+// validateDiscoveredName reports why a generated MCPServer name cannot be
+// used. The name becomes the object name, a pod name suffix and the
+// mcp-hangar.io/provider label value, so it must be a DNS-1123 subdomain and
+// a label value (at most 63 characters).
+func validateDiscoveredName(name string) error {
+	if errs := validation.IsDNS1123Subdomain(name); len(errs) > 0 {
+		return fmt.Errorf("invalid MCPServer name: %s", strings.Join(errs, "; "))
+	}
+	if errs := validation.IsValidLabelValue(name); len(errs) > 0 {
+		return fmt.Errorf("invalid MCPServer name: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
 // reconcileDelete handles discovery source deletion
 func (r *MCPDiscoverySourceReconciler) reconcileDelete(ctx context.Context, source *mcpv1alpha2.MCPDiscoverySource) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("Handling deletion for MCPDiscoverySource")
 
-	// Delete all MCPServers managed by this source
+	// Delete the MCPServers this source manages -- unless it is Additive and
+	// does not own them (ownership.controller: false). That combination says
+	// the source adds servers and leaves them alone, and deleting the source
+	// used to delete them anyway (#213). With an owner reference, Kubernetes
+	// garbage collection removes them regardless.
 	providerList := &mcpv1alpha2.MCPServerList{}
-	if err := r.List(ctx, providerList,
+	if !source.IsAuthoritative() && !source.ShouldSetController() {
+		logger.Info("Additive source without ownership: leaving its servers in place")
+	} else if err := r.List(ctx, providerList,
 		client.InNamespace(source.Namespace),
 		client.MatchingLabels{LabelDiscoveryManagedBy: source.Name},
 	); err != nil {
