@@ -53,6 +53,7 @@ func main() {
 		leaderElectionNamespace string
 		gracefulShutdownTimeout time.Duration
 		dnsEgressCIDRs          string
+		dnsEgressSelectors      string
 		imageDigestPolicy       string
 		npEnforcement           string
 		gatewaySelector         string
@@ -80,6 +81,12 @@ func main() {
 			"Defaults to the namespace of the operator pod.")
 	flag.DurationVar(&gracefulShutdownTimeout, "graceful-shutdown-timeout", 10*time.Second,
 		"Maximum duration the manager will wait for running reconcilers to finish on shutdown.")
+	flag.StringVar(&dnsEgressSelectors, "dns-egress-selectors", "",
+		"Semicolon-separated resolver pods allowed DNS egress in addition to kube-system/k8s-app=kube-dns, "+
+			"each \"<namespace>/<key>=<value>[,<key>=<value>...]\" (e.g. "+
+			"\"openshift-dns/dns.operator.openshift.io/daemonset-dns=default\" on OpenShift). Applies to the "+
+			"per-server policy, the namespace default-deny and the Cilium backstop. A Service ClusterIP "+
+			"cannot be allowed with --dns-egress-cidrs; name the resolver pods here instead.")
 	flag.StringVar(&dnsEgressCIDRs, "dns-egress-cidrs", "",
 		"Comma-separated CIDRs appended to the generated DNS egress rule, in addition to the "+
 			"in-cluster kube-dns pods. Set to your NodeLocal DNSCache / custom resolver address "+
@@ -115,6 +122,13 @@ func main() {
 	if dnsEgressCIDRs != "" {
 		if err := networkpolicy.SetExtraDNSCIDRs(strings.Split(dnsEgressCIDRs, ",")); err != nil {
 			setupLog.Error(err, "invalid --dns-egress-cidrs")
+			os.Exit(1)
+		}
+	}
+
+	if dnsEgressSelectors != "" {
+		if err := networkpolicy.SetExtraDNSSelectors(strings.Split(dnsEgressSelectors, ";")); err != nil {
+			setupLog.Error(err, "invalid --dns-egress-selectors")
 			os.Exit(1)
 		}
 	}

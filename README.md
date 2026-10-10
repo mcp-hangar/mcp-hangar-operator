@@ -124,6 +124,23 @@ Inside an enforced namespace three controls apply:
 | **Admission registration** | A Pod labelled `mcp-hangar.io/provider=<name>` is **denied at admission** unless an `MCPServer` named `<name>` exists in the namespace, and the label is **immutable once the Pod is admitted** (it can be removed, not added or changed). Shadow/unregistered provider pods fail to deploy, and an admitted Pod cannot be relabelled into a registered server's egress. | `internal/webhook/pod_registration_webhook.go` (OWASP MCP09) |
 | **Pin coupling** | A registered container-mode server's egress allow-policy is opened **only if its image is digest-pinned** (`image@sha256:...`). An unpinned server stays under default-deny (DNS only) and gets an `EgressWithheldUnpinnedImage` event. Opt out per server with the `hangar.io/allow-mutable-image="true"` annotation. | `internal/controller/mcpserver_controller.go` |
 
+### Where DNS is allowed to go
+
+Every policy the operator writes allows DNS (port 53) only to named resolvers,
+never to any destination. By default that is the `k8s-app=kube-dns` pods in
+`kube-system`. Two flags add to it, and both apply to the per-server policy, the
+namespace default-deny and the Vanilla MCPEgressPolicy backstop; only
+`--dns-egress-selectors` also reaches the Cilium backstop (CIDR resolvers on
+Cilium are issue 178):
+
+| Flag | Use it for | Example |
+|------|------------|---------|
+| `--dns-egress-selectors` | Resolver pods that are not kube-dns: OpenShift/OKD, or a custom resolver Deployment. Semicolon-separated `<namespace>/<key>=<value>[,<key>=<value>...]`; at least one label. | `openshift-dns/dns.operator.openshift.io/daemonset-dns=default` |
+| `--dns-egress-cidrs` | A resolver reached by a node-local address, such as NodeLocal DNSCache. Comma-separated CIDRs. Not for a Service ClusterIP: CNIs match `ipBlock` after the ClusterIP is translated, so name the pods with `--dns-egress-selectors` instead. | `169.254.20.10/32` |
+
+Without the right one, pods in governed namespaces lose DNS entirely: it fails
+closed, not open.
+
 FQDN/host egress rules **fail closed** — a rule that a Kubernetes
 `NetworkPolicy` cannot express (host/FQDN with no CIDR) emits no permissive rule.
 Declarative L7/FQDN egress is handled by the `MCPEgressPolicy` API and its

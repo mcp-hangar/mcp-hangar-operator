@@ -13,8 +13,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
@@ -194,17 +196,26 @@ const (
 // endpoints (a single provider for an MCPServer target, or a provider set for
 // an MCPServerGroup).
 func BuildEgressPolicyCiliumNetworkPolicy(policy *mcpv1alpha2.MCPEgressPolicy, target metav1.LabelSelector) *unstructured.Unstructured {
-	// DNS egress to kube-dns with the L7 DNS proxy enabled (required for toFQDNs).
+	// DNS egress to kube-dns (and any configured resolver pods) with the L7 DNS
+	// proxy enabled (required for toFQDNs).
+	dnsEndpoints := []interface{}{
+		map[string]interface{}{
+			"matchLabels": map[string]interface{}{
+				"k8s:io.kubernetes.pod.namespace": "kube-system",
+				"k8s-app":                         "kube-dns",
+			},
+		},
+	}
+	for _, sel := range ExtraDNSSelectors {
+		match := map[string]interface{}{"k8s:io.kubernetes.pod.namespace": sel.Namespace}
+		for k, v := range sel.Labels {
+			match[k] = v
+		}
+		dnsEndpoints = append(dnsEndpoints, map[string]interface{}{"matchLabels": match})
+	}
 	egress := []interface{}{
 		map[string]interface{}{
-			"toEndpoints": []interface{}{
-				map[string]interface{}{
-					"matchLabels": map[string]interface{}{
-						"k8s:io.kubernetes.pod.namespace": "kube-system",
-						"k8s-app":                         "kube-dns",
-					},
-				},
-			},
+			"toEndpoints": dnsEndpoints,
 			"toPorts": []interface{}{
 				map[string]interface{}{
 					"ports": []interface{}{
@@ -492,6 +503,52 @@ func SetExtraDNSCIDRs(cidrs []string) error {
 	return nil
 }
 
+// DNSSelector names resolver pods by namespace and pod labels, for clusters
+// whose DNS does not run as k8s-app=kube-dns in kube-system: OpenShift/OKD
+// (openshift-dns, dns.operator.openshift.io/daemonset-dns=default) or a custom
+// resolver. A CIDR cannot stand in for these: CNIs match ipBlock after the
+// Service ClusterIP is translated, so only a pod selector reaches them (#203).
+type DNSSelector struct {
+	Namespace string
+	Labels    map[string]string
+}
+
+// ExtraDNSSelectors are added to every DNS egress rule beside kube-dns, in the
+// NetworkPolicy and the CiliumNetworkPolicy alike. Set once at startup.
+var ExtraDNSSelectors []DNSSelector
+
+// SetExtraDNSSelectors configures ExtraDNSSelectors from specs of the form
+// "<namespace>/<key>=<value>[,<key>=<value>...]", e.g.
+// "openshift-dns/dns.operator.openshift.io/daemonset-dns=default". At least
+// one label is required: a selector for every pod in a namespace would open
+// port 53 to whatever else runs there. Returns an error on the first bad spec.
+func SetExtraDNSSelectors(specs []string) error {
+	selectors := make([]DNSSelector, 0, len(specs))
+	for _, spec := range specs {
+		spec = strings.TrimSpace(spec)
+		if spec == "" {
+			continue
+		}
+		ns, set, ok := strings.Cut(spec, "/")
+		if !ok || ns == "" || set == "" {
+			return fmt.Errorf("invalid DNS egress selector %q: want <namespace>/<key>=<value>[,...]", spec)
+		}
+		if errs := validation.IsDNS1123Label(ns); len(errs) > 0 {
+			return fmt.Errorf("invalid DNS egress selector %q: namespace: %s", spec, strings.Join(errs, "; "))
+		}
+		lbls, err := labels.ConvertSelectorToLabelsMap(set)
+		if err != nil {
+			return fmt.Errorf("invalid DNS egress selector %q: %w", spec, err)
+		}
+		if len(lbls) == 0 {
+			return fmt.Errorf("invalid DNS egress selector %q: at least one pod label is required", spec)
+		}
+		selectors = append(selectors, DNSSelector{Namespace: ns, Labels: lbls})
+	}
+	ExtraDNSSelectors = selectors
+	return nil
+}
+
 // kubeDNSPeer selects the in-cluster DNS pods (both CoreDNS and kube-dns carry
 // k8s-app=kube-dns) in kube-system.
 func kubeDNSPeer() networkingv1.NetworkPolicyPeer {
@@ -513,7 +570,16 @@ func kubeDNSPeer() networkingv1.NetworkPolicyPeer {
 // :53 channel a DNS-tunnel C2 can exfiltrate through -- the egress allow-list
 // does not constrain it. See #56.
 func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
-	to := append([]networkingv1.NetworkPolicyPeer{kubeDNSPeer()}, ExtraDNSEgressPeers...)
+	to := []networkingv1.NetworkPolicyPeer{kubeDNSPeer()}
+	for _, sel := range ExtraDNSSelectors {
+		to = append(to, networkingv1.NetworkPolicyPeer{
+			NamespaceSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"kubernetes.io/metadata.name": sel.Namespace},
+			},
+			PodSelector: &metav1.LabelSelector{MatchLabels: sel.Labels},
+		})
+	}
+	to = append(to, ExtraDNSEgressPeers...)
 	return networkingv1.NetworkPolicyEgressRule{
 		To: to,
 		Ports: []networkingv1.NetworkPolicyPort{
