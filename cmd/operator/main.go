@@ -134,6 +134,7 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 	setupLog := ctrl.Log.WithName("setup")
+	setupLog.Info("mcp-hangar-operator", "version", version, "commit", commit)
 
 	if dnsEgressCIDRs != "" {
 		if err := networkpolicy.SetExtraDNSCIDRs(strings.Split(dnsEgressCIDRs, ",")); err != nil {
@@ -400,6 +401,14 @@ func metricsServerOptions(addr string, secure bool) metricsserver.Options {
 	}
 	return opts
 }
+
+// version and commit are stamped by the image build
+// (-ldflags "-X main.version=... -X main.commit=...") and logged at startup,
+// so a log line says which build produced it (#216).
+var (
+	version = "dev"
+	commit  = "unknown"
+)
 
 // defaultGracefulShutdownTimeout is how long the manager drains on shutdown
 // by default; the pod's terminationGracePeriodSeconds must exceed it.

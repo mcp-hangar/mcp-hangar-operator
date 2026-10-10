@@ -42,16 +42,16 @@ jobs:
       # would be attributed to `github-actions[bot]` and start no checks on the
       # release PR (core #1379). release-please writes through the API, and the
       # repository is public, so the assembler's fetch needs no credential.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.11"
 
-      - uses: actions/create-github-app-token@v3
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         id: app-token
         if: ${{ env.RELEASE_BOT_APP_ID != '' }}
         with:
@@ -67,7 +67,7 @@ jobs:
           echo "::warning::RELEASE_BOT_APP_ID is configured but the app token step produced nothing;"\
                "falling back to GITHUB_TOKEN. Check the app installation and its permissions."
 
-      - uses: googleapis/release-please-action@v5
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
         id: release
         with:
           config-file: release-please-config.json

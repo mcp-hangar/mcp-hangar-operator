@@ -16,7 +16,21 @@ linters:
     - ineffassign   # ineffectual assignments
     - unused        # unused code
     - misspell      # common spelling mistakes in comments/strings
+    - gosec         # security checks (#216)
+    - errorlint     # error comparison/wrapping that breaks errors.Is/As (#216)
+    - bodyclose     # unclosed HTTP response bodies (#216)
+    - nilerr        # returning nil after checking err != nil (#216)
+    - exhaustive    # switches over enums (modes, states) that miss a case (#216)
   settings:
+    exhaustive:
+      # A default branch is a deliberate catch-all; the check is for switches
+      # that silently skip a mode or state.
+      default-signifies-exhaustive: true
+    gosec:
+      excludes:
+        # int -> int32 for counts of list items (servers, tools, members) that
+        # are bounded far below 2^31 by the API server's request size.
+        - G115
     staticcheck:
       checks:
         - "SA*"      # bug-finding analyses only -- matches the pre-v2 gate scope
