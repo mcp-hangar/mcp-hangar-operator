@@ -70,7 +70,7 @@ type MCPServerSpec struct {
 	// +optional
 	Replicas *int32 `json:"replicas,omitempty"`
 
-	// StartupTimeout is the maximum time to wait for provider startup.
+	// StartupTimeout is accepted and validated, but the operator does not act on it.
 	// Uses standard Kubernetes duration format (e.g. "30s").
 	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('0s')",message="must be a non-negative duration such as 30s"
 	// +optional

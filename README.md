@@ -80,7 +80,7 @@ list what the operator actually reads.
 | `spec.image` | Container image (for container mode) | Required for container |
 | `spec.endpoint` | HTTP endpoint (for remote mode) | Required for remote |
 | `spec.replicas` | On (`1`) or off (`0`, no pod); a server runs at most one pod, and there is no scale subresource | `1` |
-| `spec.startupTimeout` | Accepted and validated, but the operator does not act on it yet (issue 186) | — |
+| `spec.startupTimeout` | Accepted and validated; the operator does not act on it | — |
 | `spec.shutdownGracePeriod` | Pod termination grace period | `30s` when unset (operator default) |
 | `spec.capabilities.network` | Egress the server declares; feeds the generated `NetworkPolicy` | — |
 | `spec.capabilities.tools` | `maxCount` / `expectedTools`; drives capability-violation events | — |
