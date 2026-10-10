@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.17.15](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.14...v0.17.15) (2026-10-10)
+
+### Changed
+
+- **controller:** Events fire when something changes, not on every poll. An
+  unhealthy or unreachable remote MCPServer warned every 10 s, a healthy one
+  logged "is ready"/"is healthy" every 5 minutes, and every discovery refresh
+  emitted `SyncStarted` and `SyncCompleted`. These now fire on the condition
+  transition (and `SyncCompleted` when the sync outcome changes); `SyncStarted`
+  is gone ([#271](https://github.com/mcp-hangar/mcp-hangar-operator/pull/271))
+
 ## [0.17.14](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.13...v0.17.14) (2026-10-10)
 
 ### Fixed
