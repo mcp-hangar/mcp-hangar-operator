@@ -71,4 +71,7 @@ spec:
             cpu: 10m
             memory: 64Mi
       serviceAccountName: controller-manager
-      terminationGracePeriodSeconds: 10
+      # Longer than --graceful-shutdown-timeout (10s): at equal values the
+      # kubelet kills the manager the moment it stops draining, and the lease
+      # release can be lost. The chart uses 15 too (#215).
+      terminationGracePeriodSeconds: 15
