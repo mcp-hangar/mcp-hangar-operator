@@ -7,19 +7,10 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: leader-election-role
   namespace: system
+# Leases only: controller-runtime's default lock (LeaderElectionResourceLock is
+# unset in cmd/operator/main.go). The configmaps rule was the pre-leases lock
+# and nothing used it (#194).
 rules:
-- apiGroups:
-  - ""
-  resources:
-  - configmaps
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - update
-  - patch
-  - delete
 - apiGroups:
   - coordination.k8s.io
   resources:

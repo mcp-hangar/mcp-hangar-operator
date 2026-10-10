@@ -9,8 +9,6 @@ rules:
   resources:
   - configmaps
   - namespaces
-  - secrets
-  - serviceaccounts
   - services
   verbs:
   - get
