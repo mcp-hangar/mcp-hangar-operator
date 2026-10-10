@@ -7,6 +7,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -103,7 +105,17 @@ type MCPEgressPolicyReconciler struct {
 	MaxConcurrentReconciles int
 
 	gatewayCheck gatewayMatchCheck
+
+	ciliumMu      sync.Mutex
+	ciliumCRD     bool
+	ciliumExpires time.Time
 }
+
+// ciliumCRDTTL is how long the CiliumNetworkPolicy CRD lookup is reused. On a
+// cluster without Cilium every lookup misses the RESTMapper's cache and costs
+// a discovery request, so per reconcile it was one per policy per pass (#210).
+// The enforcement probe re-reads the agents on the same period.
+const ciliumCRDTTL = 5 * time.Minute
 
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpegresspolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpegresspolicies/status,verbs=get;update;patch
@@ -679,8 +691,19 @@ func (r *MCPEgressPolicyReconciler) deleteBackstopIfExists(ctx context.Context, 
 // ciliumAvailable reports whether the CiliumNetworkPolicy CRD is installed. It
 // says a CiliumNetworkPolicy can exist here, not that Cilium runs: the flavor
 // choice also needs the agent the probe observes (#200).
+//
+// The answer is reused for ciliumCRDTTL, so a Cilium installed or removed
+// while the operator runs is seen within that period.
 func (r *MCPEgressPolicyReconciler) ciliumAvailable() bool {
-	return networkpolicy.CiliumAvailable(r.RESTMapper())
+	r.ciliumMu.Lock()
+	defer r.ciliumMu.Unlock()
+	now := time.Now()
+	if now.Before(r.ciliumExpires) {
+		return r.ciliumCRD
+	}
+	r.ciliumCRD = networkpolicy.CiliumAvailable(r.RESTMapper())
+	r.ciliumExpires = now.Add(ciliumCRDTTL)
+	return r.ciliumCRD
 }
 
 // newCiliumBackstopStub returns an empty unstructured CiliumNetworkPolicy with
