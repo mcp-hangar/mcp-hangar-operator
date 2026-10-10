@@ -1976,7 +1976,7 @@ spec:
                           rule: duration(self) >= duration('0s')
                       startupTimeout:
                         description: |-
-                          StartupTimeout is the maximum time to wait for provider startup.
+                          StartupTimeout is accepted and validated, but the operator does not act on it.
                           Uses standard Kubernetes duration format (e.g. "30s").
                         type: string
                         x-kubernetes-validations:

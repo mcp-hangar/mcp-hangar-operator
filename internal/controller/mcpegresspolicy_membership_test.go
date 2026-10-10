@@ -300,7 +300,7 @@ func TestEgressPolicy_ServerRecreated_RepushesL7Policy(t *testing.T) {
 	// A status-only write on the server is not a reason to push.
 	srv := &mcpv1alpha2.MCPServer{}
 	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: "srv", Namespace: nsName}, srv))
-	srv.Status.Phase = "Ready"
+	srv.Status.ToolsCount = 7
 	require.NoError(t, k8sClient.Status().Update(ctx, srv))
 	time.Sleep(2 * time.Second)
 	assert.Equal(t, settled, pushes.get("srv"), "a status-only update re-delivered the policy")

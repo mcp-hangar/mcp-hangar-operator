@@ -294,7 +294,7 @@ func (r *MCPServerReconciler) handlePodNotFound(ctx context.Context, mcpServer *
 		mcpServer.Status.Replicas = 0
 		mcpServer.Status.ReadyReplicas = 0
 		mcpServer.Status.AvailableReplicas = 0
-		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "Cold", "Provider is cold, will start on demand")
+		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "Cold", "spec.replicas is 0, so no provider pod runs; set it to 1 to start one")
 		setServerCondition(mcpServer, ConditionAvailable, metav1.ConditionFalse, "Cold", "No replicas requested")
 
 		if err := r.Status().Update(ctx, mcpServer); err != nil {

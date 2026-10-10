@@ -132,6 +132,12 @@ func TestMCPServer_ColdStart_ReplicasZero(t *testing.T) {
 	result := getMCPServer(t, r, "cold-provider", "default")
 	assert.Equal(t, mcpv1alpha2.MCPServerStateCold, result.Status.State)
 	assert.Equal(t, int32(0), result.Status.ReadyReplicas)
+	// Nothing scales a cold server up, so the condition must not promise it.
+	cond := getCondition(result.Status.Conditions, ConditionReady)
+	require.NotNil(t, cond)
+	assert.Equal(t, "Cold", cond.Reason)
+	assert.NotContains(t, cond.Message, "on demand")
+	assert.Contains(t, cond.Message, "spec.replicas")
 
 	// Verify no Pod created
 	pod := &corev1.Pod{}
