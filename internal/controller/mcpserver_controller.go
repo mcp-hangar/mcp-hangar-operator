@@ -825,15 +825,16 @@ func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, m
 }
 
 // reconcileEgressAudit emits a Warning event when a provider uses wildcard egress
-// with the explicit override annotation. This provides an audit trail without
-// blocking admission (the CEL rule handles rejection; this covers the allowed override case).
+// (host "*", cidr 0.0.0.0/0 or ::/0) with the explicit override annotation. It
+// is the audit trail for the allowed case; the validating webhook refuses the
+// unannotated one.
 func (r *MCPServerReconciler) reconcileEgressAudit(_ context.Context, mcpServer *mcpv1alpha2.MCPServer) {
 	if mcpServer.Spec.Capabilities == nil ||
 		mcpServer.Spec.Capabilities.Network == nil {
 		return
 	}
 	for _, rule := range mcpServer.Spec.Capabilities.Network.Egress {
-		if rule.Host == "*" {
+		if networkpolicy.IsUnrestrictedEgress(rule) {
 			ann := mcpServer.GetAnnotations()
 			if ann != nil && ann["hangar.io/allow-unrestricted-egress"] == "true" {
 				r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonUnrestrictedEgressAllowed, ActionReconcile,
