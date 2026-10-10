@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -230,4 +231,26 @@ func TestCRDRules_EgressPolicyTargetRefIsImmutable(t *testing.T) {
 	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(p), p))
 	p.Spec.Mode = mcpv1alpha2.EgressPolicyModeEnforce
 	require.NoError(t, k8sClient.Update(ctx, p))
+}
+
+// A group with no selector can never match a member. The schema's `required`
+// is the only guard since the group webhook went (#197), on create and update.
+func TestCRDRules_GroupNeedsASelector(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "mcp-hangar.io", Version: "v1alpha2", Kind: "MCPServerGroup"}
+	bare := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{}}}
+	bare.SetGroupVersionKind(gvk)
+	bare.SetName("cel-group-bare")
+	bare.SetNamespace("default")
+	requireRejected(t, createAndCleanup(t, bare), "spec.selector")
+
+	g := &mcpv1alpha2.MCPServerGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: "cel-group", Namespace: "default"},
+		Spec: mcpv1alpha2.MCPServerGroupSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"team": "a"}},
+		},
+	}
+	require.NoError(t, createAndCleanup(t, g))
+
+	drop := client.RawPatch(types.MergePatchType, []byte(`{"spec":{"selector":null}}`))
+	requireRejected(t, k8sClient.Patch(ctx, g, drop), "spec.selector")
 }
