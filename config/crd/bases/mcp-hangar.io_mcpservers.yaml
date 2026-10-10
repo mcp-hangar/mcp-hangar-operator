@@ -1715,9 +1715,11 @@ spec:
                 type: string
               replicas:
                 default: 1
-                description: Replicas is the desired number of provider replicas
+                description: |-
+                  Replicas switches the server on (1) or off (0). A server runs at most one
+                  pod; values above 1 were accepted before and silently ran one (#192).
                 format: int32
-                maximum: 10
+                maximum: 1
                 minimum: 0
                 type: integer
               resources:
@@ -4137,7 +4139,8 @@ spec:
                 format: int32
                 type: integer
               replicas:
-                description: Replicas is the desired replicas
+                description: 'Replicas is the number of provider pods that exist:
+                  0 or 1.'
                 format: int32
                 type: integer
               state:
@@ -4216,7 +4219,4 @@ spec:
     served: true
     storage: true
     subresources:
-      scale:
-        specReplicasPath: .spec.replicas
-        statusReplicasPath: .status.replicas
       status: {}

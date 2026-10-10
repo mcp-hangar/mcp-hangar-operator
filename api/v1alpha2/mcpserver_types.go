@@ -62,10 +62,11 @@ type MCPServerSpec struct {
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
 
-	// Replicas is the desired number of provider replicas
+	// Replicas switches the server on (1) or off (0). A server runs at most one
+	// pod; values above 1 were accepted before and silently ran one (#192).
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=10
+	// +kubebuilder:validation:Maximum=1
 	// +optional
 	Replicas *int32 `json:"replicas,omitempty"`
 
@@ -245,7 +246,7 @@ type MCPServerStatus struct {
 	// Phase is the overall phase
 	Phase string `json:"phase,omitempty"`
 
-	// Replicas is the desired replicas
+	// Replicas is the number of provider pods that exist: 0 or 1.
 	Replicas int32 `json:"replicas,omitempty"`
 
 	// ReadyReplicas is the number of ready replicas
@@ -327,7 +328,6 @@ type ViolationRecord struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas
 // +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.spec.mode`
 // +kubebuilder:printcolumn:name="State",type=string,JSONPath=`.status.state`
 // +kubebuilder:printcolumn:name="Tools",type=integer,JSONPath=`.status.toolsCount`

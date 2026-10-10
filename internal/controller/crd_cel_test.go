@@ -163,7 +163,7 @@ func TestCRDRules_ModeIsImmutable(t *testing.T) {
 	// The transition rule must not get in the way of ordinary updates.
 	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(s), s))
 	s.Labels = map[string]string{"team": "tools"}
-	replicas := int32(2)
+	replicas := int32(0)
 	s.Spec.Replicas = &replicas
 	require.NoError(t, k8sClient.Update(ctx, s))
 

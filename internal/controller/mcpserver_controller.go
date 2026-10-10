@@ -274,6 +274,7 @@ func (r *MCPServerReconciler) handlePodNotFound(ctx context.Context, mcpServer *
 		// Cold state - don't create pod
 		logger.Info("Provider is cold (replicas=0), not creating Pod")
 		mcpServer.Status.State = mcpv1alpha2.MCPServerStateCold
+		mcpServer.Status.Replicas = 0
 		mcpServer.Status.ReadyReplicas = 0
 		mcpServer.Status.AvailableReplicas = 0
 		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "Cold", "Provider is cold, will start on demand")
@@ -304,6 +305,7 @@ func (r *MCPServerReconciler) handlePodNotFound(ctx context.Context, mcpServer *
 	// Update status
 	mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
 	mcpServer.Status.PodName = desiredPod.Name
+	mcpServer.Status.Replicas = 1
 	now := metav1.Now()
 	mcpServer.Status.LastStartedAt = &now
 	setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "PodCreated", "Pod created, waiting for ready")
@@ -356,6 +358,10 @@ func (r *MCPServerReconciler) syncPodStatus(ctx context.Context, mcpServer *mcpv
 
 	// Update status
 	mcpServer.Status.PodName = pod.Name
+	mcpServer.Status.Replicas = 1
+	if pod.Status.Phase == corev1.PodSucceeded {
+		mcpServer.Status.Replicas = 0 // deleted above
+	}
 
 	// Propagate capabilities from spec to status (Phase 38).
 	// Phase 39 may enrich status.capabilities with resolved IPs and computed fields.

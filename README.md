@@ -78,7 +78,7 @@ list what the operator actually reads.
 | `spec.mode` | Execution mode: `container` or `remote` | Required |
 | `spec.image` | Container image (for container mode) | Required for container |
 | `spec.endpoint` | HTTP endpoint (for remote mode) | Required for remote |
-| `spec.replicas` | Number of replicas (0 = cold start) | `1` |
+| `spec.replicas` | On (`1`) or off (`0`, no pod); a server runs at most one pod, and there is no scale subresource | `1` |
 | `spec.startupTimeout` | How long to wait for the server to come up | `30s` |
 | `spec.shutdownGracePeriod` | Pod termination grace period | `30s` |
 | `spec.capabilities.network` | Egress the server declares; feeds the generated `NetworkPolicy` | — |
