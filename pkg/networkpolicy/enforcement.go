@@ -51,6 +51,13 @@ type EnforcementSignal struct {
 	Verdict EnforcementVerdict
 	// Source names the enforcer that was found, or why none could be.
 	Source string
+	// CiliumAgent is true only when a cilium agent DaemonSet was listed in
+	// this cluster. The CiliumNetworkPolicy CRD alone is not evidence of
+	// Cilium: it survives `cilium uninstall` unless purged, so a cluster that
+	// moved to another CNI still serves it (#200). Choosing the Cilium backstop
+	// flavor on the CRD alone wrote a CiliumNetworkPolicy nobody reads and
+	// deleted the NetworkPolicy the real CNI enforces.
+	CiliumAgent bool
 }
 
 // defaultEnforcementProbeTTL is how long a verdict is reused. An enforcer is
@@ -63,11 +70,13 @@ const defaultEnforcementProbeTTL = 5 * time.Minute
 // server compiles or enforces network policy. They are matched without a
 // version: a cluster on antrea v1beta2 enforces just as one on v1beta1 does,
 // and pinning the version would turn an upgrade into a false alarm.
+//
+// Cilium is deliberately absent: its CRDs outlive an uninstall, so Cilium is
+// recognized by its agent DaemonSet only (#200).
 var enforcerAPIs = []struct {
 	GroupKind schema.GroupKind
 	Name      string
 }{
-	{schema.GroupKind{Group: CiliumGroup, Kind: CiliumNetworkPolicyKind}, "Cilium"},
 	{schema.GroupKind{Group: "crd.projectcalico.org", Kind: "GlobalNetworkPolicy"}, "Calico"},
 	{schema.GroupKind{Group: "crd.antrea.io", Kind: "AntreaAgentInfo"}, "Antrea"},
 	{schema.GroupKind{Group: "networking.k8s.aws", Kind: "PolicyEndpoint"}, "AWS VPC CNI"},
@@ -125,13 +134,23 @@ func (p *EnforcementProbe) Signal(ctx context.Context) EnforcementSignal {
 	if p == nil {
 		return EnforcementSignal{Verdict: EnforcementUnknown, Source: "no enforcement probe is configured"}
 	}
+	signal := p.observe(ctx)
 	if p.Override != "" {
+		// The flag asserts whether policy is enforced, not which CNI does
+		// it, so the agent facts still come from a look at the cluster: an
+		// asserted verdict must not turn a leftover Cilium CRD into the
+		// Cilium flavor (#200).
 		return EnforcementSignal{
-			Verdict: p.Override,
-			Source:  "asserted by the operator's --networkpolicy-enforcement flag, not by a look at this cluster",
+			Verdict:     p.Override,
+			Source:      "asserted by the operator's --networkpolicy-enforcement flag, not by a look at this cluster",
+			CiliumAgent: signal.CiliumAgent,
 		}
 	}
+	return signal
+}
 
+// observe returns the probed signal, probing at most once per TTL.
+func (p *EnforcementProbe) observe(ctx context.Context) EnforcementSignal {
 	now := time.Now
 	if p.Now != nil {
 		now = p.Now
@@ -152,8 +171,31 @@ func (p *EnforcementProbe) Signal(ctx context.Context) EnforcementSignal {
 	return p.cached
 }
 
-// probe looks for an enforcer, API surface first (free) and agents second.
+// probe looks for an enforcer: policy APIs first (free), then agents.
 func (p *EnforcementProbe) probe(ctx context.Context) EnforcementSignal {
+	// The agents are listed even when a policy API already answers, because
+	// whether cilium runs here is a fact the backstop flavor needs on its own.
+	var agents []string
+	ciliumAgent := false
+	var listErr error
+	if p.Reader == nil {
+		listErr = fmt.Errorf("no reader is configured")
+	} else {
+		var list appsv1.DaemonSetList
+		if listErr = p.Reader.List(ctx, &list); listErr == nil {
+			for i := range list.Items {
+				name, ok := enforcerDaemonSets[list.Items[i].Name]
+				if !ok {
+					continue
+				}
+				if list.Items[i].Name == "cilium" {
+					ciliumAgent = true
+				}
+				agents = append(agents, fmt.Sprintf("%s (%s/%s)", name, list.Items[i].Namespace, list.Items[i].Name))
+			}
+		}
+	}
+
 	if p.Mapper != nil {
 		for _, api := range enforcerAPIs {
 			if _, err := p.Mapper.RESTMapping(api.GroupKind); err == nil {
@@ -161,41 +203,35 @@ func (p *EnforcementProbe) probe(ctx context.Context) EnforcementSignal {
 					Verdict: EnforcementObserved,
 					Source: fmt.Sprintf("%s: this API server serves %s",
 						api.Name, strings.ToLower(api.GroupKind.Kind)+"."+api.GroupKind.Group),
+					CiliumAgent: ciliumAgent,
 				}
 			}
 		}
 	}
 
-	if p.Reader == nil {
-		return EnforcementSignal{
-			Verdict: EnforcementUnknown,
-			Source:  "no policy-enforcing API is served here and agents could not be checked",
-		}
+	ciliumCRD := ""
+	if p.Mapper != nil && CiliumAvailable(p.Mapper) {
+		ciliumCRD = "the CiliumNetworkPolicy CRD is served but that alone is not Cilium (it outlives an uninstall); "
 	}
 
-	var list appsv1.DaemonSetList
-	if err := p.Reader.List(ctx, &list); err != nil {
+	if listErr != nil {
 		return EnforcementSignal{
 			Verdict: EnforcementUnknown,
-			Source:  fmt.Sprintf("no policy-enforcing API is served here and DaemonSets could not be listed: %v", err),
+			Source: ciliumCRD + fmt.Sprintf("no other policy-enforcing API is served here and DaemonSets "+
+				"could not be listed: %v", listErr),
 		}
 	}
-	var found []string
-	for i := range list.Items {
-		if name, ok := enforcerDaemonSets[list.Items[i].Name]; ok {
-			found = append(found, fmt.Sprintf("%s (%s/%s)", name, list.Items[i].Namespace, list.Items[i].Name))
-		}
-	}
-	if len(found) > 0 {
-		sort.Strings(found)
+	if len(agents) > 0 {
+		sort.Strings(agents)
 		return EnforcementSignal{
-			Verdict: EnforcementObserved,
-			Source:  "agent running in this cluster: " + strings.Join(found, ", "),
+			Verdict:     EnforcementObserved,
+			Source:      "agent running in this cluster: " + strings.Join(agents, ", "),
+			CiliumAgent: ciliumAgent,
 		}
 	}
 	return EnforcementSignal{
 		Verdict: EnforcementNotObserved,
-		Source: "this API server serves no policy-enforcing API and runs no recognized CNI agent, " +
+		Source: ciliumCRD + "this API server serves no policy-enforcing API and runs no recognized CNI agent, " +
 			"so a NetworkPolicy written here has no reader",
 	}
 }

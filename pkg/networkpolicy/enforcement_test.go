@@ -56,13 +56,69 @@ func (e *erroringReader) List(context.Context, client.ObjectList, ...client.List
 
 func TestProbe_CNIPolicyAPIServedHere_Observed(t *testing.T) {
 	p := &EnforcementProbe{
-		Mapper: mapperWith(schema.GroupKind{Group: CiliumGroup, Kind: CiliumNetworkPolicyKind}, CiliumVersion),
+		Mapper: mapperWith(schema.GroupKind{Group: "crd.projectcalico.org", Kind: "GlobalNetworkPolicy"}, "v1"),
 	}
 
 	signal := p.Signal(context.Background())
 
 	assert.Equal(t, EnforcementObserved, signal.Verdict)
-	assert.Contains(t, signal.Source, "Cilium")
+	assert.Contains(t, signal.Source, "Calico")
+}
+
+func ciliumCRDMapper() meta.RESTMapper {
+	return mapperWith(schema.GroupKind{Group: CiliumGroup, Kind: CiliumNetworkPolicyKind}, CiliumVersion)
+}
+
+// Cilium's CRDs survive `cilium uninstall` unless purged. A cluster that moved
+// to another CNI, or never ran the agent, still serves them; that is not an
+// enforcer (#200).
+func TestProbe_CiliumCRDWithoutAgent_NotObserved(t *testing.T) {
+	p := &EnforcementProbe{Mapper: ciliumCRDMapper(), Reader: daemonSetReader(t, "coredns")}
+
+	signal := p.Signal(context.Background())
+
+	assert.Equal(t, EnforcementNotObserved, signal.Verdict)
+	assert.False(t, signal.CiliumAgent)
+	assert.Contains(t, signal.Source, "CiliumNetworkPolicy CRD is served")
+}
+
+func TestProbe_CiliumCRDAndAgent_Observed(t *testing.T) {
+	p := &EnforcementProbe{Mapper: ciliumCRDMapper(), Reader: daemonSetReader(t, "cilium")}
+
+	signal := p.Signal(context.Background())
+
+	assert.Equal(t, EnforcementObserved, signal.Verdict)
+	assert.True(t, signal.CiliumAgent)
+	assert.Contains(t, signal.Source, "Cilium (kube-system/cilium)")
+}
+
+// Without the DaemonSet grant the CRD cannot be confirmed: doubt, and not Cilium.
+func TestProbe_CiliumCRDAgentsUnlistable_Unknown(t *testing.T) {
+	p := &EnforcementProbe{Mapper: ciliumCRDMapper(), Reader: &erroringReader{}}
+
+	signal := p.Signal(context.Background())
+
+	assert.Equal(t, EnforcementUnknown, signal.Verdict)
+	assert.False(t, signal.CiliumAgent)
+	assert.Contains(t, signal.Source, "forbidden")
+}
+
+// Calico enforces; the Cilium CRD beside it is left over. Observed, but the
+// backstop must not take the Cilium flavor.
+func TestProbe_CalicoWithLeftoverCiliumCRD_ObservedNotCilium(t *testing.T) {
+	gvs := []schema.GroupVersion{
+		{Group: CiliumGroup, Version: CiliumVersion},
+		{Group: "crd.projectcalico.org", Version: "v1"},
+	}
+	m := meta.NewDefaultRESTMapper(gvs)
+	m.Add(gvs[0].WithKind(CiliumNetworkPolicyKind), meta.RESTScopeNamespace)
+	m.Add(gvs[1].WithKind("GlobalNetworkPolicy"), meta.RESTScopeRoot)
+	p := &EnforcementProbe{Mapper: m, Reader: daemonSetReader(t, "calico-node")}
+
+	signal := p.Signal(context.Background())
+
+	assert.Equal(t, EnforcementObserved, signal.Verdict)
+	assert.False(t, signal.CiliumAgent)
 }
 
 // The version is not part of the question: a cluster that moved Antrea to a
@@ -113,15 +169,23 @@ func TestProbe_NilProbe_Unknown(t *testing.T) {
 	assert.Equal(t, EnforcementUnknown, p.Signal(context.Background()).Verdict)
 }
 
-func TestProbe_Override_SkipsTheLookup(t *testing.T) {
-	reader := &erroringReader{}
-	p := &EnforcementProbe{Mapper: emptyMapper(), Reader: reader, Override: EnforcementObserved}
+// The flag replaces the verdict, but not the look at which CNI runs: it asserts
+// that policy is enforced, not that Cilium enforces it (#200).
+func TestProbe_Override_ReplacesTheVerdictOnly(t *testing.T) {
+	p := &EnforcementProbe{Mapper: emptyMapper(), Reader: &erroringReader{}, Override: EnforcementObserved}
 
 	signal := p.Signal(context.Background())
 
 	assert.Equal(t, EnforcementObserved, signal.Verdict)
 	assert.Contains(t, signal.Source, "--networkpolicy-enforcement")
-	assert.Zero(t, reader.calls, "an override must not reach the API server")
+	assert.False(t, signal.CiliumAgent)
+
+	withCilium := &EnforcementProbe{
+		Mapper: ciliumCRDMapper(), Reader: daemonSetReader(t, "cilium"), Override: EnforcementNotObserved,
+	}
+	signal = withCilium.Signal(context.Background())
+	assert.Equal(t, EnforcementNotObserved, signal.Verdict)
+	assert.True(t, signal.CiliumAgent)
 }
 
 // Twelve reconciles an hour must not be twelve cluster-wide DaemonSet lists.

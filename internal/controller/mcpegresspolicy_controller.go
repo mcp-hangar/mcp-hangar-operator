@@ -516,16 +516,24 @@ func (r *MCPEgressPolicyReconciler) targetNotFound(policy *mcpv1alpha2.MCPEgress
 // cleaning up the other flavor's object, then records status conditions.
 //
 // Flavor resolution: Vanilla and Cilium are honored explicitly; Auto (and an
-// omitted networkBackstop) uses Cilium when its CRD is installed, else Vanilla.
-// Cilium requested on a cluster without the CRD falls back to the Vanilla floor
-// and reports Degraded, rather than failing open.
+// omitted networkBackstop) uses Cilium when its CRD is installed AND a cilium
+// agent was observed, else Vanilla. The CRD alone is not Cilium: it outlives an
+// uninstall, and picking Cilium on it wrote a CiliumNetworkPolicy nobody reads
+// and deleted the NetworkPolicy the real CNI enforces (#200). Cilium requested
+// where it is not running falls back to the Vanilla floor and reports
+// Degraded, rather than failing open.
 func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, logger logr.Logger, policy *mcpv1alpha2.MCPEgressPolicy, selector metav1.LabelSelector, targetName string) error {
 	requested := mcpv1alpha2.BackstopFlavorAuto
 	if policy.Spec.NetworkBackstop != nil && policy.Spec.NetworkBackstop.Flavor != "" {
 		requested = policy.Spec.NetworkBackstop.Flavor
 	}
-	ciliumAvailable := r.ciliumAvailable()
-	useCilium := (requested == mcpv1alpha2.BackstopFlavorCilium || requested == mcpv1alpha2.BackstopFlavorAuto) && ciliumAvailable
+	// Two facts, kept apart: whether the CRD is served decides whether a
+	// stale CiliumNetworkPolicy can exist to clean up; whether cilium runs
+	// decides whether to write one.
+	ciliumCRD := r.ciliumAvailable()
+	signal := r.EnforcementProbe.Signal(ctx)
+	ciliumRunning := ciliumCRD && signal.CiliumAgent
+	useCilium := (requested == mcpv1alpha2.BackstopFlavorCilium || requested == mcpv1alpha2.BackstopFlavorAuto) && ciliumRunning
 
 	r.setCondition(policy, EgressPolicyConditionCompiled, metav1.ConditionTrue, "Compiled", "Policy compiled")
 
@@ -542,7 +550,7 @@ func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, l
 		}
 		r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionTrue,
 			"BackstopApplied", fmt.Sprintf("Cilium backstop %q applied for %q (FQDN + CIDR enforced)%s",
-				cnp.GetName(), targetName, ciliumCIDRCaveat(policy, ciliumAvailable)))
+				cnp.GetName(), targetName, ciliumCIDRCaveat(policy, ciliumRunning)))
 		r.recordEnforcement(ctx, policy, "", "")
 		logger.Info("Reconciled MCPEgressPolicy backstop", "policy", policy.Name, "target", targetName, "flavor", "Cilium")
 		return nil
@@ -556,21 +564,25 @@ func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, l
 	if err := r.applyBackstop(ctx, policy, desired); err != nil {
 		return err
 	}
-	if err := r.deleteCiliumBackstopIfExists(ctx, policy, ciliumAvailable); err != nil { // remove the CNP if switching
+	if err := r.deleteCiliumBackstopIfExists(ctx, policy, ciliumCRD); err != nil { // remove the CNP if switching
 		return err
 	}
 	r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionTrue,
-		"BackstopApplied", fmt.Sprintf("Vanilla backstop %q applied%s",
-			desired.Name, ciliumCIDRCaveat(policy, ciliumAvailable)))
+		"BackstopApplied", fmt.Sprintf("Vanilla backstop %q applied%s%s",
+			desired.Name, ciliumNotRunningNote(ciliumCRD, signal), ciliumCIDRCaveat(policy, ciliumRunning)))
 
 	// A Vanilla NetworkPolicy cannot match FQDNs: hostname upstreams are denied
 	// (fail closed), not opened. Surface the gap.
 	var degradedReason, degradedMsg string
 	switch {
-	case requested == mcpv1alpha2.BackstopFlavorCilium && !ciliumAvailable:
+	case requested == mcpv1alpha2.BackstopFlavorCilium && !ciliumCRD:
 		degradedReason = "CiliumUnavailable"
 		degradedMsg = "spec.networkBackstop.flavor=Cilium but the CiliumNetworkPolicy CRD is not installed; " +
 			"applied the Vanilla floor (FQDN upstreams not enforced)"
+	case requested == mcpv1alpha2.BackstopFlavorCilium && !ciliumRunning:
+		degradedReason = "CiliumAgentNotObserved"
+		degradedMsg = "spec.networkBackstop.flavor=Cilium but no cilium agent was observed (" + signal.Source +
+			"); applied the Vanilla floor (FQDN upstreams not enforced)"
 	case len(unenforceable) > 0:
 		degradedReason = "FQDNUpstreamsUnenforceable"
 		degradedMsg = fmt.Sprintf("FQDN upstreams denied under the Vanilla backstop (need the Cilium flavor): %s",
@@ -582,6 +594,16 @@ func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, l
 	return nil
 }
 
+// ciliumNotRunningNote explains, on the Vanilla path, why a cluster that
+// serves the CiliumNetworkPolicy CRD did not get the Cilium flavor.
+func ciliumNotRunningNote(ciliumCRD bool, signal networkpolicy.EnforcementSignal) string {
+	if !ciliumCRD || signal.CiliumAgent {
+		return ""
+	}
+	return "; the CiliumNetworkPolicy CRD is served but no cilium agent was observed (" + signal.Source +
+		"), so the Cilium flavor was not used"
+}
+
 // ciliumCIDRCaveat returns a suffix for the BackstopApplied message when the
 // cluster runs Cilium and the policy has CIDR upstreams that look
 // cluster-internal: those are emitted (as ipBlock/toCIDR) but match nothing
@@ -591,8 +613,8 @@ func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, l
 // an in-cluster pod IP from a legitimately private external upstream, and
 // whether the cluster runs with policyCIDRMatchMode={pods} is not observable
 // from here -- degrading on that guess would page people over a working policy.
-func ciliumCIDRCaveat(policy *mcpv1alpha2.MCPEgressPolicy, ciliumAvailable bool) string {
-	if !ciliumAvailable {
+func ciliumCIDRCaveat(policy *mcpv1alpha2.MCPEgressPolicy, ciliumRunning bool) string {
+	if !ciliumRunning {
 		return ""
 	}
 	var internal []string
@@ -648,8 +670,9 @@ func (r *MCPEgressPolicyReconciler) deleteBackstopIfExists(ctx context.Context, 
 	return nil
 }
 
-// ciliumAvailable reports whether the CiliumNetworkPolicy CRD is installed, so
-// the operator can pick the Cilium flavor on Auto and enforce FQDN upstreams.
+// ciliumAvailable reports whether the CiliumNetworkPolicy CRD is installed. It
+// says a CiliumNetworkPolicy can exist here, not that Cilium runs: the flavor
+// choice also needs the agent the probe observes (#200).
 func (r *MCPEgressPolicyReconciler) ciliumAvailable() bool {
 	return networkpolicy.CiliumAvailable(r.RESTMapper())
 }
