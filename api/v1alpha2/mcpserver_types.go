@@ -335,6 +335,8 @@ type ViolationRecord struct {
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:resource:shortName=mcpp;provider,categories=mcp
 // +kubebuilder:storageversion
+// +kubebuilder:selectablefield:JSONPath=`.spec.mode`
+// +kubebuilder:selectablefield:JSONPath=`.status.state`
 
 // MCPServer is the Schema for the mcpservers API
 type MCPServer struct {

@@ -4216,6 +4216,9 @@ spec:
                 type: array
             type: object
         type: object
+    selectableFields:
+    - jsonPath: .spec.mode
+    - jsonPath: .status.state
     served: true
     storage: true
     subresources:
