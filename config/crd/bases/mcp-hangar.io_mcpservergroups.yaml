@@ -134,7 +134,8 @@ spec:
             description: MCPServerGroupStatus defines the observed state of MCPServerGroup
             properties:
               coldCount:
-                description: ColdCount is the number of cold providers
+                description: ColdCount is the number of cold providers (spec.replicas
+                  0)
                 format: int32
                 type: integer
               conditions:
@@ -207,6 +208,12 @@ spec:
                 description: DegradedCount is the number of degraded providers
                 format: int32
                 type: integer
+              initializingCount:
+                description: |-
+                  InitializingCount is the number of providers that are starting, or that
+                  the MCPServer controller has not given a state yet
+                format: int32
+                type: integer
               observedGeneration:
                 description: ObservedGeneration is the generation observed by controller
                 format: int64
@@ -221,10 +228,6 @@ spec:
                   description: MCPServerMemberStatus defines the status of a group
                     member
                   properties:
-                    lastHealthCheck:
-                      description: LastHealthCheck time
-                      format: date-time
-                      type: string
                     name:
                       description: Name of the provider
                       type: string

@@ -152,16 +152,18 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 	}
 
 	// Aggregate status counts
-	var readyCount, degradedCount, coldCount, deadCount int32
+	var readyCount, degradedCount, coldCount, initializingCount, deadCount int32
 	memberStatuses := make([]mcpv1alpha2.MCPServerMemberStatus, 0, len(providerList.Items))
 
 	for i := range providerList.Items {
 		p := &providerList.Items[i]
+		// No lastHealthCheck: it changes on every probe, so copying it made
+		// every member probe a group status write and the write-skip below
+		// never applied (#210). It is on the MCPServer itself.
 		member := mcpv1alpha2.MCPServerMemberStatus{
-			Name:            p.Name,
-			Namespace:       p.Namespace,
-			State:           string(p.Status.State),
-			LastHealthCheck: p.Status.LastHealthCheck,
+			Name:      p.Name,
+			Namespace: p.Namespace,
+			State:     string(p.Status.State),
 		}
 		memberStatuses = append(memberStatuses, member)
 
@@ -175,8 +177,9 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 		case mcpv1alpha2.MCPServerStateDead:
 			deadCount++
 		default:
-			// Initializing or empty state treated as cold
-			coldCount++
+			// Initializing, or no state yet: a member that is starting is not
+			// cold, which means replicas: 0 (#210).
+			initializingCount++
 		}
 	}
 
@@ -185,6 +188,7 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 	group.Status.ReadyCount = readyCount
 	group.Status.DegradedCount = degradedCount
 	group.Status.ColdCount = coldCount
+	group.Status.InitializingCount = initializingCount
 	group.Status.DeadCount = deadCount
 	group.Status.Providers = memberStatuses
 
@@ -196,6 +200,7 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 	metrics.GroupMCPServerCount.WithLabelValues(group.Namespace, group.Name, "Ready").Set(float64(readyCount))
 	metrics.GroupMCPServerCount.WithLabelValues(group.Namespace, group.Name, "Degraded").Set(float64(degradedCount))
 	metrics.GroupMCPServerCount.WithLabelValues(group.Namespace, group.Name, "Cold").Set(float64(coldCount))
+	metrics.GroupMCPServerCount.WithLabelValues(group.Namespace, group.Name, "Initializing").Set(float64(initializingCount))
 	metrics.GroupMCPServerCount.WithLabelValues(group.Namespace, group.Name, "Dead").Set(float64(deadCount))
 
 	// Update status subresource (no-op skipped, written via conflict-tolerant patch)
@@ -208,6 +213,7 @@ func (r *MCPServerGroupReconciler) reconcileNormal(ctx context.Context, group *m
 		"readyCount", readyCount,
 		"degradedCount", degradedCount,
 		"coldCount", coldCount,
+		"initializingCount", initializingCount,
 		"deadCount", deadCount,
 	)
 
