@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.17.10](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.9...v0.17.10) (2026-10-10)
+
+### Changed
+
+- **api:** `MCPServer.spec.replicas` is an on/off switch (0 or 1), and the
+  scale subresource is gone. The CRD accepted up to 10 and served
+  `kubectl scale`, but the operator always ran one pod, so `replicas: 3` and
+  `kubectl scale --replicas=5` were accepted and ignored. `status.replicas` now
+  reports how many pods exist; see UPGRADE.md ([#259](https://github.com/mcp-hangar/mcp-hangar-operator/pull/259))
+
+### Security
+
+- **infra:** `/metrics` is served over HTTPS and requires a bearer token the API
+  server authenticates and authorizes for `get` on the `/metrics` non-resource
+  URL. Served plain, any pod in the cluster could read server names, states, tool
+  counts and reconcile errors. `--metrics-secure=false` restores plain HTTP; see
+  UPGRADE.md ([#258](https://github.com/mcp-hangar/mcp-hangar-operator/pull/258))
+
 ## [0.17.9](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.8...v0.17.9) (2026-10-10)
 
 ### Added
