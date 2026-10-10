@@ -258,9 +258,7 @@ func TestEgressPolicy_L7PushRejected_ReportsNotDeliveredAndDegraded(t *testing.T
 	t.Cleanup(core.Close)
 	r, req := newL7EnvtestReconciler(t, "l7-rejected", l7EnvtestClient(core.URL))
 
-	_, err := r.Reconcile(ctx, req) // adds the finalizer
-	require.NoError(t, err)
-	_, err = r.Reconcile(ctx, req)
+	_, err := r.Reconcile(ctx, req) // adds the finalizer and does the work in one pass (#210)
 	require.Error(t, err, "a rejected push must still requeue")
 
 	out := getPolicyStatus(t, req)
@@ -289,9 +287,7 @@ func TestEgressPolicy_L7PushFailsThenSucceeds(t *testing.T) {
 	t.Cleanup(core.Close)
 	r, req := newL7EnvtestReconciler(t, "l7-recovers", l7EnvtestClient(core.URL))
 
-	_, err := r.Reconcile(ctx, req)
-	require.NoError(t, err)
-	_, err = r.Reconcile(ctx, req)
+	_, err := r.Reconcile(ctx, req) // adds the finalizer and pushes in one pass (#210)
 	require.Error(t, err)
 
 	out := getPolicyStatus(t, req)
@@ -317,9 +313,7 @@ func TestEgressPolicy_L7CoreUnreachable(t *testing.T) {
 	core.Close()
 	r, req := newL7EnvtestReconciler(t, "l7-unreachable", l7EnvtestClient(core.URL))
 
-	_, err := r.Reconcile(ctx, req)
-	require.NoError(t, err)
-	_, err = r.Reconcile(ctx, req)
+	_, err := r.Reconcile(ctx, req) // adds the finalizer and pushes in one pass (#210)
 	require.Error(t, err)
 
 	out := getPolicyStatus(t, req)
@@ -413,9 +407,7 @@ func TestEgressPolicy_GenerateFalse_StillDeliversL7(t *testing.T) {
 	}
 	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "pol", Namespace: nsName}}
 
-	_, err := r.Reconcile(ctx, req) // adds the finalizer
-	require.NoError(t, err)
-	_, err = r.Reconcile(ctx, req)
+	_, err := r.Reconcile(ctx, req) // adds the finalizer and does the work in one pass (#210)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, count(http.MethodPost, "m1"), "no L7 push for m1")

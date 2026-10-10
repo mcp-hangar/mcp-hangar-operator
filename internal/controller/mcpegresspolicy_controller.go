@@ -134,7 +134,8 @@ func (r *MCPEgressPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		if err := r.Update(ctx, policy); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
+		// Carry on in the same pass: Requeue is deprecated in controller-runtime
+		// 0.25, and the update refreshed the object's resourceVersion (#210).
 	}
 
 	result, reconcileErr := r.reconcile(ctx, policy)
@@ -837,6 +838,18 @@ func (r *MCPEgressPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&mcpv1alpha2.MCPServerGroup{},
 			handler.EnqueueRequestsFromMapFunc(r.policiesForMCPServerGroup),
 			builder.WithPredicates(predicate.GenerationChangedPredicate{}))
+	// Watch the Cilium backstop too, so an edited or deleted
+	// CiliumNetworkPolicy is put back like a NetworkPolicy is (#210). Only
+	// when the CRD exists at startup: an informer for a kind the API server
+	// does not serve would keep the manager from starting. Cilium installed
+	// later is picked up on the operator's next restart.
+	if networkpolicy.CiliumAvailable(mgr.GetRESTMapper()) {
+		cnp := &unstructured.Unstructured{}
+		cnp.SetGroupVersionKind(schema.GroupVersionKind{
+			Group: networkpolicy.CiliumGroup, Version: networkpolicy.CiliumVersion, Kind: networkpolicy.CiliumNetworkPolicyKind,
+		})
+		b = b.Owns(cnp)
+	}
 	if r.gatewayWatchEnabled() {
 		// Pods are already in the manager's cache (the MCPServer controller
 		// owns them), so this watch adds a handler, not an informer.
