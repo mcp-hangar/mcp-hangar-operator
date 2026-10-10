@@ -40,6 +40,10 @@ type MCPDiscoverySourceSpec struct {
 
 	// RefreshInterval is how often to rescan.
 	// Uses standard Kubernetes duration format (e.g. "1m0s").
+	// The schema type is a plain string, so without the rule below the
+	// apiserver stored any text and the operator then failed to decode the
+	// object (#243).
+	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('0s')",message="must be a non-negative duration such as 1m"
 	// +optional
 	RefreshInterval *metav1.Duration `json:"refreshInterval,omitempty"`
 
