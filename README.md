@@ -64,6 +64,16 @@ kubectl apply -f my-server.yaml
 kubectl get mcpservers
 ```
 
+On Kubernetes 1.31 or later the list can be filtered server-side by
+`spec.mode` and `status.state` on MCPServer, and by `spec.mode` and
+`spec.targetRef.kind` on MCPEgressPolicy. An older apiserver rejects the
+selector with `field label not supported`.
+
+```bash
+kubectl get mcpservers -A --field-selector status.state=Dead
+kubectl get mcpegresspolicies -A --field-selector spec.mode=Enforce
+```
+
 ## CRD Reference
 
 The operator is the **deploy-time admission plane**, not Hangar's control plane.

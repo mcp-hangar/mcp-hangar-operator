@@ -447,6 +447,9 @@ spec:
                 type: integer
             type: object
         type: object
+    selectableFields:
+    - jsonPath: .spec.mode
+    - jsonPath: .spec.targetRef.kind
     served: true
     storage: true
     subresources:
