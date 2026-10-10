@@ -328,6 +328,8 @@ type MCPEgressPolicyStatus struct {
 // +kubebuilder:printcolumn:name="Default",type=string,JSONPath=`.spec.defaultAction`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:resource:shortName=mcpep;egresspolicy,categories=mcp
+// +kubebuilder:selectablefield:JSONPath=`.spec.mode`
+// +kubebuilder:selectablefield:JSONPath=`.spec.targetRef.kind`
 
 // MCPEgressPolicy is the Schema for the mcpegresspolicies API.
 type MCPEgressPolicy struct {
