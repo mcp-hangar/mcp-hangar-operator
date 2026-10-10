@@ -167,7 +167,11 @@ func TestViolationDetection_ComplianceClearsCondition(t *testing.T) {
 
 // TestViolationDetection_AccumulatesAcrossCycles verifies that violations
 // from multiple reconcile cycles accumulate in CRD status.Violations.
-func TestViolationDetection_AccumulatesAcrossCycles(t *testing.T) {
+// A violation that persists is one violation: it used to be appended, counted
+// and warned about on every reconcile, so the record and the metric measured
+// reconcile frequency rather than drift (#245). A new record appears when a
+// violation starts, and again only if it clears and comes back.
+func TestViolationDetection_PersistingViolationIsRecordedOnce(t *testing.T) {
 	provider := newTestProvider("vio-accumulate", "default", &mcpv1alpha2.MCPServerCapabilities{
 		Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
 			Egress: []mcpv1alpha2.EgressRuleSpec{
@@ -180,26 +184,32 @@ func TestViolationDetection_AccumulatesAcrossCycles(t *testing.T) {
 	})
 	provider.Status.ToolsCount = 10 // exceeds max
 
-	r, _ := newViolationTestReconciler(provider)
+	r, rec := newViolationTestReconciler(provider)
 	ctx := context.Background()
 
 	// Cycle 1: both network drift and tool drift detected
-	err := r.reconcileViolationDetection(ctx, provider)
-	require.NoError(t, err)
+	require.NoError(t, r.reconcileViolationDetection(ctx, provider))
 	require.Len(t, provider.Status.Violations, 2)
+	warnings := len(rec.events)
 
-	// Cycle 2: same violations still present -> appends more
-	err = r.reconcileViolationDetection(ctx, provider)
-	require.NoError(t, err)
-	assert.Len(t, provider.Status.Violations, 4, "violations should accumulate across cycles")
+	// Cycles 2 and 3: the same violations persist -> nothing new
+	require.NoError(t, r.reconcileViolationDetection(ctx, provider))
+	require.NoError(t, r.reconcileViolationDetection(ctx, provider))
+	assert.Len(t, provider.Status.Violations, 2, "a persisting violation is not recorded again")
+	assert.Equal(t, warnings, len(rec.events), "and not warned about again")
 
-	// Verify types from both cycles are present
+	// The tool violation clears, then comes back: that is a new occurrence.
+	provider.Status.ToolsCount = 3
+	require.NoError(t, r.reconcileViolationDetection(ctx, provider))
+	provider.Status.ToolsCount = 10
+	require.NoError(t, r.reconcileViolationDetection(ctx, provider))
+
 	typeCount := map[string]int{}
 	for _, v := range provider.Status.Violations {
 		typeCount[v.Type]++
 	}
-	assert.Equal(t, 2, typeCount["capability_drift"])
-	assert.Equal(t, 2, typeCount["undeclared_tool"])
+	assert.Equal(t, 1, typeCount["capability_drift"], "still the same ongoing drift")
+	assert.Equal(t, 2, typeCount["undeclared_tool"], "cleared and returned")
 }
 
 // TestViolationDetection_EnforcementModePropagatesToAction verifies that
