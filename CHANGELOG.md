@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.17.9](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.8...v0.17.9) (2026-10-10)
+
+### Added
+
+- **controller:** `--dns-egress-selectors` names resolver pods other than
+  `kube-system/k8s-app=kube-dns` that DNS may reach, such as
+  `openshift-dns/dns.operator.openshift.io/daemonset-dns=default` on OpenShift,
+  in the per-server policy, the namespace default-deny and both backstop
+  flavors. Clusters whose resolver is not kube-dns lost DNS in governed
+  namespaces, and `--dns-egress-cidrs` could not reach a Service ClusterIP ([#255](https://github.com/mcp-hangar/mcp-hangar-operator/pull/255))
+
+### Fixed
+
+- **controller:** the operator's memory no longer grows with every ConfigMap and
+  Service in the cluster. Discovery reads them straight from the API server
+  instead of through cluster-wide informers, and cached objects (Pods included)
+  are kept without their `managedFields` ([#256](https://github.com/mcp-hangar/mcp-hangar-operator/pull/256))
+
+### Security
+
+- **config:** the operator's ClusterRole no longer grants cluster-wide read on
+  `secrets` and `serviceaccounts`, which nothing in the operator reads, and the
+  leader-election Role no longer grants full CRUD on `configmaps`: the lock is a
+  Lease ([#254](https://github.com/mcp-hangar/mcp-hangar-operator/pull/254))
+
 ## [0.17.8](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.7...v0.17.8) (2026-10-10)
 
 ### Fixed
