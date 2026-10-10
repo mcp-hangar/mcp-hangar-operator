@@ -24,6 +24,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -96,6 +97,10 @@ type MCPEgressPolicyReconciler struct {
 	// without its L7 policies gets them back in seconds. Nil, or no
 	// HangarClient, disables the watch.
 	GatewayPodSelector labels.Selector
+
+	// MaxConcurrentReconciles is how many policies reconcile at once; zero
+	// keeps controller-runtime's default of one (#201).
+	MaxConcurrentReconciles int
 
 	gatewayCheck gatewayMatchCheck
 }
@@ -815,6 +820,7 @@ func (r *MCPEgressPolicyReconciler) clearDegraded(policy *mcpv1alpha2.MCPEgressP
 func (r *MCPEgressPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	b := ctrl.NewControllerManagedBy(mgr).
 		For(&mcpv1alpha2.MCPEgressPolicy{}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: r.MaxConcurrentReconciles}).
 		Owns(&networkingv1.NetworkPolicy{}).
 		// The targets (#190): a server appearing, going away or changing
 		// labels moves it in or out of a policy's backstop, and a server
