@@ -54,7 +54,7 @@ func TestAdmission_Envtest_NoCapsCreated(t *testing.T) {
 // cover is not gone, so the probe moved rather than being deleted:
 // spec.replicas carries Minimum=0 / Maximum=10 and is live.
 func TestAdmission_Envtest_ReplicasOutOfRangeRejected(t *testing.T) {
-	tooMany := int32(11)
+	tooMany := int32(2)
 	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "envtest-bad-replicas",
@@ -68,12 +68,12 @@ func TestAdmission_Envtest_ReplicasOutOfRangeRejected(t *testing.T) {
 	}
 
 	err := k8sClient.Create(ctx, provider)
-	require.Error(t, err, "replicas 11 should be rejected by the CRD schema (Maximum=10)")
+	require.Error(t, err, "replicas 2 should be rejected by the CRD schema (Maximum=1, #192)")
 	_ = k8sClient.Delete(ctx, provider)
 }
 
 func TestAdmission_Envtest_ReplicasInRangeAccepted(t *testing.T) {
-	inRange := int32(3)
+	inRange := int32(1)
 	provider := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "envtest-good-replicas",
@@ -87,7 +87,7 @@ func TestAdmission_Envtest_ReplicasInRangeAccepted(t *testing.T) {
 	}
 
 	err := k8sClient.Create(ctx, provider)
-	require.NoError(t, err, "replicas 3 should be accepted")
+	require.NoError(t, err, "replicas 1 should be accepted")
 	_ = k8sClient.Delete(ctx, provider)
 }
 
