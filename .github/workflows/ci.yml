@@ -137,10 +137,14 @@ jobs:
           cluster_name: crd-install
           node_image: ${{ env.KIND_NODE_IMAGE }}
 
-      - name: Install the generated CRDs
+      # Client-side on purpose: it is what `kubectl apply -f install.yaml`
+      # does, and it stores the whole object in a last-applied annotation
+      # capped at 256 KiB. Server-side apply would not notice a CRD outgrowing
+      # it (#198).
+      - name: Install the generated CRDs (client-side apply)
         run: |
           set -euo pipefail
-          kubectl apply --server-side -f config/crd/bases/
+          kubectl apply -f config/crd/bases/
 
       # apply succeeding is not the assertion: a CRD can be accepted and then
       # fail to Establish. Waiting on the condition is what proves it is usable.

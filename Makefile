@@ -89,8 +89,10 @@ endif
 
 .PHONY: install
 install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
-	# Server-side: the CRDs embed the corev1 pod schemas and mcpdiscoverysources
-	# is now larger than the 256 KB annotation cap client-side apply would need.
+	# Server-side by choice, not need: client-side apply also fits. The YAML of
+	# two CRDs is past 256 KB, but the last-applied annotation holds compact JSON
+	# (about 153 KB in 2026-10), and TestCRDs_FitTheClientSideApplyAnnotation
+	# plus CI's client-side install keep it that way (#198).
 	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply --server-side -f -
 
 .PHONY: uninstall
@@ -100,7 +102,6 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	# Server-side for the same reason as `install`: this overlay carries the CRDs.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) apply --server-side -f -
 
 .PHONY: undeploy
