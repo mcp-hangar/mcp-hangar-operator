@@ -20,6 +20,9 @@ var noValidatorByDesign = map[string]string{
 	// (x-kubernetes-validations); there is no cross-field or cross-object
 	// invariant an admission webhook would add.
 	"MCPEgressPolicy": "CRD schema + CEL only",
+	// Its one rule, spec.selector set, is the schema's `required`; the webhook
+	// that re-checked it only added a failurePolicy=Fail hop (#197).
+	"MCPServerGroup": "CRD schema only",
 }
 
 // TestEveryServedVersionHasAValidator asserts the invariant that produced

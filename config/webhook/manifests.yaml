@@ -50,26 +50,6 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-mcp-hangar-io-v1alpha2-mcpservergroup
-  failurePolicy: Fail
-  name: vmcpservergroup-v1alpha2.kb.io
-  rules:
-  - apiGroups:
-    - mcp-hangar.io
-    apiVersions:
-    - v1alpha2
-    operations:
-    - CREATE
-    - UPDATE
-    resources:
-    - mcpservergroups
-  sideEffects: None
-- admissionReviewVersions:
-  - v1
-  clientConfig:
-    service:
-      name: webhook-service
-      namespace: system
       path: /validate-pod-registration
   failurePolicy: Fail
   name: vpod-registration.kb.io

@@ -44,7 +44,6 @@ func register[T runtime.Object](obj T, validator admission.Validator[T]) func(ma
 func Registrations() []Registration {
 	return []Registration{
 		{"MCPServer/v1alpha2", register(&mcpv1alpha2.MCPServer{}, &MCPServerV1alpha2Validator{})},
-		{"MCPServerGroup/v1alpha2", register(&mcpv1alpha2.MCPServerGroup{}, &MCPServerGroupV1alpha2Validator{})},
 		{"MCPDiscoverySource/v1alpha2", register(&mcpv1alpha2.MCPDiscoverySource{}, &MCPDiscoverySourceV1alpha2Validator{})},
 	}
 }

@@ -12,33 +12,6 @@ import (
 	"github.com/mcp-hangar/operator/internal/webhook"
 )
 
-// ── MCPServerGroup (v1alpha2) ─────────────────────────────────────────
-
-func TestGroupV2_Valid(t *testing.T) {
-	v := &webhook.MCPServerGroupV1alpha2Validator{}
-	g := &mcpv1alpha2.MCPServerGroup{
-		ObjectMeta: metav1.ObjectMeta{Name: "g", Namespace: "default"},
-		Spec: mcpv1alpha2.MCPServerGroupSpec{
-			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "x"}},
-		},
-	}
-
-	warnings, err := v.ValidateCreate(context.Background(), g)
-	assert.NoError(t, err)
-	assert.Empty(t, warnings)
-}
-
-func TestGroupV2_MissingSelector(t *testing.T) {
-	v := &webhook.MCPServerGroupV1alpha2Validator{}
-	g := &mcpv1alpha2.MCPServerGroup{ObjectMeta: metav1.ObjectMeta{Name: "g", Namespace: "default"}}
-
-	_, err := v.ValidateUpdate(context.Background(), g, g)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "spec.selector is required")
-}
-
-// ── MCPServerGroup (v1alpha1) ─────────────────────────────────────────
-
 // ── MCPDiscoverySource (v1alpha2) ─────────────────────────────────────
 
 
@@ -85,13 +58,6 @@ func TestDiscoveryV2_DeleteAllowed(t *testing.T) {
 }
 
 // ── Typed-nil guards (#22) ────────────────────────────────────────────
-
-func TestGroupV2_TypedNilRejected(t *testing.T) {
-	v := &webhook.MCPServerGroupV1alpha2Validator{}
-	var g *mcpv1alpha2.MCPServerGroup
-	_, err := v.ValidateCreate(context.Background(), g)
-	require.Error(t, err)
-}
 
 func TestDiscoveryV2_TypedNilRejected(t *testing.T) {
 	v := &webhook.MCPDiscoverySourceV1alpha2Validator{}
