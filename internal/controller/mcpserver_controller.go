@@ -54,9 +54,18 @@ const (
 	coldRequeueAfter    = 10 * time.Minute
 
 	// maxConsecutiveFailures caps Status.ConsecutiveFailures so the counter
-	// cannot grow without bound while a provider stays unhealthy. Also used as
-	// the Pod restart-backoff ceiling in handlePodFailed.
+	// cannot grow without bound while a provider stays unhealthy. Once a pod
+	// has failed this many times in a row, it is retried every
+	// failedPodRetryAfter instead of on the short backoff.
 	maxConsecutiveFailures = int32(5)
+
+	// maxPodRestartBackoff bounds the doubling backoff between pod restarts.
+	maxPodRestartBackoff = 5 * time.Minute
+
+	// failedPodRetryAfter is how often a pod that keeps failing is retried
+	// after maxConsecutiveFailures. It used to be never: one capped server
+	// stayed Dead until someone edited it (#209).
+	failedPodRetryAfter = 10 * time.Minute
 
 	// ActionReconcile is the events.k8s.io `action` field on every Event this
 	// operator emits. The new events API splits what the legacy API called a
@@ -253,6 +262,9 @@ func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mc
 			return ctrl.Result{}, err
 		}
 		mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
+		// A new spec is a new attempt: failures of the old one must not
+		// count against it, or one more failure would land it at the cap.
+		mcpServer.Status.ConsecutiveFailures = 0
 		setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "SpecChanged", "Provider spec changed, recreating Pod")
 		if err := r.Status().Update(ctx, mcpServer); err != nil {
 			return ctrl.Result{}, err
@@ -288,6 +300,14 @@ func (r *MCPServerReconciler) handlePodNotFound(ctx context.Context, mcpServer *
 
 		metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, string(mcpv1alpha2.MCPServerStateCold))
 		return ctrl.Result{RequeueAfter: coldRequeueAfter}, nil
+	}
+
+	// Honour the restart backoff here, where the pod is created. Returning a
+	// RequeueAfter from the failure branch did not: deleting the failed pod
+	// fires the watch, and the next reconcile recreated it at once (#209).
+	if wait := restartWaitRemaining(mcpServer, time.Now()); wait > 0 {
+		logger.Info("Waiting out the restart backoff", "failures", mcpServer.Status.ConsecutiveFailures, "wait", wait)
+		return ctrl.Result{RequeueAfter: wait}, nil
 	}
 
 	// Create Pod
@@ -343,16 +363,18 @@ func (r *MCPServerReconciler) syncPodStatus(ctx context.Context, mcpServer *mcpv
 		requeueAfter = r.handlePodFailed(ctx, mcpServer, pod)
 
 	case corev1.PodSucceeded:
-		// Container exited cleanly - this is unusual, restart it
-		logger.Info("Pod succeeded (exited cleanly), restarting")
-		mcpServer.Status.State = mcpv1alpha2.MCPServerStateCold
-		now := metav1.Now()
-		mcpServer.Status.LastStoppedAt = &now
-
+		// The server exited 0. Nothing asked it to stop, so it is restarted,
+		// and it is not Cold: Cold means replicas: 0, and reporting it made a
+		// running server look switched off (#209).
+		logger.Info("Pod exited cleanly, restarting")
+		mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
+		setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "PodExited",
+			"Pod exited with status 0, restarting")
 		if err := r.Delete(ctx, pod); err != nil && !errors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
-		metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Cold")
+		metrics.MCPServerRestarts.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Inc()
+		metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Initializing")
 
 	default:
 		logger.Info("Unknown pod phase", "phase", pod.Status.Phase)
@@ -361,7 +383,7 @@ func (r *MCPServerReconciler) syncPodStatus(ctx context.Context, mcpServer *mcpv
 	// Update status
 	mcpServer.Status.PodName = pod.Name
 	mcpServer.Status.Replicas = 1
-	if pod.Status.Phase == corev1.PodSucceeded {
+	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
 		mcpServer.Status.Replicas = 0 // deleted above
 	}
 
@@ -448,9 +470,13 @@ func (r *MCPServerReconciler) handlePodFailed(ctx context.Context, mcpServer *mc
 	logger := log.FromContext(ctx)
 
 	mcpServer.Status.State = mcpv1alpha2.MCPServerStateDead
-	mcpServer.Status.ConsecutiveFailures++
+	if mcpServer.Status.ConsecutiveFailures < maxConsecutiveFailures {
+		mcpServer.Status.ConsecutiveFailures++
+	}
 	mcpServer.Status.ReadyReplicas = 0
 	mcpServer.Status.AvailableReplicas = 0
+	now := metav1.Now()
+	mcpServer.Status.LastStoppedAt = &now
 
 	// Get failure reason
 	reason := "Unknown"
@@ -470,24 +496,41 @@ func (r *MCPServerReconciler) handlePodFailed(ctx context.Context, mcpServer *mc
 		"Pod failed: %s", reason)
 	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Dead")
 
-	// Check if we should restart (with backoff)
-	maxFailures := maxConsecutiveFailures
-	if mcpServer.Status.ConsecutiveFailures < maxFailures {
-		logger.Info("Pod failed, deleting for restart",
-			"failures", mcpServer.Status.ConsecutiveFailures,
-			"maxFailures", maxFailures)
-
-		if err := r.Delete(ctx, pod); err != nil && !errors.IsNotFound(err) {
-			logger.Error(err, "Failed to delete failed Pod")
-		}
-
-		// Exponential backoff
-		backoff := time.Duration(mcpServer.Status.ConsecutiveFailures) * 10 * time.Second
-		return backoff
+	// Delete the failed pod either way; handlePodNotFound recreates it once
+	// the backoff for this many failures has passed.
+	if err := r.Delete(ctx, pod); err != nil && !errors.IsNotFound(err) {
+		logger.Error(err, "Failed to delete failed Pod")
 	}
+	backoff := restartBackoff(mcpServer.Status.ConsecutiveFailures)
+	logger.Info("Pod failed, restarting after backoff",
+		"failures", mcpServer.Status.ConsecutiveFailures, "backoff", backoff)
+	return backoff
+}
 
-	logger.Info("Max failures reached, not restarting", "failures", mcpServer.Status.ConsecutiveFailures)
-	return readyRequeueAfter
+// restartBackoff is the wait before restarting a pod that has failed n times
+// in a row: 10s doubling to maxPodRestartBackoff, then failedPodRetryAfter once
+// the counter is at its cap. It was n*10s and then never (#209).
+func restartBackoff(n int32) time.Duration {
+	if n <= 0 {
+		return 0
+	}
+	if n >= maxConsecutiveFailures {
+		return failedPodRetryAfter
+	}
+	d := 10 * time.Second << (n - 1)
+	if d > maxPodRestartBackoff {
+		d = maxPodRestartBackoff
+	}
+	return d
+}
+
+// restartWaitRemaining is how much of the restart backoff is left before a
+// pod may be created again, measured from the last failure.
+func restartWaitRemaining(mcpServer *mcpv1alpha2.MCPServer, now time.Time) time.Duration {
+	if mcpServer.Status.State != mcpv1alpha2.MCPServerStateDead || mcpServer.Status.LastStoppedAt == nil {
+		return 0
+	}
+	return mcpServer.Status.LastStoppedAt.Add(restartBackoff(mcpServer.Status.ConsecutiveFailures)).Sub(now)
 }
 
 // reconcileRemoteProvider handles remote-mode providers
