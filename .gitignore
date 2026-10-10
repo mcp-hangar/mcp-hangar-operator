@@ -38,3 +38,6 @@ dist/
 
 # Python bytecode from the scripts/ tests
 __pycache__/
+
+# `go build ./cmd/operator` at the repo root writes this binary (#244).
+/operator

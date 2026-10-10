@@ -41,7 +41,12 @@ import (
 // The rule matches the main resource only; kubelet status patches go through
 // the pods/status subresource and never reach this webhook.
 type PodRegistrationValidator struct {
-	Client  client.Client
+	// Client reads the MCPServer a pod claims. The operator wires the
+	// uncached API reader: through the cache, a pod applied right after its
+	// MCPServer (one `kubectl apply -f dir/`) could be denied before the
+	// informer had seen the server (#215). Admission is scoped to
+	// enforce-egress namespaces, so the direct reads stay few.
+	Client  client.Reader
 	Decoder admission.Decoder
 }
 
