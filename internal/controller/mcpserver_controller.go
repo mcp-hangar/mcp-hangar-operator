@@ -152,7 +152,8 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if err := r.Update(ctx, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
+		// Carry on in the same pass: Requeue is deprecated in controller-runtime
+		// 0.25, and the update refreshed the object's resourceVersion (#210).
 	}
 
 	// Main reconciliation logic

@@ -70,7 +70,8 @@ func (r *MCPServerGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if err := r.Update(ctx, group); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
+		// Carry on in the same pass: Requeue is deprecated in controller-runtime
+		// 0.25, and the update refreshed the object's resourceVersion (#210).
 	}
 
 	// Main reconciliation logic
@@ -383,10 +384,10 @@ func (r *MCPServerGroupReconciler) findGroupsForMCPServer(ctx context.Context, o
 // growing even after member churn quieted down, and it only stopped once the
 // Group was deleted.
 //
-// GenerationChangedPredicate alone would also (incorrectly) drop the
-// deletion-marking update, since setting deletionTimestamp is a metadata
-// change that does not bump Generation -- which would break finalizer-based
-// deletion. predicate.Or keeps both cases working.
+// Setting deletionTimestamp does bump Generation (the apiserver increments it
+// on a graceful delete of an object that has finalizers), so
+// GenerationChangedPredicate alone would already pass it. The explicit
+// deletion clause stays as a guard that does not depend on that detail.
 var groupSelfWatchPredicate = predicate.Or(
 	predicate.GenerationChangedPredicate{},
 	predicate.Funcs{
