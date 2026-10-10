@@ -5,279 +5,101 @@
 | Property | Value |
 |----------|-------|
 | Module | `github.com/mcp-hangar/operator` |
-| Language | Go 1.23 |
-| Framework | controller-runtime v0.17 (kubebuilder) |
-| CRD API version | `mcp-hangar.io/v1alpha2` (storage; v1alpha1 still served, converted) |
-| Linting | golangci-lint v1.55 |
-| Testing | envtest + testify + gomega |
+| Language | Go 1.26 (`go.mod`) |
+| Framework | controller-runtime v0.25, k8s libraries v0.37 (kubebuilder layout) |
+| CRD API version | `mcp-hangar.io/v1alpha2`, the only version served |
+| Kubernetes floor | 1.30 (CI runs envtest 1.34.1 and the 1.30.3 floor, kind 1.36) |
+| Linting | golangci-lint v2, pinned in the Makefile; run it with `make lint` |
+| Testing | envtest + testify |
 | Image | `ghcr.io/mcp-hangar/mcp-hangar-operator` |
 
 ## Commands
 
 ```bash
+# Generate (CRDs, RBAC, webhook manifests, DeepCopy)
+make manifests       # config/crd/bases, config/rbac/role.yaml, config/webhook
+make generate        # zz_generated.deepcopy.go
 
-# Setup
-go mod download
-
-# Generate (CRDs, DeepCopy, RBAC)
-make manifests       # WebhookConfiguration, ClusterRole, CRDs
-make generate        # DeepCopy, DeepCopyInto, DeepCopyObject
-
-# Test
-make test            # full test suite (manifests + generate + fmt + vet + envtest)
-go test ./...        # quick test run (skips generation)
+# Test (envtest binaries via setup-envtest)
+make test
+KUBEBUILDER_ASSETS="$(setup-envtest use 1.34.1 -p path)" go test -race ./...
 
 # Lint
-make lint            # golangci-lint
-go vet ./...         # go vet only
+make lint            # the pinned golangci-lint v2, not whatever is on PATH
 
-# Build
-make build           # binary -> bin/manager
-go build -o bin/manager cmd/operator/main.go
+# Build and run
+make build           # bin/manager
+make run             # against the current kubeconfig
 
-# Run locally
-make run             # runs controller against current kubeconfig
-
-# Docker
-make docker-build    # build image
-make docker-push     # push image
-
-# Deploy to cluster
-make install         # install CRDs
-make deploy          # deploy controller via Helm
-make undeploy        # remove controller
-make uninstall       # remove CRDs
+# Deploy (kustomize, server-side apply)
+make install         # CRDs
+make deploy          # config/default
+make undeploy
+make uninstall
 ```
+
+The Helm chart lives in `mcp-hangar/helm-charts` (`mcp-hangar-operator/`); it
+vendors this repo's CRDs into `templates/crds/` with
+`scripts/vendor-operator-crds.py` and mirrors the RBAC and webhook manifests.
 
 ## Source Layout
 
 ```
-operator/
-├── api/
-│   ├── v1alpha1/                  # served, converted to the hub
-│   │   ├── groupversion_info.go   # SchemeBuilder, GroupVersion
-│   │   ├── conversion.go          # hand-written conversion to/from v1alpha2
-│   │   ├── mcpserver_types.go     # MCPServer CRD
-│   │   ├── mcpservergroup_types.go # MCPServerGroup CRD
-│   │   ├── mcpdiscoverysource_types.go # MCPDiscoverySource CRD
-│   │   └── zz_generated.deepcopy.go   # Generated -- do not edit
-│   └── v1alpha2/                  # STORAGE version (the hub)
-│       ├── mcpserver_types.go, mcpservergroup_types.go
-│       ├── mcpdiscoverysource_types.go, mcpegresspolicy_types.go
-│       └── zz_generated.deepcopy.go   # Generated -- do not edit
-│
-├── cmd/
-│   └── operator/
-│       └── main.go                # Entrypoint
-│
-├── internal/
-│   └── controller/                # Reconciliation controllers
-│       ├── mcpserver_controller.go
-│       ├── mcpservergroup_controller.go
-│       ├── mcpdiscoverysource_controller.go
-│       ├── mcpegresspolicy_controller.go
-│       ├── suite_test.go          # envtest setup (TestMain)
-│       ├── admission_test.go      # CRD schema bounds, against a real apiserver
-│       └── *_controller_test.go
-│
-├── pkg/
-│   ├── hangar/                    # Client for MCP Hangar core
-│   ├── metrics/                   # Prometheus metrics
-│   │   ├── metrics.go
-│   │   └── metrics_test.go
-│   └── provider/                  # Provider lifecycle management
-│
-├── config/
-│   └── crd/
-│       └── bases/                 # Generated CRD manifests
-│
-├── hack/
-│   └── boilerplate.go.txt         # License header for generated files
-│
-├── Makefile                       # Build, test, deploy targets
-├── Dockerfile
-├── go.mod
-└── go.sum
+api/v1alpha2/                 # MCPServer, MCPServerGroup, MCPDiscoverySource, MCPEgressPolicy
+cmd/operator/main.go          # manager, flags, the five reconcilers
+internal/controller/
+  mcpserver_controller.go           # pods, per-server NetworkPolicy, core health/tools
+  mcpservergroup_controller.go      # status aggregation over selected servers
+  mcpdiscoverysource_controller.go  # Namespace / ConfigMap / Annotations / ServiceDiscovery
+  mcpegresspolicy_controller.go     # L3/L4 backstop (Vanilla or Cilium) + L7 push to core
+  mcpegresspolicy_gateway.go        # re-deliver L7 policies when a gateway pod becomes Ready
+  mcpegresspolicy_membership.go     # group targets
+  namespace_egress_controller.go    # default-deny in enforce-egress namespaces
+  conditions.go, metrics_rbac.go
+internal/webhook/             # validating webhooks (off by default): MCPServer, discovery, pod registration
+internal/health/              # leader-aware readiness
+pkg/hangar/                   # client for core's REST API
+pkg/metrics/                  # mcp_operator_* Prometheus metrics
+pkg/networkpolicy/            # policy builders and the EnforcementProbe
+pkg/provider/                 # provider pod builder
+config/{crd,rbac,webhook,certmanager,default,manager,samples}/
+test/e2e/                     # kind reachability tests (Calico, Cilium, NodeLocal DNSCache) and remote lifecycle
+changelog.d/, upgrade.d/      # release-note fragments (see below)
 ```
 
 ## Custom Resource Definitions
 
-### MCPServer
-
-Manages an individual MCP server's lifecycle in Kubernetes.
-
-```yaml
-apiVersion: mcp-hangar.io/v1alpha2
-kind: MCPServer
-metadata:
-  name: math-server
-spec:
-  mode: container           # container | remote
-  image: ghcr.io/example/math-mcp:latest
-  replicas: 1
-  startupTimeout: "30s"
-  shutdownGracePeriod: "30s"
-  resources:
-    requests:
-      cpu: "100m"
-      memory: "128Mi"
-    limits:
-      cpu: "500m"
-      memory: "256Mi"
-```
+- **MCPServer**: one MCP server, `mode: container` (the operator runs one pod) or
+  `mode: remote` (an endpoint core reaches). `spec.replicas` is on (1) or off (0);
+  there is no scale subresource. Validation that does not need a lookup is CEL on
+  the CRD; `spec.mode` is immutable.
+- **MCPServerGroup**: selects MCPServers by label and reports their state against
+  a `healthPolicy`. A status aggregator: traffic is not routed through it.
+- **MCPDiscoverySource**: creates MCPServers from namespaces, a ConfigMap,
+  annotated pods/services, or services. `Additive` or `Authoritative`.
+- **MCPEgressPolicy**: per-server or per-group egress allow-list, enforced at L3/L4
+  by a NetworkPolicy (`Vanilla`) or CiliumNetworkPolicy (`Cilium`, needs a running
+  cilium agent), and at L7 by core (tool/argument rules pushed over `--hangar-url`).
+  `targetRef` is immutable.
 
 Idle stop, circuit breaking and tool allow-lists are **core** settings
-(`config.yaml` / REST), not `MCPServer` fields. The operator is the deploy-time
-admission plane; do not add CR fields for them, and do not teach the operator to
-call those APIs.
+(`config.yaml` / REST), not `MCPServer` fields. Do not add CR fields for them.
 
-### MCPServerGroup
+## What the operator enforces
 
-Selects `MCPServer`s by label, counts their states and reports Ready/Degraded/
-Available against a `healthPolicy`. It is a status aggregator — **traffic is not
-routed through it**, and there is no strategy or failover to configure.
+- A per-server NetworkPolicy from `spec.capabilities.network`, and a namespace
+  default-deny where the namespace is labelled `mcp-hangar.io/enforce-egress=true`.
+- In such a namespace an unpinned image gets no egress (pin coupling).
+- Status reports enforcement only when the EnforcementProbe observes an enforcer
+  (`NetworkPolicyApplied`, `BackstopEnforceable`); otherwise False or Unknown.
+- Admission (webhooks, opt-in): registered provider pods, digest policy, the
+  unrestricted-egress annotation.
+- Capability-violation events and `mcp_operator_capability_violations_total`.
 
-### MCPDiscoverySource
-
-Configures automatic server discovery.
-
-## Architecture
-
-### Reconciliation Loop
-
-Each controller follows the standard controller-runtime reconciliation pattern:
-
-1. Observe current state (Get resource from API server)
-2. Compute desired state (based on spec)
-3. Act to converge (Create/Update/Delete child resources)
-4. Update status (conditions, observed generation)
-
-### Provider State Machine
-
-Maps to the core Python state machine:
-
-| State | Description |
-|-------|-------------|
-| `Cold` | Not running |
-| `Initializing` | Starting up |
-| `Ready` | Healthy, serving tools |
-| `Degraded` | Unhealthy, needs reinit |
-| `Dead` | Failed, may retry |
-
-### Status Conditions
-
-Use standard Kubernetes condition pattern:
-
-```go
-meta.SetStatusCondition(&provider.Status.Conditions, metav1.Condition{
-    Type:               "Ready",
-    Status:             metav1.ConditionTrue,
-    Reason:             "ProviderReady",
-    Message:            "Provider is ready to serve tools",
-    ObservedGeneration: provider.Generation,
-})
-```
-
-## Code Conventions
-
-### Go Style
-
-- Follow standard Go conventions (`gofmt`, `go vet`)
-- Use `golangci-lint` for additional checks
-- Error wrapping: `fmt.Errorf("failed to start provider: %w", err)`
-- Context propagation: always pass `ctx context.Context` as first argument
-- No `panic()` in controller code -- return errors
-
-### Testing
-
-- Use `envtest` for integration tests with real API server
-- Use `testify` assertions: `assert.Equal(t, expected, actual)`
-- Table-driven tests for multiple scenarios
-- Test file naming: `*_test.go` alongside source
-
-```go
-func TestMCPServerReconcile_CreatesReadyServer(t *testing.T) {
-    // Arrange
-    server := &mcpv1alpha2.MCPServer{...}
-    // Act
-    result, err := reconciler.Reconcile(ctx, ctrl.Request{...})
-    // Assert
-    assert.NoError(t, err)
-    assert.Equal(t, ctrl.Result{}, result)
-}
-```
-
-### CRD Development
-
-When modifying CRD types in `api/v1alpha1/`:
-
-1. Edit `*_types.go` files
-2. Run `make generate` (regenerates `zz_generated.deepcopy.go`)
-3. Run `make manifests` (regenerates CRD YAML in `config/crd/bases/`)
-4. Copy CRD manifests to `../helm-charts/mcp-hangar-operator/crds/` if needed
-5. Run `make test` to verify
-
-### Kubebuilder Markers
-
-Use kubebuilder markers for CRD validation:
-
-```go
-// +kubebuilder:validation:Enum=container;remote
-// +kubebuilder:validation:Required
-// +kubebuilder:validation:Minimum=0
-// +kubebuilder:validation:Maximum=10
-// +kubebuilder:default=1
-// +optional
-```
-
-## Metrics
-
-Prometheus metrics exposed via controller-runtime metrics server:
-
-| Metric | Type | Labels |
-|--------|------|--------|
-| `controller_runtime_reconcile_total` | Counter | controller, result (controller-runtime built-in) |
-| `controller_runtime_reconcile_time_seconds` | Histogram | controller (controller-runtime built-in) |
-| `mcp_operator_provider_state` | Gauge | provider, namespace, state |
-
-## Dependencies on Other Subprojects
-
-- **helm-charts**: CRD manifests from `config/crd/bases/` copied to `../helm-charts/mcp-hangar-operator/crds/`
-- **core**: Operator communicates with running MCP Hangar instances via HTTP API
-
-## Hardening Priorities (v0.13.0 -- Phase 1)
-
-The operator is the **primary enforcement engine** for Kubernetes-deployed MCP servers. These are the P0/P1 items from the product roadmap:
-
-### P0 -- Must have for v0.13.0
-
-| Item | Current State | Target State |
-|------|---------------|--------------|
-| **NetworkPolicy generation** | Not implemented | Auto-generate from CRD `capabilities` field; default-deny egress |
-| **Violation signaling** | Not implemented | First-class `violation` and `enforcement` events from operator decisions |
-| **CRD validation** | Basic | CEL validation rules, webhook admission |
-| **Admission/policy integration** | Minimal | Validate and reject unsafe provider specs before runtime |
-| **Operator enforcement loop** | Reconciles state only | Full governance posture: capability enforcement, NetworkPolicy rollout, violation signaling |
-| **Pod Security Standards** | Partial (security context) | Enforce `restricted` PSS by default |
-
-### P1 -- Important
-
-| Item | Current State | Target State |
-|------|---------------|--------------|
-| **RBAC scoping** | Cluster-wide | Namespace-scoped with aggregated ClusterRoles |
-| **Operator HA** | Leader election exists | Anti-affinity, PDB, multi-replica |
-| **Helm chart hardening** | Basic | CIS benchmark aligned, OPA/Kyverno policies shipped |
-
-### P2 -- H2 2026
-
-| Item | Target |
-|------|--------|
-| **Upgrade strategy** | CRD versioning, conversion webhooks, migration guide |
+Claims in status, events and docs must match what the mechanism delivers: a
+written NetworkPolicy is not an enforced one.
 
 ## Capability Declaration
-
-`spec.capabilities` declares what a server needs, and the operator acts on two
-parts of it:
 
 ```yaml
 apiVersion: mcp-hangar.io/v1alpha2
@@ -286,29 +108,40 @@ metadata:
   name: math-server
 spec:
   mode: container
-  image: ghcr.io/example/math-mcp:latest
+  image: ghcr.io/example/math-mcp@sha256:...
   capabilities:
-    enforcementMode: block      # audit | block -- what a violation does
-    network:                    # feeds the generated NetworkPolicy
+    enforcementMode: block      # alert | block | quarantine
+    network:                    # feeds the per-server NetworkPolicy
       egress:
         - host: "api.example.com"
+          cidr: "203.0.113.0/24"
           port: 443
-        - cidr: "10.0.0.0/8"
-          port: 5432
     tools:                      # drives capability-violation events
       maxCount: 10
       expectedTools: [calculate]
 ```
 
-The operator uses this block to:
+A host with no `cidr` emits no allow rule (fails closed); hostname egress is
+enforced through an `MCPEgressPolicy` with the Cilium flavor.
+`filesystem`, `environment` and `resources` capability children are gone (#121):
+do not re-add a declaration nothing enforces.
 
-1. Generate NetworkPolicy resources (default-deny egress + explicit allow-list)
-2. Enforce Pod Security Standards on generated pods
-3. Emit violation events when the running tool set does not match the declaration
+## CRD and RBAC development
 
-**`filesystem`, `environment` and `resources` children are gone** (#121). They
-were the Tetragon / hangar-agent path, retired by ADR-010, and nothing read
-them. Do not re-add them: a declaration nothing enforces reads as enforcement.
+1. Edit `api/v1alpha2/*_types.go` or the `+kubebuilder` markers.
+2. `make manifests generate`; commit `config/crd/bases`, `config/rbac/role.yaml`,
+   `config/webhook/manifests.yaml` and `zz_generated.deepcopy.go`.
+3. A new CEL rule must compile on the 1.30 floor (the `test-k8s-floor` job checks).
+4. The chart picks the CRDs up by re-vendoring from the release; RBAC and webhook
+   changes need a companion helm-charts PR.
+
+## Testing conventions
+
+- envtest for anything touching admission, CRD validation or watches (the suite
+  in `internal/controller/suite_test.go` loads the generated CRDs); the fake
+  client for pure reconcile logic.
+- A fix ships with a test that fails without it.
+- testify assertions; `*_test.go` beside the source.
 
 ## Changelog and upgrade notes
 

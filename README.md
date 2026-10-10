@@ -2,7 +2,7 @@
 
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8.svg)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Kubernetes](https://img.shields.io/badge/Kubernetes-1.25+-326CE5.svg)](https://kubernetes.io)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-1.30+-326CE5.svg)](https://kubernetes.io)
 
 **Kubernetes Operator for managing MCP (Model Context Protocol) providers as native Kubernetes resources.**
 
@@ -10,7 +10,8 @@
 
 - **MCPServer CRD**: Declarative management of MCP tool servers
 - **MCPServerGroup CRD**: Label-selected aggregation of `MCPServer` state against a `healthPolicy`
-- **MCPDiscoverySource CRD**: Automatic server discovery from namespaces
+- **MCPDiscoverySource CRD**: Automatic server discovery from namespaces, a ConfigMap, annotated pods/services, or services
+- **MCPEgressPolicy CRD**: Egress allow-lists enforced at L3/L4 (NetworkPolicy or CiliumNetworkPolicy) and at L7 by core
 - **State Machine**: Automatic lifecycle management (Cold → Initializing → Ready → Degraded → Dead)
 - **Health**: Hangar's health endpoint for `remote` servers and pod phase for `container`, on the reconcile interval
 - **Metrics**: Prometheus metrics for monitoring
@@ -79,11 +80,11 @@ list what the operator actually reads.
 | `spec.image` | Container image (for container mode) | Required for container |
 | `spec.endpoint` | HTTP endpoint (for remote mode) | Required for remote |
 | `spec.replicas` | On (`1`) or off (`0`, no pod); a server runs at most one pod, and there is no scale subresource | `1` |
-| `spec.startupTimeout` | How long to wait for the server to come up | `30s` |
-| `spec.shutdownGracePeriod` | Pod termination grace period | `30s` |
+| `spec.startupTimeout` | Accepted and validated, but the operator does not act on it yet (issue 186) | — |
+| `spec.shutdownGracePeriod` | Pod termination grace period | `30s` when unset (operator default) |
 | `spec.capabilities.network` | Egress the server declares; feeds the generated `NetworkPolicy` | — |
 | `spec.capabilities.tools` | `maxCount` / `expectedTools`; drives capability-violation events | — |
-| `spec.capabilities.enforcementMode` | What a violation does (`audit` / `block`) | — |
+| `spec.capabilities.enforcementMode` | What a violation does (`alert` / `block` / `quarantine`) | — |
 
 ### MCPServerGroup
 
@@ -101,9 +102,9 @@ Traffic is not routed through it.
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| `spec.type` | Discovery type: Namespace, ConfigMap, Annotations | Required |
+| `spec.type` | Discovery type: Namespace, ConfigMap, Annotations, ServiceDiscovery | Required |
 | `spec.mode` | Discovery mode: Additive, Authoritative | `Additive` |
-| `spec.refreshInterval` | Rescan interval | `1m` |
+| `spec.refreshInterval` | Rescan interval | `1m` when unset (operator default) |
 
 ## Enforcement
 
@@ -143,8 +144,9 @@ closed, not open.
 
 FQDN/host egress rules **fail closed** — a rule that a Kubernetes
 `NetworkPolicy` cannot express (host/FQDN with no CIDR) emits no permissive rule.
-Declarative L7/FQDN egress is handled by the `MCPEgressPolicy` API and its
-Cilium/Tetragon backstop (ADR-006).
+Hostname egress and L7 (tool/argument) rules are handled by the
+`MCPEgressPolicy` API: the Cilium backstop flavor enforces hostnames
+(`toFQDNs`), and core enforces the L7 rules.
 
 ### CIDR rules on Cilium do not reach in-cluster upstreams
 
@@ -287,10 +289,15 @@ make docker-push IMG=my-registry/mcp-hangar-operator:v0.1.0
 
 ### Testing
 
-- **pkg/provider**: Pod builder
-- **pkg/hangar**: Hangar client
+- **internal/controller**: reconcilers, against an envtest apiserver with the generated CRDs
+- **internal/webhook**: validating webhooks
+- **internal/health**: leader-aware readiness
+- **cmd/operator**: flags and the secure metrics endpoint
+- **pkg/provider**: pod builder
+- **pkg/networkpolicy**: policy builders and the enforcement probe
+- **pkg/hangar**: core client
 - **pkg/metrics**: Prometheus metrics
-- **internal/controller**: Controller config
+- **test/e2e**: kind reachability tests (Calico, Cilium, NodeLocal DNSCache), run by CI
 
 Run `make test` to execute the full suite with coverage (`go test ./... -coverprofile cover.out`); run `go tool cover -func cover.out` afterwards for a per-package breakdown.
 

@@ -18,8 +18,8 @@ go build ./cmd/...
 # Test
 make test
 
-# Lint
-golangci-lint run ./...
+# Lint (the golangci-lint v2 version the Makefile pins, installed into bin/)
+make lint
 ```
 
 ## Licensing

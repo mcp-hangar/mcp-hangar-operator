@@ -1,5 +1,5 @@
 # This patch injects the webhook serving port, the cert-manager-provisioned
-# serving certificate volume, and enables the admission/conversion webhooks on
+# serving certificate volume, and enables the admission webhooks on
 # the manager. It is applied by config/default.
 apiVersion: apps/v1
 kind: Deployment

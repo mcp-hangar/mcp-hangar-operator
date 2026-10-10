@@ -134,12 +134,12 @@ func capabilityWarningsV2(caps *mcpv1alpha2.MCPServerCapabilities) admission.War
 	// host/FQDN-only rule (no CIDR) cannot be enforced by the NetworkPolicy
 	// backend, which matches only on IP/CIDR. It is failed closed rather than
 	// downgraded into an all-destinations opening. Warn so the operator knows the
-	// rule is inert until the Tetragon backend (ADR-006 v1.5) enforces it.
+	// rule is inert, and where hostname egress is enforced instead.
 	if caps.Network != nil {
 		for i, rule := range caps.Network.Egress {
 			if rule.CIDR == "" {
 				warnings = append(warnings, fmt.Sprintf(
-					"spec.capabilities.network.egress[%d] (host %q) is not enforceable by the NetworkPolicy backend and will NOT be applied; specify a cidr for network-level enforcement. FQDN egress enforcement is deferred to the Tetragon backend (ADR-006 v1.5).",
+					"spec.capabilities.network.egress[%d] (host %q) is not enforceable by the NetworkPolicy backend and will NOT be applied; specify a cidr for network-level enforcement, or allow the hostname with an MCPEgressPolicy using the Cilium backstop flavor.",
 					i, rule.Host))
 				continue
 			}

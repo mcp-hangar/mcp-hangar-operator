@@ -1,8 +1,9 @@
 // Package main is the entrypoint for the MCP Hangar operator.
 //
-// It bootstraps a controller-runtime manager, registers all three reconcilers
-// (MCPServer, MCPServerGroup, MCPDiscoverySource), configures health/ready
-// probes, and starts the manager with leader election.
+// It bootstraps a controller-runtime manager, registers the five reconcilers
+// (MCPServer, MCPServerGroup, MCPDiscoverySource, MCPEgressPolicy and the
+// namespace egress default-deny), the validating webhooks when enabled, and
+// health/ready probes, and starts the manager with leader election.
 package main
 
 import (
