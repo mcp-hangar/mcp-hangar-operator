@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.17.17](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.16...v0.17.17) (2026-10-10)
+
+### Changed
+
+- **webhook:** the admission warning for a host-only egress rule now says to
+  add a `cidr` or allow the hostname with an MCPEgressPolicy using the Cilium
+  flavor, instead of pointing at a Tetragon backend that does not exist ([#275](https://github.com/mcp-hangar/mcp-hangar-operator/pull/275))
+
+### Fixed
+
+- **controller:** a capability violation that persists is recorded once. A
+  NetworkPolicy that stays unapplied or a tool count that stays over its limit
+  used to add a `status.violations` entry, increment
+  `mcp_operator_capability_violations_total` and emit a Warning on every
+  reconcile. A violation is recorded when it starts and again only if it clears
+  and returns; `ViolationDetected` lists the active types. See UPGRADE.md ([#280](https://github.com/mcp-hangar/mcp-hangar-operator/pull/280))
+- **api:** `MCPDiscoverySource.spec.refreshInterval` must be a non-negative
+  duration. The schema accepted any string, and a value such as `banana` was
+  stored and then broke the operator's decoding of that source ([#278](https://github.com/mcp-hangar/mcp-hangar-operator/pull/278))
+- **infra:** the pod-registration webhook reads the MCPServer straight from the
+  API server, so a pod applied right after its server is no longer denied
+  because the cache had not caught up; with webhooks on, a replica is ready only
+  once its webhook server listens; and the kustomize Deployment's
+  `terminationGracePeriodSeconds` is 15 s, longer than the 10 s drain, so the
+  leader lease release is not cut off ([#276](https://github.com/mcp-hangar/mcp-hangar-operator/pull/276))
+
 ## [0.17.16](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.15...v0.17.16) (2026-10-10)
 
 ### Fixed
