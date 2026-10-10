@@ -58,7 +58,6 @@ const (
 	defaultConfigMapKey = "providers.yaml"
 
 	// Event reasons for discovery
-	ReasonSyncStarted   = "SyncStarted"
 	ReasonSyncCompleted = "SyncCompleted"
 	ReasonSyncFailed    = "SyncFailed"
 	ReasonProviderFound = "ProviderFound"
@@ -196,8 +195,6 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 
 	// Start sync timer
 	syncStart := time.Now()
-	r.Recorder.Eventf(source, nil, corev1.EventTypeNormal, ReasonSyncStarted, ActionReconcile,
-		"Starting discovery sync")
 
 	// Discover providers
 	discovered, scanErrors, err := r.discoverProviders(ctx, source)
@@ -265,6 +262,11 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 	now := metav1.Now()
 	nextSync := metav1.NewTime(now.Add(refreshInterval))
 
+	// SyncCompleted is worth an Event when the outcome changed, not on every
+	// refresh interval (#210).
+	prevSynced := apimeta.FindStatusCondition(source.Status.Conditions, ConditionSynced).DeepCopy()
+	outcomeChanged := source.Status.DiscoveredCount != int32(len(discovered)) || source.Status.ManagedCount != managedCount
+
 	source.Status.DiscoveredCount = int32(len(discovered))
 	source.Status.ManagedCount = managedCount
 	source.Status.LastSyncTime = &now
@@ -297,8 +299,11 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 		return ctrl.Result{}, err
 	}
 
-	r.Recorder.Eventf(source, nil, corev1.EventTypeNormal, ReasonSyncCompleted, ActionReconcile,
-		"Sync completed: discovered=%d, managed=%d, errors=%d", len(discovered), managedCount, len(allErrors))
+	nowSynced := apimeta.FindStatusCondition(source.Status.Conditions, ConditionSynced)
+	if outcomeChanged || prevSynced == nil || prevSynced.Status != nowSynced.Status || prevSynced.Reason != nowSynced.Reason {
+		r.Recorder.Eventf(source, nil, corev1.EventTypeNormal, ReasonSyncCompleted, ActionReconcile,
+			"Sync completed: discovered=%d, managed=%d, errors=%d", len(discovered), managedCount, len(allErrors))
+	}
 
 	return ctrl.Result{RequeueAfter: refreshInterval}, nil
 }

@@ -453,13 +453,16 @@ func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *m
 	now := metav1.Now()
 	mcpServer.Status.LastHealthCheck = &now
 
+	becameReady := conditionChanges(mcpServer.Status.Conditions, ConditionReady, metav1.ConditionTrue, "ProviderReady")
 	setServerCondition(mcpServer, ConditionReady, metav1.ConditionTrue, "ProviderReady", "Provider is ready")
 	setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionFalse, "Reconciled", "")
 	setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionFalse, "Healthy", "Provider is healthy")
 	setServerCondition(mcpServer, ConditionAvailable, metav1.ConditionTrue, "Available", "Provider is available")
 
-	r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonReady, ActionReconcile,
-		"Provider is ready")
+	if becameReady { // not on every 5-minute poll (#210)
+		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonReady, ActionReconcile,
+			"Provider is ready")
+	}
 	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Ready")
 
 	return readyRequeueAfter
@@ -587,9 +590,13 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 			// server core did not know: 168 failures per second and 1.8 million
 			// on the counter. `errorRequeueAfter` is 10s and was never reached,
 			// because the watch event always arrived first.
+			// One Warning when the server enters this state, not one per 10 s
+			// re-probe for as long as core stays unreachable (#210).
+			if conditionChanges(mcpServer.Status.Conditions, ConditionDegraded, metav1.ConditionTrue, "HealthCheckFailed") {
+				r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonUnhealthy, ActionReconcile,
+					"Health check failed: %v", err)
+			}
 			setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, "HealthCheckFailed", err.Error())
-			r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonUnhealthy, ActionReconcile,
-				"Health check failed: %v", err)
 			metrics.MCPServerHealthCheckFailures.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Inc()
 			// Re-probe soon so recovery is detected fast, not after the full readyRequeueAfter window.
 			requeueAfter = errorRequeueAfter
@@ -598,9 +605,11 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 			mcpServer.Status.ConsecutiveFailures = 0
 			now := metav1.Now()
 			mcpServer.Status.LastHealthCheck = &now
+			if conditionChanges(mcpServer.Status.Conditions, ConditionReady, metav1.ConditionTrue, "EndpointHealthy") {
+				r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonHealthy, ActionReconcile,
+					"Remote endpoint is healthy")
+			}
 			setServerCondition(mcpServer, ConditionReady, metav1.ConditionTrue, "EndpointHealthy", "Remote endpoint is healthy")
-			r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonHealthy, ActionReconcile,
-				"Remote endpoint is healthy")
 
 			// Tools come from the read model, which is the right source for a
 			// catalogue and the wrong one for liveness -- hence the separate
@@ -618,10 +627,12 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 			// the upstream, which is the number an operator wants to see.
 			mcpServer.Status.State = mcpv1alpha2.MCPServerStateDegraded
 			mcpServer.Status.ConsecutiveFailures = int32(health.ConsecutiveFailures)
+			if conditionChanges(mcpServer.Status.Conditions, ConditionDegraded, metav1.ConditionTrue, "EndpointUnhealthy") {
+				r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonUnhealthy, ActionReconcile,
+					"Remote endpoint unhealthy")
+			}
 			setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, "EndpointUnhealthy",
 				fmt.Sprintf("Core reports %d consecutive failures (success rate %.2f)", health.ConsecutiveFailures, health.SuccessRate))
-			r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonUnhealthy, ActionReconcile,
-				"Remote endpoint unhealthy")
 			// Re-probe soon so recovery is detected fast, not after the full readyRequeueAfter window.
 			requeueAfter = errorRequeueAfter
 		}
@@ -750,6 +761,14 @@ func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpSer
 
 	r.recordPolicyEnforcement(ctx, mcpServer, fmt.Sprintf("NetworkPolicy %s applied", desired.Name))
 	return nil
+}
+
+// conditionChanges reports whether setting condition t to status/reason would
+// change it -- the moment worth an Event. Emitting on every poll instead put a
+// Warning in the event stream every 10 s per unhealthy server (#210).
+func conditionChanges(conds []metav1.Condition, t string, status metav1.ConditionStatus, reason string) bool {
+	c := meta.FindStatusCondition(conds, t)
+	return c == nil || c.Status != status || c.Reason != reason
 }
 
 // Reasons on NetworkPolicyApplied for a policy that was written but whose
