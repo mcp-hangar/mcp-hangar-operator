@@ -4128,9 +4128,6 @@ spec:
                 description: ObservedGeneration is the generation observed by controller
                 format: int64
                 type: integer
-              phase:
-                description: Phase is the overall phase
-                type: string
               podName:
                 description: PodName is the name of the managed Pod
                 type: string

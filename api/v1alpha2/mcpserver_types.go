@@ -243,9 +243,6 @@ type MCPServerStatus struct {
 	// State is the current provider state
 	State MCPServerState `json:"state,omitempty"`
 
-	// Phase is the overall phase
-	Phase string `json:"phase,omitempty"`
-
 	// Replicas is the number of provider pods that exist: 0 or 1.
 	Replicas int32 `json:"replicas,omitempty"`
 
