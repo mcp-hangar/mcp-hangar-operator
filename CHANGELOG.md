@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.17.16](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.15...v0.17.16) (2026-10-10)
+
+### Fixed
+
+- **controller:** a new MCPServer, discovery source, egress policy or group is
+  reconciled in the same pass that adds its finalizer, instead of returning the
+  deprecated `Requeue: true`; and on a cluster with Cilium the egress policy's
+  CiliumNetworkPolicy backstop is watched, so an edited or deleted one is put
+  back without waiting for the next resync ([#273](https://github.com/mcp-hangar/mcp-hangar-operator/pull/273))
+
 ## [0.17.15](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.14...v0.17.15) (2026-10-10)
 
 ### Changed
