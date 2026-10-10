@@ -113,9 +113,10 @@ func TestMain(m *testing.M) {
 
 	// Register MCPDiscoverySource controller
 	if err := (&MCPDiscoverySourceReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorder("mcpdiscoverysource-controller"),
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Recorder:  mgr.GetEventRecorder("mcpdiscoverysource-controller"),
+		APIReader: mgr.GetAPIReader(),
 	}).SetupWithManager(mgr); err != nil {
 		panic("failed to setup MCPDiscoverySource controller: " + err.Error())
 	}

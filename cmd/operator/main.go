@@ -17,6 +17,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -168,6 +169,13 @@ func main() {
 		RenewDeadline:                 &renewDeadline,
 		RetryPeriod:                   &retryPeriod,
 		GracefulShutdownTimeout:       &gracefulShutdownTimeout,
+		// The Pod informer is cluster-wide: the MCPServer controller owns
+		// provider pods and the egress controller watches gateway pods, two
+		// label sets one selector cannot OR, so it cannot be scoped by label.
+		// Dropping managedFields is what it can do -- often the larger half of
+		// a cached object. ConfigMaps and Services are not cached at all:
+		// discovery reads them through the API reader (#195).
+		Cache: cache.Options{DefaultTransform: cache.TransformStripManagedFields()},
 	}
 
 	if leaderElectionNamespace != "" {
@@ -246,9 +254,10 @@ func main() {
 
 	// Register MCPDiscoverySource controller.
 	if err := (&controller.MCPDiscoverySourceReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorder("mcpdiscoverysource-controller"),
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Recorder:  mgr.GetEventRecorder("mcpdiscoverysource-controller"),
+		APIReader: mgr.GetAPIReader(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPDiscoverySource")
 		os.Exit(1)

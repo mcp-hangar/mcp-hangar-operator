@@ -96,6 +96,21 @@ type MCPDiscoverySourceReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder events.EventRecorder
+	// APIReader reads ConfigMaps and Services straight from the API server.
+	// Read through the manager's client, each kind started a cluster-wide
+	// informer holding every ConfigMap or Service in the cluster -- other
+	// people's included -- to answer a question asked once per sync (#195).
+	// Nil falls back to the client (tests).
+	APIReader client.Reader
+}
+
+// uncached returns the reader for kinds this controller only lists once per
+// sync and never watches.
+func (r *MCPDiscoverySourceReconciler) uncached() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
 }
 
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpdiscoverysources,verbs=get;list;watch;create;update;patch;delete
@@ -396,7 +411,7 @@ func (r *MCPDiscoverySourceReconciler) discoverConfigMap(ctx context.Context, so
 	// Fetch ConfigMap
 	cm := &corev1.ConfigMap{}
 	cmObjKey := client.ObjectKey{Name: source.Spec.ConfigMapRef.Name, Namespace: cmNamespace}
-	if err := r.Get(ctx, cmObjKey, cm); err != nil {
+	if err := r.uncached().Get(ctx, cmObjKey, cm); err != nil {
 		return nil, nil, fmt.Errorf("failed to get ConfigMap %s/%s: %w", cmNamespace, source.Spec.ConfigMapRef.Name, err)
 	}
 
@@ -545,7 +560,7 @@ func (r *MCPDiscoverySourceReconciler) discoverAnnotations(ctx context.Context, 
 	// Discover from Services
 	if len(source.Spec.Annotations.ServiceSelector) > 0 {
 		svcList := &corev1.ServiceList{}
-		if err := r.List(ctx, svcList,
+		if err := r.uncached().List(ctx, svcList,
 			client.InNamespace(source.Namespace),
 			client.MatchingLabels(source.Spec.Annotations.ServiceSelector),
 		); err != nil {
@@ -621,7 +636,7 @@ func (r *MCPDiscoverySourceReconciler) discoverServices(ctx context.Context, sou
 		listOpts = append(listOpts, client.MatchingLabels(source.Spec.ServiceDiscovery.Selector))
 	}
 
-	if err := r.List(ctx, svcList, listOpts...); err != nil {
+	if err := r.uncached().List(ctx, svcList, listOpts...); err != nil {
 		return nil, nil, fmt.Errorf("failed to list services: %w", err)
 	}
 
