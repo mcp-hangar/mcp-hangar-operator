@@ -117,6 +117,25 @@ func TestReconcileEgressAudit_WildcardOverrideEmitsWarning(t *testing.T) {
 	assert.Contains(t, fakeRec.events[0], "wildcard egress")
 }
 
+// cidr 0.0.0.0/0 and ::/0 open every destination as host "*" does, so the
+// override is audited the same way (#214).
+func TestReconcileEgressAudit_ZeroPrefixCIDROverrideEmitsWarning(t *testing.T) {
+	for _, cidr := range []string{"0.0.0.0/0", "::/0"} {
+		provider := newTestProvider("egress-audit-cidr", "default", &mcpv1alpha2.MCPServerCapabilities{
+			Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+				Egress: []mcpv1alpha2.EgressRuleSpec{{Host: "api.example.com", CIDR: cidr, Port: 443}},
+			},
+		})
+		provider.Annotations = map[string]string{"hangar.io/allow-unrestricted-egress": "true"}
+		r, fakeRec := newViolationTestReconciler(provider)
+
+		r.reconcileEgressAudit(context.Background(), provider)
+
+		require.Len(t, fakeRec.events, 1, cidr)
+		assert.Contains(t, fakeRec.events[0], ReasonUnrestrictedEgressAllowed)
+	}
+}
+
 func TestReconcileEgressAudit_NoWildcardNoEvent(t *testing.T) {
 	provider := newTestProvider("egress-audit-specific", "default", &mcpv1alpha2.MCPServerCapabilities{
 		Network: &mcpv1alpha2.NetworkCapabilitiesSpec{

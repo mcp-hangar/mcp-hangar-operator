@@ -85,7 +85,8 @@ func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 	// version while looking covered.
 	if hasWildcardEgressV2(p) && p.Annotations[unrestrictedEgressAnnotation] != "true" {
 		errs = append(errs, fmt.Sprintf(
-			"spec.capabilities.network.egress with host \"*\" (unrestricted egress) requires annotation %s: \"true\"",
+			"spec.capabilities.network.egress with host \"*\" or cidr 0.0.0.0/0 or ::/0 (unrestricted egress) "+
+				"requires annotation %s: \"true\"",
 			unrestrictedEgressAnnotation))
 	}
 
@@ -95,7 +96,8 @@ func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 	return warnings, nil
 }
 
-// unrestrictedEgressAnnotation opts a provider into wildcard (host: "*") egress.
+// unrestrictedEgressAnnotation opts a provider into wildcard egress (host "*",
+// cidr 0.0.0.0/0 or ::/0).
 const unrestrictedEgressAnnotation = "hangar.io/allow-unrestricted-egress"
 
 // ciliumDetected records whether this cluster runs Cilium (its CRD is
@@ -110,13 +112,13 @@ func SetCiliumDetected(detected bool) {
 	ciliumDetected = detected
 }
 
-// hasWildcardEgressV2 reports whether any egress rule targets host "*".
+// hasWildcardEgressV2 reports whether any egress rule opens every destination.
 func hasWildcardEgressV2(p *mcpv1alpha2.MCPServer) bool {
 	if p.Spec.Capabilities == nil || p.Spec.Capabilities.Network == nil {
 		return false
 	}
 	for _, rule := range p.Spec.Capabilities.Network.Egress {
-		if rule.Host == "*" {
+		if networkpolicy.IsUnrestrictedEgress(rule) {
 			return true
 		}
 	}

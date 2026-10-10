@@ -375,6 +375,22 @@ func asCIDR(host string) (cidr string, ok bool) {
 	return "", false
 }
 
+// IsUnrestrictedEgress reports whether an egress rule opens every
+// destination: host "*", or a CIDR with a zero-length prefix (0.0.0.0/0,
+// ::/0). The CIDR forms were emitted verbatim into the NetworkPolicy without
+// the opt-in annotation or the audit event the host form needs (#214).
+func IsUnrestrictedEgress(rule mcpv1alpha2.EgressRuleSpec) bool {
+	if rule.Host == "*" {
+		return true
+	}
+	for _, s := range []string{rule.CIDR, rule.Host} {
+		if p, err := netip.ParsePrefix(strings.TrimSpace(s)); err == nil && p.Bits() == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // buildLabels returns standard labels for the NetworkPolicy resource.
 func buildLabels(provider *mcpv1alpha2.MCPServer) map[string]string {
 	return map[string]string{
