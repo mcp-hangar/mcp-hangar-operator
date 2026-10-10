@@ -45,8 +45,12 @@ type MCPServerGroupStatus struct {
 	// DegradedCount is the number of degraded providers
 	DegradedCount int32 `json:"degradedCount,omitempty"`
 
-	// ColdCount is the number of cold providers
+	// ColdCount is the number of cold providers (spec.replicas 0)
 	ColdCount int32 `json:"coldCount,omitempty"`
+
+	// InitializingCount is the number of providers that are starting, or that
+	// the MCPServer controller has not given a state yet
+	InitializingCount int32 `json:"initializingCount,omitempty"`
 
 	// DeadCount is the number of dead providers
 	DeadCount int32 `json:"deadCount,omitempty"`
@@ -75,9 +79,6 @@ type MCPServerMemberStatus struct {
 
 	// State of the provider
 	State string `json:"state,omitempty"`
-
-	// LastHealthCheck time
-	LastHealthCheck *metav1.Time `json:"lastHealthCheck,omitempty"`
 }
 
 // +kubebuilder:object:root=true
