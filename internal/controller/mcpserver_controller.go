@@ -104,9 +104,7 @@ type MCPServerReconciler struct {
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservers/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservers/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // Events now go to events.k8s.io/v1 (the recorder migration in #58). The
 // core/v1 grant stays because controller-runtime's leader election still emits
