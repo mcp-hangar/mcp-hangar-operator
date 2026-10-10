@@ -4,7 +4,9 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -815,6 +817,25 @@ func (r *MCPServerReconciler) recordPolicyEnforcement(ctx context.Context, mcpSe
 	}
 }
 
+// activeViolationsPrefix starts the ViolationDetected message; the active
+// violation types follow it, comma-separated.
+const activeViolationsPrefix = "Active violations: "
+
+// activeViolationTypes reads the violation types a True ViolationDetected
+// condition lists as active.
+func activeViolationTypes(cond *metav1.Condition) map[string]bool {
+	active := map[string]bool{}
+	if cond == nil || cond.Status != metav1.ConditionTrue || !strings.HasPrefix(cond.Message, activeViolationsPrefix) {
+		return active
+	}
+	for _, t := range strings.Split(strings.TrimPrefix(cond.Message, activeViolationsPrefix), ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			active[t] = true
+		}
+	}
+	return active
+}
+
 // reconcileViolationDetection checks for capability violations and records them.
 // Violations are appended to status.Violations (capped at MaxViolationRecords).
 // Does not call Status().Update() -- caller handles that.
@@ -877,6 +898,23 @@ func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, m
 		return nil
 	}
 
+	// Record only what is new. A condition that persists -- a NetworkPolicy
+	// that stays unapplied, a tool count that stays over -- is one violation,
+	// not one per reconcile: it used to append a record, bump the counter and
+	// emit a Warning on every pass (#245). The active set is kept in the
+	// ViolationDetected condition.
+	previouslyActive := activeViolationTypes(getCondition(mcpServer.Status.Conditions, ConditionViolationDetected))
+	var activeTypes []string
+	var fresh []mcpv1alpha2.ViolationRecord
+	for _, v := range newViolations {
+		activeTypes = append(activeTypes, v.Type)
+		if !previouslyActive[v.Type] {
+			fresh = append(fresh, v)
+		}
+	}
+	sort.Strings(activeTypes)
+	newViolations = fresh
+
 	// Record violations
 	for _, v := range newViolations {
 		logger.Info("Capability violation detected",
@@ -900,7 +938,7 @@ func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, m
 
 	// Set condition
 	setServerCondition(mcpServer, ConditionViolationDetected, metav1.ConditionTrue,
-		"ViolationsFound", fmt.Sprintf("%d new violation(s) detected", len(newViolations)))
+		"ViolationsFound", activeViolationsPrefix+strings.Join(activeTypes, ", "))
 
 	return nil
 }
