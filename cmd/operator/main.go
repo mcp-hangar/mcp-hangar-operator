@@ -89,7 +89,7 @@ func main() {
 	flag.StringVar(&leaderElectionNamespace, "leader-election-namespace", "",
 		"Namespace in which the leader election lease will be created. "+
 			"Defaults to the namespace of the operator pod.")
-	flag.DurationVar(&gracefulShutdownTimeout, "graceful-shutdown-timeout", 10*time.Second,
+	flag.DurationVar(&gracefulShutdownTimeout, "graceful-shutdown-timeout", defaultGracefulShutdownTimeout,
 		"Maximum duration the manager will wait for running reconcilers to finish on shutdown.")
 	flag.StringVar(&dnsEgressSelectors, "dns-egress-selectors", "",
 		"Semicolon-separated resolver pods allowed DNS egress in addition to kube-system/k8s-app=kube-dns, "+
@@ -331,7 +331,7 @@ func main() {
 		// enforce-egress namespaces. Raw handler because it reads MCPServers.
 		mgr.GetWebhookServer().Register("/validate-pod-registration", &admission.Webhook{
 			Handler: &webhook.PodRegistrationValidator{
-				Client:  mgr.GetClient(),
+				Client:  mgr.GetAPIReader(),
 				Decoder: admission.NewDecoder(mgr.GetScheme()),
 			},
 		})
@@ -363,6 +363,16 @@ func main() {
 		}
 	}
 
+	// With webhooks on, a replica is not ready until its webhook server
+	// listens: the configurations use failurePolicy Fail, and a Ready pod is
+	// put in the webhook Service's endpoints before it can answer (#215).
+	if enableWebhooks {
+		if err := mgr.AddReadyzCheck("webhook", mgr.GetWebhookServer().StartedChecker()); err != nil {
+			setupLog.Error(err, "unable to set up webhook readiness check")
+			os.Exit(1)
+		}
+	}
+
 	setupLog.Info("starting manager",
 		"leaderElection", enableLeaderElection,
 		"leaseDuration", leaseDuration,
@@ -390,6 +400,10 @@ func metricsServerOptions(addr string, secure bool) metricsserver.Options {
 	}
 	return opts
 }
+
+// defaultGracefulShutdownTimeout is how long the manager drains on shutdown
+// by default; the pod's terminationGracePeriodSeconds must exceed it.
+const defaultGracefulShutdownTimeout = 10 * time.Second
 
 // parseEnforcementOverride maps the --networkpolicy-enforcement flag onto a
 // probe verdict. "auto" leaves the probe to look for itself.
