@@ -52,13 +52,17 @@ func TestMetrics_SecureByDefault_RefusesAnonymousScrape(t *testing.T) {
 		Timeout:   2 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec // self-signed by design
 	}
-	var resp *http.Response
+	status := 0
 	require.Eventually(t, func() bool {
-		resp, err = insecureTLS.Get(fmt.Sprintf("https://%s/metrics", addr))
-		return err == nil
+		resp, err := insecureTLS.Get(fmt.Sprintf("https://%s/metrics", addr))
+		if err != nil {
+			return false
+		}
+		status = resp.StatusCode
+		_ = resp.Body.Close()
+		return true
 	}, 15*time.Second, 100*time.Millisecond, "the metrics endpoint should serve HTTPS")
-	_ = resp.Body.Close()
-	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "an anonymous scrape must be refused")
+	assert.Equal(t, http.StatusUnauthorized, status, "an anonymous scrape must be refused")
 
 	plain := &http.Client{Timeout: 2 * time.Second}
 	if r, err := plain.Get(fmt.Sprintf("http://%s/metrics", addr)); err == nil {

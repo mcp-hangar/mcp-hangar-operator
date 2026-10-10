@@ -46,3 +46,15 @@ updates:
         update-types:
           - "minor"
           - "patch"
+
+  # The Dockerfile's base images are digest-pinned; this keeps the digests
+  # current (#216).
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+      include: "scope"
