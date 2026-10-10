@@ -6,6 +6,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"os"
@@ -60,6 +61,8 @@ func main() {
 		npEnforcement           string
 		gatewaySelector         string
 		maxConcurrent           int
+		hangarCAFile            string
+		hangarTLSServerName     string
 		metricsSecure           bool
 	)
 
@@ -107,6 +110,12 @@ func main() {
 	flag.StringVar(&gatewaySelector, "hangar-gateway-selector", controller.DefaultGatewayPodSelector,
 		"Label selector for the core gateway pods. When one becomes Ready, every MCPEgressPolicy is "+
 			"reconciled so its L7 policy is re-delivered to a gateway that restarted without it. Empty disables.")
+	flag.StringVar(&hangarCAFile, "hangar-ca-file", "",
+		"PEM CA bundle to trust, in addition to the system roots, for an https --hangar-url "+
+			"whose certificate a private CA signed.")
+	flag.StringVar(&hangarTLSServerName, "hangar-tls-server-name", "",
+		"Name to verify core's certificate against when --hangar-url uses an address the certificate "+
+			"does not name. Needs --hangar-ca-file.")
 	flag.IntVar(&maxConcurrent, "max-concurrent-reconciles", 4,
 		"How many MCPServers, and separately how many MCPEgressPolicies, reconcile at once. "+
 			"With one, a reconcile waiting on a slow core held up every other one, pod create and delete included.")
@@ -193,10 +202,23 @@ func main() {
 
 	// Optional: wire Hangar core client if URL is provided.
 	var hangarClient *hangar.Client
+	if hangarTLSServerName != "" && hangarCAFile == "" {
+		setupLog.Error(fmt.Errorf("--hangar-tls-server-name needs --hangar-ca-file"), "invalid core TLS flags")
+		os.Exit(1)
+	}
+	var hangarTLS *tls.Config
+	if hangarCAFile != "" {
+		var err error
+		if hangarTLS, err = hangar.TLSConfigFromCAFile(hangarCAFile, hangarTLSServerName); err != nil {
+			setupLog.Error(err, "invalid --hangar-ca-file")
+			os.Exit(1)
+		}
+	}
 	if hangarURL != "" {
 		hangarClient = hangar.NewClient(&hangar.Config{
-			URL:    hangarURL,
-			APIKey: hangarAPIKey,
+			TLSConfig: hangarTLS,
+			URL:       hangarURL,
+			APIKey:    hangarAPIKey,
 			// One call, retries included, gives up after CallTimeout: a reconcile
 			// returns and requeues instead of holding a worker for ~43 s on a
 			// core that accepts connections and never answers (#201).
