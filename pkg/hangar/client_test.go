@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -395,4 +396,32 @@ func TestClient_SetL7Policy_TransportErrorHasNoStatus(t *testing.T) {
 	require.Error(t, err)
 	var se *StatusError
 	assert.False(t, errors.As(err, &se))
+}
+
+// A core that accepts connections and never answers: each attempt runs into
+// Timeout, and before CallTimeout every one of them was retried, holding the
+// caller -- a reconcile worker -- for all attempts plus the backoff (#201).
+func TestClient_CallTimeout_BoundsTheWholeCall(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	client := NewClient(&Config{
+		URL:         server.URL,
+		Timeout:     300 * time.Millisecond,
+		MaxRetries:  3,
+		BaseDelay:   10 * time.Millisecond,
+		CallTimeout: 400 * time.Millisecond,
+	})
+
+	start := time.Now()
+	_, err := client.GetMCPServerHealth(context.Background(), "srv", "default")
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.Less(t, elapsed, 800*time.Millisecond, "the call must give up at CallTimeout, not after every retry")
+	assert.LessOrEqual(t, requests.Load(), int32(2), "no attempt may start once the budget is spent")
 }

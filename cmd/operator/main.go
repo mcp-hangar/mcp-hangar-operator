@@ -56,6 +56,7 @@ func main() {
 		imageDigestPolicy       string
 		npEnforcement           string
 		gatewaySelector         string
+		maxConcurrent           int
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
@@ -93,6 +94,9 @@ func main() {
 	flag.StringVar(&gatewaySelector, "hangar-gateway-selector", controller.DefaultGatewayPodSelector,
 		"Label selector for the core gateway pods. When one becomes Ready, every MCPEgressPolicy is "+
 			"reconciled so its L7 policy is re-delivered to a gateway that restarted without it. Empty disables.")
+	flag.IntVar(&maxConcurrent, "max-concurrent-reconciles", 4,
+		"How many MCPServers, and separately how many MCPEgressPolicies, reconcile at once. "+
+			"With one, a reconcile waiting on a slow core held up every other one, pod create and delete included.")
 	flag.StringVar(&npEnforcement, "networkpolicy-enforcement", "auto",
 		"Whether to treat this cluster as enforcing NetworkPolicy: \"auto\" looks for a CNI that "+
 			"watches this API server and, when it finds none, reports an MCPEgressPolicy backstop as "+
@@ -117,6 +121,11 @@ func main() {
 
 	if err := webhook.SetImageDigestPolicy(imageDigestPolicy); err != nil {
 		setupLog.Error(err, "invalid --image-digest-policy")
+		os.Exit(1)
+	}
+
+	if maxConcurrent < 1 {
+		setupLog.Error(fmt.Errorf("must be at least 1, got %d", maxConcurrent), "invalid --max-concurrent-reconciles")
 		os.Exit(1)
 	}
 
@@ -161,10 +170,14 @@ func main() {
 	var hangarClient *hangar.Client
 	if hangarURL != "" {
 		hangarClient = hangar.NewClient(&hangar.Config{
-			URL:        hangarURL,
-			APIKey:     hangarAPIKey,
-			Timeout:    10 * time.Second,
-			MaxRetries: 3,
+			URL:    hangarURL,
+			APIKey: hangarAPIKey,
+			// One call, retries included, gives up after CallTimeout: a reconcile
+			// returns and requeues instead of holding a worker for ~43 s on a
+			// core that accepts connections and never answers (#201).
+			Timeout:     5 * time.Second,
+			CallTimeout: 5 * time.Second,
+			MaxRetries:  3,
 		})
 		setupLog.Info("Hangar core client configured", "url", hangarURL)
 	}
@@ -183,11 +196,12 @@ func main() {
 
 	// Register MCPServer controller.
 	if err := (&controller.MCPServerReconciler{
-		Client:           mgr.GetClient(),
-		Scheme:           mgr.GetScheme(),
-		Recorder:         mgr.GetEventRecorder("mcpserver-controller"),
-		HangarClient:     hangarClient,
-		EnforcementProbe: enforcementProbe,
+		Client:                  mgr.GetClient(),
+		Scheme:                  mgr.GetScheme(),
+		Recorder:                mgr.GetEventRecorder("mcpserver-controller"),
+		HangarClient:            hangarClient,
+		EnforcementProbe:        enforcementProbe,
+		MaxConcurrentReconciles: maxConcurrent,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPServer")
 		os.Exit(1)
@@ -228,12 +242,13 @@ func main() {
 
 	// Register MCPEgressPolicy controller.
 	if err := (&controller.MCPEgressPolicyReconciler{
-		Client:             mgr.GetClient(),
-		Scheme:             mgr.GetScheme(),
-		Recorder:           mgr.GetEventRecorder("mcpegresspolicy-controller"),
-		HangarClient:       hangarClient,
-		GatewayPodSelector: gatewayPodSelector,
-		EnforcementProbe:   enforcementProbe,
+		Client:                  mgr.GetClient(),
+		Scheme:                  mgr.GetScheme(),
+		Recorder:                mgr.GetEventRecorder("mcpegresspolicy-controller"),
+		HangarClient:            hangarClient,
+		GatewayPodSelector:      gatewayPodSelector,
+		EnforcementProbe:        enforcementProbe,
+		MaxConcurrentReconciles: maxConcurrent,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPEgressPolicy")
 		os.Exit(1)

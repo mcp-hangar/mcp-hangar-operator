@@ -33,11 +33,12 @@ func (c *Client) observe(operation string) func(*error) {
 
 // Client communicates with MCP-Hangar core
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
-	apiKey     string
-	maxRetries int
-	baseDelay  time.Duration
+	baseURL     string
+	httpClient  *http.Client
+	apiKey      string
+	maxRetries  int
+	baseDelay   time.Duration
+	callTimeout time.Duration
 }
 
 // Config holds client configuration
@@ -56,6 +57,13 @@ type Config struct {
 
 	// BaseDelay is the initial delay between retries (default: 500ms, doubles each retry)
 	BaseDelay time.Duration
+
+	// CallTimeout bounds one client call, every retry included (default: none).
+	// Timeout bounds a single attempt only, so without this a core that
+	// accepts connections and never answers held a call for every attempt
+	// plus the backoff in between -- about 43 s at 10 s and 3 retries -- and
+	// with it the reconcile worker that made the call (#201).
+	CallTimeout time.Duration
 }
 
 // DefaultConfig returns default client configuration
@@ -95,9 +103,19 @@ func NewClient(config *Config) *Client {
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
-		maxRetries: maxRetries,
-		baseDelay:  baseDelay,
+		maxRetries:  maxRetries,
+		baseDelay:   baseDelay,
+		callTimeout: config.CallTimeout,
 	}
+}
+
+// bound applies the per-call budget to ctx. The caller defers the cancel after
+// it has read the response body, so the budget covers the whole call.
+func (c *Client) bound(ctx context.Context) (context.Context, context.CancelFunc) {
+	if c.callTimeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, c.callTimeout)
 }
 
 // doWithRetry executes an HTTP request with exponential backoff retry on
@@ -133,6 +151,11 @@ func (c *Client) doWithRetry(ctx context.Context, method, url string, body []byt
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			// A spent budget or a cancelled reconcile is not a transient
+			// failure: another attempt cannot finish in time either (#201).
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("request failed: %w", err)
+			}
 			lastErr = fmt.Errorf("request failed: %w", err)
 			continue
 		}
@@ -175,6 +198,8 @@ func (t *toolRef) UnmarshalJSON(b []byte) error {
 
 func (c *Client) GetMCPServerTools(ctx context.Context, name, namespace string) (tools []string, err error) {
 	defer c.observe("get_tools")(&err)
+	ctx, cancel := c.bound(ctx)
+	defer cancel()
 	// core keys mcp_servers by name (the k8s MCPServer name); the namespace is not
 	// part of the id -- it is retained only for the not-found diagnostic below.
 	url := fmt.Sprintf("%s/api/mcp_servers/%s/tools", c.baseURL, name)
@@ -232,6 +257,8 @@ type MCPServerHealth struct {
 // actually maintains.
 func (c *Client) GetMCPServerHealth(ctx context.Context, name, namespace string) (_ *MCPServerHealth, err error) {
 	defer c.observe("get_health")(&err)
+	ctx, cancel := c.bound(ctx)
+	defer cancel()
 	// Same keying as GetMCPServerTools: core keys by name, not namespace.
 	url := fmt.Sprintf("%s/api/mcp_servers/%s/health", c.baseURL, name)
 
@@ -317,6 +344,8 @@ func (e *StatusError) Error() string {
 // returned wrapping a *StatusError.
 func (c *Client) SetL7Policy(ctx context.Context, mcpServerID string, policy *L7PolicyPayload) (persisted bool, err error) {
 	defer c.observe("set_l7_policy")(&err)
+	ctx, cancel := c.bound(ctx)
+	defer cancel()
 	url := fmt.Sprintf("%s/api/mcp_servers/%s/l7_policy", c.baseURL, mcpServerID)
 
 	body, err := json.Marshal(policy)
@@ -347,6 +376,8 @@ func (c *Client) SetL7Policy(ctx context.Context, mcpServerID string, policy *L7
 // as success (the server is already gone).
 func (c *Client) ClearL7Policy(ctx context.Context, mcpServerID string) (err error) {
 	defer c.observe("clear_l7_policy")(&err)
+	ctx, cancel := c.bound(ctx)
+	defer cancel()
 	url := fmt.Sprintf("%s/api/mcp_servers/%s/l7_policy", c.baseURL, mcpServerID)
 
 	resp, err := c.doWithRetry(ctx, http.MethodDelete, url, nil)
@@ -365,6 +396,8 @@ func (c *Client) ClearL7Policy(ctx context.Context, mcpServerID string) (err err
 // DeregisterProvider removes a provider from Hangar core
 func (c *Client) DeregisterMCPServer(ctx context.Context, name, namespace string) (err error) {
 	defer c.observe("deregister")(&err)
+	ctx, cancel := c.bound(ctx)
+	defer cancel()
 	_ = namespace // core keys mcp_servers by name; namespace is not part of the id.
 	url := fmt.Sprintf("%s/api/mcp_servers/%s", c.baseURL, name)
 
@@ -385,6 +418,8 @@ func (c *Client) DeregisterMCPServer(ctx context.Context, name, namespace string
 
 func (c *Client) Ping(ctx context.Context) (err error) {
 	defer c.observe("ping")(&err)
+	ctx, cancel := c.bound(ctx)
+	defer cancel()
 	// /health/live, not /health: core serves live/ready/startup and has no bare
 	// /health. This method had no callers, so nothing broke -- but it was dead in
 	// exactly the way the /api/v1 paths were, and was kept in #92 on the strength

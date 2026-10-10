@@ -18,6 +18,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -92,6 +93,11 @@ type MCPServerReconciler struct {
 	// is True only when it does; nil reports Unknown, which surfaces as
 	// Unknown rather than as a claim either way.
 	EnforcementProbe *networkpolicy.EnforcementProbe
+	// MaxConcurrentReconciles is how many MCPServers reconcile at once; zero
+	// keeps controller-runtime's default of one. With one worker, a reconcile
+	// stuck on a slow core held up every other server's, pod create and
+	// delete included (#201).
+	MaxConcurrentReconciles int
 }
 
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservers,verbs=get;list;watch;create;update;patch;delete
@@ -928,6 +934,7 @@ func (r *MCPServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			predicate.LabelChangedPredicate{},
 			predicate.AnnotationChangedPredicate{},
 		))).
+		WithOptions(controller.Options{MaxConcurrentReconciles: r.MaxConcurrentReconciles}).
 		Owns(&corev1.Pod{}).
 		Owns(&networkingv1.NetworkPolicy{}).
 		// The enforce-egress label decides whether an unpinned server's egress
