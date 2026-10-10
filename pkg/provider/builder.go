@@ -3,9 +3,12 @@ package provider
 
 import (
 	"fmt"
+	"reflect"
 	"strconv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
@@ -90,11 +93,11 @@ func BuildPodForMCPServer(provider *mcpv1alpha2.MCPServer) (*corev1.Pod, error) 
 	pod.Spec.Tolerations = provider.Spec.Tolerations
 	pod.Spec.Affinity = provider.Spec.Affinity
 
-	// Pod security context: the spec value wins whole, otherwise secure defaults.
-	pod.Spec.SecurityContext = provider.Spec.PodSecurityContext
-	if pod.Spec.SecurityContext == nil {
-		pod.Spec.SecurityContext = defaultPodSecurityContext()
-	}
+	// Pod security context: the secure defaults, overlaid field by field with
+	// what the spec sets. It used to win whole, so `podSecurityContext:
+	// {fsGroup: 1000}` silently dropped runAsNonRoot and seccomp (#211).
+	pod.Spec.SecurityContext = defaultPodSecurityContext()
+	overlaySet(pod.Spec.SecurityContext, provider.Spec.PodSecurityContext.DeepCopy())
 
 	return pod, nil
 }
@@ -116,7 +119,7 @@ func buildContainer(provider *mcpv1alpha2.MCPServer) corev1.Container {
 	container := corev1.Container{
 		Name:            ContainerProvider,
 		Image:           provider.Spec.Image,
-		ImagePullPolicy: corev1.PullIfNotPresent,
+		ImagePullPolicy: pullPolicy(provider.Spec.Image),
 	}
 
 	// Command and args
@@ -135,15 +138,29 @@ func buildContainer(provider *mcpv1alpha2.MCPServer) corev1.Container {
 	// Environment variables
 	container.Env = buildEnvVars(provider)
 
-	// Resources
+	// Resources: small default requests, so an unset spec.resources is not a
+	// BestEffort pod, the first evicted under node pressure (#211). No default
+	// limits: a guessed memory limit would OOM-kill servers that worked.
 	if provider.Spec.Resources != nil {
 		container.Resources = *provider.Spec.Resources
+	} else {
+		container.Resources = corev1.ResourceRequirements{Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("50m"),
+			corev1.ResourceMemory: resource.MustParse("64Mi"),
+		}}
 	}
 
-	// Container security context
-	container.SecurityContext = provider.Spec.ContainerSecurityContext
-	if container.SecurityContext == nil {
-		container.SecurityContext = defaultContainerSecurityContext()
+	// Container security context: defaults overlaid by the spec, as for the
+	// pod. Capabilities keep `drop: [ALL]` unless the spec names its own drop
+	// list, so adding NET_BIND_SERVICE does not re-grant everything else.
+	container.SecurityContext = defaultContainerSecurityContext()
+	// DeepCopy: the overlay shares pointers, and the drop fix-up below must not
+	// write into the MCPServer's own spec.
+	if user := provider.Spec.ContainerSecurityContext.DeepCopy(); user != nil {
+		overlaySet(container.SecurityContext, user)
+		if user.Capabilities != nil && len(user.Capabilities.Drop) == 0 {
+			container.SecurityContext.Capabilities.Drop = []corev1.Capability{"ALL"}
+		}
 	}
 
 	return container
@@ -228,6 +245,42 @@ func buildEnvVars(provider *mcpv1alpha2.MCPServer) []corev1.EnvVar {
 
 	// Add user-defined env vars
 	return append(envVars, provider.Spec.Env...)
+}
+
+// pullPolicy pulls a mutable tag every time: with IfNotPresent, a server under
+// the allow-mutable-image opt-out kept whatever image the node had cached, not
+// what the tag names now (#211). A digest cannot change, so it is pulled once.
+func pullPolicy(image string) corev1.PullPolicy {
+	if strings.Contains(image, "@sha256:") {
+		return corev1.PullIfNotPresent
+	}
+	return corev1.PullAlways
+}
+
+// overlaySet copies every field the user set (non-nil pointer, slice or map)
+// from src onto dst, which holds the defaults. Both are pointers to the same
+// struct type. Reflection keeps a field Kubernetes adds later from being
+// silently dropped the way a hand-written copy would.
+func overlaySet(dst, src any) {
+	sv := reflect.ValueOf(src)
+	if !sv.IsValid() || sv.IsNil() {
+		return
+	}
+	sv = sv.Elem()
+	dv := reflect.ValueOf(dst).Elem()
+	for i := range sv.NumField() {
+		f := sv.Field(i)
+		switch f.Kind() {
+		case reflect.Pointer, reflect.Slice, reflect.Map:
+			if !f.IsNil() {
+				dv.Field(i).Set(f)
+			}
+		default:
+			if !f.IsZero() {
+				dv.Field(i).Set(f)
+			}
+		}
+	}
 }
 
 // defaultPodSecurityContext returns secure default pod security context

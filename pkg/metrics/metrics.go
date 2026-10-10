@@ -176,6 +176,8 @@ func ClearProviderMetrics(namespace, name string) {
 	MCPServerToolsCount.DeleteLabelValues(namespace, name)
 	MCPServerHealthCheckFailures.DeleteLabelValues(namespace, name)
 	MCPServerRestarts.DeleteLabelValues(namespace, name)
+	// One series per violation type; the type is not known here (#211).
+	CapabilityViolationsTotal.DeletePartialMatch(prometheus.Labels{"namespace": namespace, "name": name})
 }
 
 // ClearGroupMetrics removes all metrics for a deleted group
