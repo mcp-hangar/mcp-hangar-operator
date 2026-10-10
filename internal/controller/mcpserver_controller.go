@@ -719,13 +719,28 @@ func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpSer
 		return fmt.Errorf("failed to get NetworkPolicy: %w", err)
 	}
 
-	// Update if spec changed
-	if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) {
+	// A same-named policy someone else controls is not ours to rewrite: the
+	// update below used to overwrite its spec and adopt it (#210). Say so
+	// instead, the way the namespace default-deny does for its name (#204).
+	if !perServerPolicyOwned(mcpServer, existing) {
+		if c := meta.FindStatusCondition(mcpServer.Status.Conditions, ConditionNetworkPolicyApplied); c == nil || c.Reason != ReasonPolicyNameTaken {
+			r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonPolicyNameTaken, ActionReconcile,
+				"NetworkPolicy %s exists and is not managed by this operator; not overwriting it", existing.Name)
+		}
+		setServerCondition(mcpServer, ConditionNetworkPolicyApplied, metav1.ConditionFalse, ReasonPolicyNameTaken,
+			fmt.Sprintf("NetworkPolicy %s exists and is not managed by this operator; the server's egress policy is not applied", existing.Name))
+		return nil
+	}
+
+	// Update if spec changed, or adopt a policy this operator wrote before it
+	// set owner references.
+	if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) || !metav1.IsControlledBy(existing, mcpServer) {
 		logger.Info("Updating NetworkPolicy for provider",
 			"networkPolicy", desired.Name, "provider", mcpServer.Name)
 		existing.Spec = desired.Spec
 		existing.Labels = desired.Labels
 		existing.Annotations = desired.Annotations
+		existing.OwnerReferences = desired.OwnerReferences
 		if err := r.Update(ctx, existing); err != nil {
 			return fmt.Errorf("failed to update NetworkPolicy: %w", err)
 		}
@@ -746,6 +761,9 @@ const (
 	// ReasonPolicyWrittenUnverified: the policy exists, and the probe could
 	// not tell whether anything enforces it.
 	ReasonPolicyWrittenUnverified = "PolicyWrittenUnverified"
+	// ReasonPolicyNameTaken: a NetworkPolicy with the server's policy name
+	// exists and belongs to someone else, so the operator wrote nothing.
+	ReasonPolicyNameTaken = "PolicyNameTaken"
 )
 
 // recordPolicyEnforcement sets NetworkPolicyApplied for a policy that was just
@@ -916,8 +934,23 @@ func (r *MCPServerReconciler) deleteNetworkPolicyIfExists(ctx context.Context, m
 	} else if err != nil {
 		return err
 	}
+	if !perServerPolicyOwned(mcpServer, existing) {
+		return nil // someone else's policy under our name (#210)
+	}
 
 	return r.Delete(ctx, existing)
+}
+
+// perServerPolicyOwned reports whether the operator may rewrite or delete the
+// per-server NetworkPolicy np: it is controlled by this MCPServer, or it has
+// no controller and carries the operator's managed-by label (a policy written
+// before owner references were set).
+func perServerPolicyOwned(mcpServer *mcpv1alpha2.MCPServer, np *networkingv1.NetworkPolicy) bool {
+	if metav1.IsControlledBy(np, mcpServer) {
+		return true
+	}
+	return metav1.GetControllerOf(np) == nil &&
+		np.Labels[networkpolicy.LabelManagedBy] == networkpolicy.DefaultManagerName
 }
 
 // podSpecDrifted returns true if the running Pod was built from an older

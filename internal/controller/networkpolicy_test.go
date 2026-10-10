@@ -434,10 +434,13 @@ func TestReconcileNetworkPolicy_GovernedUnpinned_DeletesExistingPolicy(t *testin
 	provider := newTestProvider("flip-provider", "governed", egressCaps())
 	provider.Spec.Image = "ghcr.io/org/app:latest"
 
+	// The operator's own earlier policy (its managed-by label): a same-named
+	// policy that is someone else's is left alone (#210).
 	existing := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      networkpolicy.NetworkPolicyName("flip-provider"),
 			Namespace: "governed",
+			Labels:    map[string]string{networkpolicy.LabelManagedBy: networkpolicy.DefaultManagerName},
 		},
 	}
 	r := newTestReconciler(governedNamespace("governed"), provider, existing)
