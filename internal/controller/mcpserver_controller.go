@@ -19,8 +19,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/internal/webhook"
@@ -927,5 +930,46 @@ func (r *MCPServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		))).
 		Owns(&corev1.Pod{}).
 		Owns(&networkingv1.NetworkPolicy{}).
+		// The enforce-egress label decides whether an unpinned server's egress
+		// is withheld, and it lives on the Namespace, not the MCPServer. Without
+		// this watch a label flip took effect only at each server's next poll,
+		// up to ten minutes later (#205).
+		Watches(&corev1.Namespace{},
+			handler.EnqueueRequestsFromMapFunc(r.mcpServersInNamespace),
+			builder.WithPredicates(enforceEgressLabelChanged())).
 		Complete(r)
+}
+
+// mcpServersInNamespace maps a Namespace to every MCPServer in it.
+func (r *MCPServerReconciler) mcpServersInNamespace(ctx context.Context, obj client.Object) []reconcile.Request {
+	var list mcpv1alpha2.MCPServerList
+	if err := r.List(ctx, &list, client.InNamespace(obj.GetName())); err != nil {
+		log.FromContext(ctx).Error(err, "list MCPServers for namespace label change", "namespace", obj.GetName())
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(list.Items))
+	for i := range list.Items {
+		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{
+			Namespace: list.Items[i].Namespace, Name: list.Items[i].Name,
+		}})
+	}
+	return reqs
+}
+
+// enforceEgressLabelChanged passes only a Namespace update that changes the
+// enforce-egress label. Creates are dropped: a new namespace holds no
+// MCPServers yet, and each server reads the label on its own first reconcile.
+func enforceEgressLabelChanged() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return false },
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			if e.ObjectOld == nil || e.ObjectNew == nil {
+				return false
+			}
+			return e.ObjectOld.GetLabels()[networkpolicy.EnforceEgressLabel] !=
+				e.ObjectNew.GetLabels()[networkpolicy.EnforceEgressLabel]
+		},
+	}
 }
