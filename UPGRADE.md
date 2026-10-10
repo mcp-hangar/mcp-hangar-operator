@@ -1,5 +1,26 @@
 # Upgrade notes
 
+## Upgrade to 0.17.11
+
+### A rejected core API key reads `CoreAuthRejected`, not `HealthCheckFailed`
+
+When core answers a remote MCPServer's health check with 401 or 403, its
+`Degraded` condition now has reason `CoreAuthRejected`, the Warning Event is
+`CoreAuthRejected` and fires once on the transition, and the server is checked
+again after 5 minutes instead of 10 seconds. An alert matching
+`Degraded/HealthCheckFailed` no longer fires for a wrong `--hangar-api-key`;
+match `CoreAuthRejected` too. The fix is the key, not core.
+
+### `cidr: 0.0.0.0/0` and `::/0` need the unrestricted-egress annotation
+
+With the validating webhook enabled, an MCPServer whose egress rule has a
+zero-length CIDR (`0.0.0.0/0`, `::/0`) is refused on create and update unless
+it carries `hangar.io/allow-unrestricted-egress: "true"`, the opt-in that
+`host: "*"` already required. These rules open every destination, which the
+old gate did not see. Add the annotation to keep such a server as it is, or
+narrow the CIDR. With the annotation, the operator emits a Warning Event
+`UnrestrictedEgressAllowed`, as it does for `host: "*"`.
+
 ## Upgrade to 0.17.10
 
 ### `spec.replicas` accepts only 0 or 1, and `kubectl scale` is refused
