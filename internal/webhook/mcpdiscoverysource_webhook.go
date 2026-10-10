@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -23,10 +22,6 @@ type discoveryConstraints struct {
 	configMapNamespace string
 	includePatterns    []string
 	excludePatterns    []string
-	// durations holds free-form duration strings (field path -> raw value).
-	// Populated only for v1alpha1, whose duration fields are plain strings;
-	// v1alpha2 models them as *metav1.Duration and leaves this nil.
-	durations map[string]string
 }
 
 // validateDiscoveryConstraints runs the shared MCPDiscoverySource rules.
@@ -42,10 +37,6 @@ func validateDiscoveryConstraints(c discoveryConstraints) error {
 	if c.crossNamespace() {
 		errs = append(errs, crossNamespaceMessage(c))
 	}
-
-	// Duration strings must parse, else conversion to v1alpha2 hard-fails and
-	// the object becomes unconvertible after admission accepted it.
-	errs = append(errs, validateDurationStrings(c.durations)...)
 
 	// Filter patterns are regular expressions; reject ones that do not compile,
 	// otherwise the controller would fail every reconcile at runtime.
@@ -142,24 +133,3 @@ func (v *MCPDiscoverySourceV1alpha2Validator) ValidateDelete(_ context.Context, 
 	return nil, nil
 }
 
-// validateDurationStrings parses each non-empty duration value and returns an
-// error message for any that is unparseable or negative. It is shared by the
-// v1alpha1 validators, whose duration fields are free-form strings; conversion
-// to v1alpha2 hard-fails on a bad value, so rejecting it at admission keeps the
-// stored object convertible. (v1alpha2 models durations as *metav1.Duration,
-// which the apiserver already validates structurally.)
-func validateDurationStrings(fields map[string]string) []string {
-	var errs []string
-	for field, val := range fields {
-		if val == "" {
-			continue
-		}
-		d, err := time.ParseDuration(val)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s %q is not a valid duration: %v", field, val, err))
-		} else if d < 0 {
-			errs = append(errs, fmt.Sprintf("%s must not be negative", field))
-		}
-	}
-	return errs
-}

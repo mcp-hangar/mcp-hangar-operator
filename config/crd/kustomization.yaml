@@ -17,7 +17,7 @@ patches:
 # the conversion webhook's clientConfig.
 # +kubebuilder:scaffold:crdkustomizecainjectionpatch
 
-# [WEBHOOK] To enable the conversion webhook, uncomment the following configuration
-# so kustomize substitutes the webhook service name/namespace nameReference.
+# kustomizeconfig.yaml keeps kustomize's CRD name references working; there is
+# no conversion webhook to wire up.
 configurations:
 - kustomizeconfig.yaml

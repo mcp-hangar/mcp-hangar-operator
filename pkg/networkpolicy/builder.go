@@ -31,8 +31,8 @@ const (
 
 	// AnnotationHostWarnings lists host/FQDN-only egress rules (no CIDR) that
 	// are NOT enforced by this NetworkPolicy. Such rules are failed closed (no
-	// egress rule is emitted for them); enforcement is deferred to the Tetragon
-	// backend (ADR-006 v1.5).
+	// egress rule is emitted for them); hostname egress is enforced through an
+	// MCPEgressPolicy with the Cilium flavor.
 	AnnotationHostWarnings = "mcp-hangar.io/host-warnings"
 
 	// DefaultManagerName is the value for managed-by labels.
@@ -439,8 +439,8 @@ func buildEgressRules(caps *mcpv1alpha2.NetworkCapabilitiesSpec) []networkingv1.
 // data-exfiltration vector). Vanilla NetworkPolicy cannot match on DNS/FQDN, so
 // we refuse to open the port rather than open it too widely. Such rules are
 // still surfaced via the host-warnings annotation and a validating-webhook
-// warning. FQDN egress enforcement is deferred to the Tetragon backend
-// (ADR-006 v1.5).
+// warning. Hostname egress is enforced through an MCPEgressPolicy with the
+// Cilium flavor (toFQDNs).
 //
 // Port 0 means "any port" and omits the Ports field entirely.
 func translateEgressRule(rule mcpv1alpha2.EgressRuleSpec) (networkingv1.NetworkPolicyEgressRule, bool) {

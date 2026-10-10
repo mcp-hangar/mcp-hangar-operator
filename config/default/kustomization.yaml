@@ -16,7 +16,7 @@ resources:
 - ../crd
 - ../rbac
 - ../manager
-# [WEBHOOK] Serves the admission (validating) + conversion webhooks.
+# [WEBHOOK] Serves the admission (validating) webhooks.
 - ../webhook
 # [CERTMANAGER] Provisions the webhook serving certificate via cert-manager.
 # Requires cert-manager to be installed in the cluster.
@@ -25,7 +25,7 @@ resources:
 patches:
 # [WEBHOOK] Mount the serving cert and open the webhook port on the manager.
 - path: manager_webhook_patch.yaml
-# [WEBHOOK] Enable the admission + conversion webhooks in the manager process.
+# [WEBHOOK] Enable the admission webhooks in the manager process.
 - target:
     group: apps
     version: v1
