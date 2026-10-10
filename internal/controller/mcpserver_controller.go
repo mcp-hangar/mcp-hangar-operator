@@ -11,6 +11,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -80,6 +81,7 @@ const (
 	ReasonViolationDetected         = "ViolationDetected"
 	ReasonViolationCleared          = "ViolationCleared"
 	ReasonUnrestrictedEgressAllowed = "UnrestrictedEgressAllowed"
+	ReasonCoreAuthRejected          = "CoreAuthRejected"
 )
 
 // MCPServerReconciler reconciles a MCPServer object
@@ -514,7 +516,20 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 		// says the upstream is failing. The first is our problem, the second is
 		// the upstream's, and conflating them made both unreadable.
 		health, err := r.HangarClient.GetMCPServerHealth(ctx, mcpServer.Name, mcpServer.Namespace)
-		if err != nil {
+		if hangar.IsAuthRejected(err) {
+			// Core refused the operator's credentials. That is a deployment
+			// fault, not an outage: re-asking every 10 s changes nothing, and
+			// reporting it as a failed health check hid the cause (#212). One
+			// Warning on the transition, then the steady cadence.
+			mcpServer.Status.State = mcpv1alpha2.MCPServerStateDegraded
+			if c := meta.FindStatusCondition(mcpServer.Status.Conditions, ConditionDegraded); c == nil || c.Reason != ReasonCoreAuthRejected {
+				r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonCoreAuthRejected, ActionReconcile,
+					"Core rejected the operator's credentials; check --hangar-api-key: %v", err)
+			}
+			setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, ReasonCoreAuthRejected,
+				"core rejected the operator's credentials (check the API key): "+err.Error())
+			requeueAfter = readyRequeueAfter
+		} else if err != nil {
 			logger.Error(err, "Could not read health from Hangar core")
 			mcpServer.Status.State = mcpv1alpha2.MCPServerStateDegraded
 			// ConsecutiveFailures is deliberately NOT touched here. It mirrors

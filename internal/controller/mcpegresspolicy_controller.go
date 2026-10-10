@@ -275,12 +275,12 @@ func (r *MCPEgressPolicyReconciler) pushL7Policy(ctx context.Context, logger log
 // core answered with is a refusal (auth or otherwise); anything else never got
 // an answer.
 func l7PushReason(err error) string {
+	if hangar.IsAuthRejected(err) {
+		return l7ReasonCoreAuthRejected
+	}
 	var se *hangar.StatusError
 	if !errors.As(err, &se) {
 		return l7ReasonCoreUnreachable
-	}
-	if se.StatusCode == 401 || se.StatusCode == 403 {
-		return l7ReasonCoreAuthRejected
 	}
 	return l7ReasonPushFailed
 }

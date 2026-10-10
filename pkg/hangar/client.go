@@ -4,10 +4,14 @@ package hangar
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/mcp-hangar/operator/pkg/metrics"
@@ -64,6 +68,38 @@ type Config struct {
 	// plus the backoff in between -- about 43 s at 10 s and 3 retries -- and
 	// with it the reconcile worker that made the call (#201).
 	CallTimeout time.Duration
+
+	// TLSConfig is used for an https core, e.g. one whose certificate a
+	// private CA signed (see TLSConfigFromCAFile). Nil uses the system roots.
+	TLSConfig *tls.Config
+}
+
+// TLSConfigFromCAFile returns a TLS config trusting the PEM CA bundle at
+// caFile in addition to the system roots, verifying the server as serverName
+// when that is set (for a core reached by an address its certificate does not
+// name). Without it an https core signed by a private CA could not be
+// reached at all (#212).
+func TLSConfigFromCAFile(caFile, serverName string) (*tls.Config, error) {
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	pem, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("read CA file: %w", err)
+	}
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("CA file %s holds no PEM certificate", caFile)
+	}
+	return &tls.Config{RootCAs: pool, ServerName: serverName, MinVersion: tls.VersionTLS12}, nil
+}
+
+// IsAuthRejected reports whether core refused the call's credentials (401 or
+// 403). A wrong API key is not an outage: retrying it soon changes nothing,
+// and reporting it as a failed health check hid the cause (#212).
+func IsAuthRejected(err error) bool {
+	var se *StatusError
+	return errors.As(err, &se) && (se.StatusCode == http.StatusUnauthorized || se.StatusCode == http.StatusForbidden)
 }
 
 // DefaultConfig returns default client configuration
@@ -98,15 +134,23 @@ func NewClient(config *Config) *Client {
 	}
 
 	return &Client{
-		baseURL: config.URL,
-		apiKey:  config.APIKey,
-		httpClient: &http.Client{
-			Timeout: timeout,
-		},
+		baseURL:     config.URL,
+		apiKey:      config.APIKey,
+		httpClient:  newHTTPClient(timeout, config.TLSConfig),
 		maxRetries:  maxRetries,
 		baseDelay:   baseDelay,
 		callTimeout: config.CallTimeout,
 	}
+}
+
+func newHTTPClient(timeout time.Duration, tlsConfig *tls.Config) *http.Client {
+	c := &http.Client{Timeout: timeout}
+	if tlsConfig != nil {
+		t := http.DefaultTransport.(*http.Transport).Clone()
+		t.TLSClientConfig = tlsConfig
+		c.Transport = t
+	}
+	return c
 }
 
 // bound applies the per-call budget to ctx. The caller defers the cancel after
@@ -216,7 +260,7 @@ func (c *Client) GetMCPServerTools(ctx context.Context, name, namespace string) 
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("unexpected status: %w", &StatusError{StatusCode: resp.StatusCode, Body: string(body)})
 	}
 
 	var result struct {
@@ -274,7 +318,7 @@ func (c *Client) GetMCPServerHealth(ctx context.Context, name, namespace string)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("unexpected status: %w", &StatusError{StatusCode: resp.StatusCode, Body: string(body)})
 	}
 
 	var health MCPServerHealth
