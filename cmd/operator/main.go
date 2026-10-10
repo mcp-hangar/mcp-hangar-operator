@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -59,9 +60,13 @@ func main() {
 		npEnforcement           string
 		gatewaySelector         string
 		maxConcurrent           int
+		metricsSecure           bool
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
+	flag.BoolVar(&metricsSecure, "metrics-secure", true,
+		"Serve /metrics over HTTPS and require a bearer token the API server authenticates and authorizes "+
+			"(get on the /metrics non-resource URL). Set false for the previous plain, unauthenticated HTTP.")
 	flag.StringVar(&healthProbeAddr, "health-probe-bind-address", ":8081", "The address the health probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
@@ -157,10 +162,8 @@ func main() {
 	}
 
 	mgrOpts := ctrl.Options{
-		Scheme: scheme,
-		Metrics: metricsserver.Options{
-			BindAddress: metricsAddr,
-		},
+		Scheme:                        scheme,
+		Metrics:                       metricsServerOptions(metricsAddr, metricsSecure),
 		HealthProbeBindAddress:        healthProbeAddr,
 		LeaderElection:                enableLeaderElection,
 		LeaderElectionID:              "mcp-hangar-operator.mcp-hangar.io",
@@ -348,6 +351,21 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// metricsServerOptions serves /metrics over HTTPS with authentication and
+// authorization by default. Served plain, any pod in the cluster could read
+// server names, states, tool counts and reconcile errors (#193). The
+// certificate is self-signed and generated in memory, so it works on a
+// read-only root filesystem; scrapers skip verification or pin it. The RBAC
+// this needs is declared in internal/controller/metrics_rbac.go.
+func metricsServerOptions(addr string, secure bool) metricsserver.Options {
+	opts := metricsserver.Options{BindAddress: addr}
+	if secure {
+		opts.SecureServing = true
+		opts.FilterProvider = filters.WithAuthenticationAndAuthorization
+	}
+	return opts
 }
 
 // parseEnforcementOverride maps the --networkpolicy-enforcement flag onto a

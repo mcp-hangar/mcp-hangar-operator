@@ -7,3 +7,5 @@ resources:
 # Leader-election permissions, scoped to the manager's namespace.
 - leader_election_role.yaml
 - leader_election_role_binding.yaml
+# Granted to scrapers, not to the manager: /metrics requires it (#193).
+- metrics_reader_role.yaml
