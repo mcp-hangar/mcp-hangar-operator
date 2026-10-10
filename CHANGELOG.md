@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.17.11](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.10...v0.17.11) (2026-10-10)
+
+### Fixed
+
+- **controller:** a remote MCPServer whose core rejects the operator's
+  credentials (401/403) reads `Degraded/CoreAuthRejected` with one Warning,
+  re-checked at the steady interval, instead of `HealthCheckFailed` every 10 s
+  with a Warning each time, indistinguishable from an outage.
+  `--hangar-ca-file` and `--hangar-tls-server-name` let the operator reach an
+  https core whose certificate a private CA signed ([#262](https://github.com/mcp-hangar/mcp-hangar-operator/pull/262))
+
+### Security
+
+- **webhook:** an egress rule with `cidr: 0.0.0.0/0` or `::/0` now needs the
+  `hangar.io/allow-unrestricted-egress: "true"` annotation, and its use is
+  audited with `UnrestrictedEgressAllowed`, as `host: "*"` already was. The CIDR
+  forms opened every destination with neither; see UPGRADE.md ([#261](https://github.com/mcp-hangar/mcp-hangar-operator/pull/261))
+
 ## [0.17.10](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.9...v0.17.10) (2026-10-10)
 
 ### Changed
