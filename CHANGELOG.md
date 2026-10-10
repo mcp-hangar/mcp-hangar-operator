@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.17.14](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.13...v0.17.14) (2026-10-10)
+
+### Fixed
+
+- **controller:** discovery refuses a generated MCPServer name Kubernetes cannot
+  use (uppercase, `/`, longer than 63 characters) per entry, with the reason in
+  `status.discoveredProviders`, instead of failing at Create; and deleting an
+  `Additive` source with `ownership.controller: false` leaves its servers in
+  place instead of deleting them. See UPGRADE.md ([#268](https://github.com/mcp-hangar/mcp-hangar-operator/pull/268))
+
+### Security
+
+- **controller:** the operator no longer overwrites or deletes a NetworkPolicy
+  that happens to have an MCPServer's per-server policy name but belongs to
+  someone else. The server reports `NetworkPolicyApplied=False/PolicyNameTaken`
+  with one Warning instead; a policy the operator wrote before it set owner
+  references is adopted. See UPGRADE.md ([#269](https://github.com/mcp-hangar/mcp-hangar-operator/pull/269))
+
 ## [0.17.13](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.12...v0.17.13) (2026-10-10)
 
 ### Security

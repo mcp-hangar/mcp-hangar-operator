@@ -1,5 +1,27 @@
 # Upgrade notes
 
+## Upgrade to 0.17.14
+
+### A foreign NetworkPolicy under a server's policy name is left alone
+
+The per-server policy is named `mcp-provider-<server>-egress`. If a
+NetworkPolicy of that name exists and is not the operator's -- controlled by
+something else, or with no controller and no
+`app.kubernetes.io/managed-by: mcp-hangar-operator` label -- the operator no
+longer rewrites its spec or deletes it. The MCPServer reports
+`NetworkPolicyApplied=False/PolicyNameTaken` and a `PolicyNameTaken` Warning,
+and its egress policy is not applied until the other policy is renamed or
+removed. Policies the operator itself wrote, with or without an owner
+reference, are managed as before.
+
+### Deleting an Additive, unowned discovery source keeps its servers
+
+An `MCPDiscoverySource` with `mode: Additive` and `ownership.controller: false`
+no longer deletes the MCPServers it created when the source itself is deleted;
+they stay, still labelled `mcp-hangar.io/managed-by: <source>`. Delete them by
+that label if you relied on the old cleanup. Sources that own their servers
+(the default) or are `Authoritative` behave as before.
+
 ## Upgrade to 0.17.13
 
 ### Provider pods: merged security context, default requests, `Always` pull for tags
