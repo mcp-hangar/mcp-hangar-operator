@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.17.18](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.17...v0.17.18) (2026-10-11)
+
+### Added
+
+- **api:** `kubectl get --field-selector` works on MCPServer `spec.mode` and
+  `status.state`, and on MCPEgressPolicy `spec.mode` and `spec.targetRef.kind`
+  (Kubernetes 1.31 or later) ([#287](https://github.com/mcp-hangar/mcp-hangar-operator/pull/287))
+- **infra:** the operator logs its version and commit at startup, stamped into
+  the binary by the image build, which is now `-trimpath` with stripped symbols
+  and digest-pinned base images ([#281](https://github.com/mcp-hangar/mcp-hangar-operator/pull/281))
+
+### Changed
+
+- **controller:** an MCPServerGroup counts starting members, and members with no
+  state yet, in the new `status.initializingCount` instead of `coldCount`, and
+  its member list no longer carries `lastHealthCheck`, so a member's health
+  probe no longer rewrites the group status ([#289](https://github.com/mcp-hangar/mcp-hangar-operator/pull/289))
+- **controller:** an MCPServerGroup no longer takes a finalizer, so deleting one
+  no longer waits for a running operator; its metrics are cleared when the
+  operator sees it gone, and the finalizer is removed from existing groups ([#290](https://github.com/mcp-hangar/mcp-hangar-operator/pull/290))
+- **controller:** the MCPEgressPolicy controller reuses its CiliumNetworkPolicy
+  CRD lookup for five minutes instead of repeating it on every reconcile, which
+  on a cluster without Cilium was a discovery request each time ([#291](https://github.com/mcp-hangar/mcp-hangar-operator/pull/291))
+
+### Removed
+
+- **api:** `MCPServer.status.phase` is gone. Nothing ever wrote it; `status.state`
+  and the conditions carry the server's state ([#284](https://github.com/mcp-hangar/mcp-hangar-operator/pull/284))
+- **webhook:** the MCPServerGroup validating webhook is gone. Its one rule,
+  `spec.selector` must be set, is the CRD schema's `required`, so a group without
+  a selector is still rejected, now without a `failurePolicy: Fail` webhook hop ([#286](https://github.com/mcp-hangar/mcp-hangar-operator/pull/286))
+
+### Fixed
+
+- **controller:** a cold MCPServer's `Ready` condition no longer says it "will
+  start on demand"; nothing scales `spec.replicas` up from 0, and the message now
+  says to set it to 1. The `startupTimeout` field doc says the operator does not
+  act on it ([#285](https://github.com/mcp-hangar/mcp-hangar-operator/pull/285))
+
 ## [0.17.17](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.16...v0.17.17) (2026-10-10)
 
 ### Changed

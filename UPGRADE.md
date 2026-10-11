@@ -1,5 +1,32 @@
 # Upgrade notes
 
+## Upgrade to 0.17.18
+
+### The MCPServerGroup webhook is removed
+
+The operator no longer serves `/validate-mcp-hangar-io-v1alpha2-mcpservergroup`.
+A `ValidatingWebhookConfiguration` that still routes MCPServerGroup writes there
+makes every group create and update fail, because its `failurePolicy` is
+`Fail`. Apply the new `config/webhook` manifests, or a chart that no longer
+renders `vmcpservergroup-v1alpha2.kb.io`, with or before this operator image.
+A group without `spec.selector` is still rejected, by the CRD schema.
+
+### MCPServerGroup: `initializingCount`, and no member `lastHealthCheck`
+
+`status.coldCount` now counts only members with `spec.replicas: 0`. A member
+that is starting, or that has no state yet, is counted in the new
+`status.initializingCount`, so a group mid-rollout no longer reads as idle.
+`status.providers[].lastHealthCheck` is removed: it made every member probe a
+group status write. Read `status.lastHealthCheck` on the MCPServer instead. The
+`mcp_operator_group_provider_count{state="Initializing"}` series now carries
+starting members that were in `state="Cold"` before.
+
+### `MCPServer.status.phase` is removed
+
+The field was declared but never written, so it was always empty. Read
+`status.state` or the `Ready` condition instead. Once the new CRD is applied the
+apiserver prunes any value stored in it, so nothing needs migrating.
+
 ## Upgrade to 0.17.17
 
 ### `capability_violations_total` counts violations, not reconciles
