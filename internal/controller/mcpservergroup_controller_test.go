@@ -5,13 +5,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/metrics"
@@ -63,6 +67,7 @@ type groupCounts struct {
 	Degraded int32
 	Dead     int32
 	Cold     int32
+	Init     int32
 }
 
 func countsOf(group *mcpv1alpha2.MCPServerGroup) groupCounts {
@@ -72,6 +77,7 @@ func countsOf(group *mcpv1alpha2.MCPServerGroup) groupCounts {
 		Degraded: group.Status.DegradedCount,
 		Dead:     group.Status.DeadCount,
 		Cold:     group.Status.ColdCount,
+		Init:     group.Status.InitializingCount,
 	}
 }
 
@@ -167,8 +173,9 @@ func createNamespace(t *testing.T, name string) *corev1.Namespace {
 
 // A counter has to be able to come back down, and nothing pinned that.
 //
-// Every member starts with no state, which the aggregation counts as cold, so
-// every group passes through a non-zero coldCount on its way to steady state.
+// Every member starts with no state, which the aggregation counts as
+// initializing, so every group passes through a non-zero initializingCount on
+// its way to steady state.
 // The existing tests only ever asserted counters going up, which leaves the
 // falling direction untested for a status written as a diff patch -- and the
 // falling direction is the one that decides whether a recovered group ever
@@ -494,4 +501,128 @@ func TestMCPServerGroup_StatusWriteStormBounded(t *testing.T) {
 
 	errorCount := testutil.ToFloat64(metrics.GroupStatusWriteTotal.WithLabelValues(ns.Name, groupName, "error"))
 	assert.Zero(t, errorCount, "no reconcile errors expected from status writes at this scale with the fix applied")
+}
+
+// groupSeries counts the group_provider_count series a group has.
+func groupSeries(namespace, name string) int {
+	ch := make(chan prometheus.Metric, 64)
+	go func() {
+		metrics.GroupMCPServerCount.Collect(ch)
+		close(ch)
+	}()
+	n := 0
+	for m := range ch {
+		pb := &dto.Metric{}
+		if m.Write(pb) != nil {
+			continue
+		}
+		labels := map[string]string{}
+		for _, l := range pb.GetLabel() {
+			labels[l.GetName()] = l.GetValue()
+		}
+		if labels["namespace"] == namespace && labels["name"] == name {
+			n++
+		}
+	}
+	return n
+}
+
+// A group owns nothing, so it takes no finalizer: one only cleared metrics and
+// blocked deletion while the operator was down (#210). Its series still go
+// when it is deleted.
+func TestMCPServerGroup_NoFinalizer(t *testing.T) {
+	ns := createNamespace(t, "test-group-nofin")
+	defer k8sClient.Delete(ctx, ns)
+
+	labels := map[string]string{"tier": "nofin"}
+	group := &mcpv1alpha2.MCPServerGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: "nofin-group", Namespace: ns.Name},
+		Spec:       mcpv1alpha2.MCPServerGroupSpec{Selector: &metav1.LabelSelector{MatchLabels: labels}},
+	}
+	require.NoError(t, k8sClient.Create(ctx, group))
+	createMCPServer(t, "member", ns.Name, mcpv1alpha2.MCPServerStateReady, labels)
+	settled := waitForGroupCounts(t, "nofin-group", ns.Name, groupCounts{Provider: 1, Ready: 1})
+	assert.Empty(t, settled.Finalizers, "a reconciled group must carry no finalizer")
+	require.Positive(t, groupSeries(ns.Name, "nofin-group"))
+
+	require.NoError(t, k8sClient.Delete(ctx, group))
+	require.Eventually(t, func() bool {
+		return groupSeries(ns.Name, "nofin-group") == 0
+	}, 10*time.Second, 100*time.Millisecond, "a deleted group kept its metric series")
+}
+
+// A group created by an older operator carries the finalizer. The controller
+// takes it off, so the group can still be deleted.
+func TestMCPServerGroup_LegacyFinalizerIsRemoved(t *testing.T) {
+	ns := createNamespace(t, "test-group-legacyfin")
+	defer k8sClient.Delete(ctx, ns)
+
+	group := &mcpv1alpha2.MCPServerGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: "legacy-group", Namespace: ns.Name, Finalizers: []string{finalizerName}},
+		Spec:       mcpv1alpha2.MCPServerGroupSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"tier": "legacy"}}},
+	}
+	require.NoError(t, k8sClient.Create(ctx, group))
+	require.Eventually(t, func() bool {
+		g := &mcpv1alpha2.MCPServerGroup{}
+		return k8sClient.Get(ctx, client.ObjectKeyFromObject(group), g) == nil && len(g.Finalizers) == 0
+	}, 10*time.Second, 100*time.Millisecond, "the legacy finalizer was not removed")
+
+	require.NoError(t, k8sClient.Delete(ctx, group))
+	require.Eventually(t, func() bool {
+		return apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(group), &mcpv1alpha2.MCPServerGroup{}))
+	}, 10*time.Second, 100*time.Millisecond, "the group was not deleted")
+}
+
+// A member that is starting is not cold: Cold means replicas: 0. Folding
+// Initializing into coldCount reported a group mid-rollout as idle (#210).
+func TestMCPServerGroup_InitializingIsNotCold(t *testing.T) {
+	ns := createNamespace(t, "test-group-init")
+	defer k8sClient.Delete(ctx, ns)
+
+	labels := map[string]string{"tier": "starting"}
+	require.NoError(t, k8sClient.Create(ctx, &mcpv1alpha2.MCPServerGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: "init-group", Namespace: ns.Name},
+		Spec:       mcpv1alpha2.MCPServerGroupSpec{Selector: &metav1.LabelSelector{MatchLabels: labels}},
+	}))
+	createMCPServer(t, "starting", ns.Name, mcpv1alpha2.MCPServerStateInitializing, labels)
+	createMCPServer(t, "stopped", ns.Name, mcpv1alpha2.MCPServerStateCold, labels)
+
+	waitForGroupCounts(t, "init-group", ns.Name, groupCounts{Provider: 2, Cold: 1, Init: 1})
+}
+
+// A member's health probe must not rewrite the group. The member list used to
+// copy lastHealthCheck, which changes on every probe, so the write-skip in
+// updateStatus never applied and each probe cost a group status write (#210).
+func TestMCPServerGroup_MemberProbeDoesNotRewriteGroup(t *testing.T) {
+	ns := createNamespace(t, "test-group-probe")
+	defer k8sClient.Delete(ctx, ns)
+
+	labels := map[string]string{"tier": "probed"}
+	require.NoError(t, k8sClient.Create(ctx, &mcpv1alpha2.MCPServerGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: "probe-group", Namespace: ns.Name},
+		Spec:       mcpv1alpha2.MCPServerGroupSpec{Selector: &metav1.LabelSelector{MatchLabels: labels}},
+	}))
+	member := createMCPServer(t, "probed", ns.Name, mcpv1alpha2.MCPServerStateReady, labels)
+	settled := waitForGroupCounts(t, "probe-group", ns.Name, groupCounts{Provider: 1, Ready: 1})
+	// Let any reconcile already queued for the settle finish.
+	time.Sleep(2 * time.Second)
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(settled), settled))
+	before := settled.ResourceVersion
+
+	for i := range 3 {
+		require.Eventually(t, func() bool {
+			p := &mcpv1alpha2.MCPServer{}
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(member), p); err != nil {
+				return false
+			}
+			now := metav1.NewTime(time.Now().Add(time.Duration(i) * time.Second))
+			p.Status.LastHealthCheck = &now
+			return k8sClient.Status().Update(ctx, p) == nil
+		}, 10*time.Second, 100*time.Millisecond)
+		time.Sleep(time.Second)
+	}
+
+	after := &mcpv1alpha2.MCPServerGroup{}
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(settled), after))
+	assert.Equal(t, before, after.ResourceVersion, "a member probe rewrote the group status")
 }
