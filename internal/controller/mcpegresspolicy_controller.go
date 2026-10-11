@@ -133,6 +133,7 @@ func (r *MCPEgressPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err := r.Get(ctx, req.NamespacedName, policy); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	ctx = withStatusBase(ctx, policy)
 
 	// Deletion: clear the L7 policy from core, then drop the finalizer.
 	if !policy.DeletionTimestamp.IsZero() {
@@ -153,7 +154,7 @@ func (r *MCPEgressPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	result, reconcileErr := r.reconcile(ctx, policy)
 
 	policy.Status.ObservedGeneration = policy.Generation
-	if err := r.Status().Update(ctx, policy); err != nil {
+	if err := writeStatus(ctx, r.Client, policy); err != nil {
 		if reconcileErr == nil {
 			reconcileErr = err
 		}
