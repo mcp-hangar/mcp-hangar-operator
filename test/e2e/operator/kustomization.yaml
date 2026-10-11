@@ -1,0 +1,30 @@
+# The operator, built from this checkout, for the reachability e2e (#208).
+#
+# The reachability tests used to apply the builder's output themselves, which
+# proves the YAML and not the operator. With this overlay the operator writes
+# the NetworkPolicies, and the tests probe what it wrote.
+#
+# Not config/default: that wires the webhooks and needs cert-manager, which
+# this e2e is not about. No --hangar-url: core integration is off, so the L7
+# push is not part of this e2e (the remote-lifecycle e2e covers it).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: mcp-hangar
+namePrefix: mcp-hangar-operator-
+
+labels:
+  - includeSelectors: true
+    pairs:
+      app.kubernetes.io/name: mcp-hangar-operator
+
+resources:
+  - ../../../config/rbac
+  - ../../../config/manager
+
+images:
+  # A tag other than latest keeps imagePullPolicy at IfNotPresent, so the
+  # kubelet uses the image `make e2e-operator` loaded into kind.
+  - name: ghcr.io/mcp-hangar/mcp-hangar-operator
+    newName: localhost/mcp-hangar-operator
+    newTag: e2e

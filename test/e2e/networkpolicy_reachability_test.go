@@ -18,7 +18,9 @@
 // what the builder is believed to emit.
 //
 // Requires: a cluster whose CNI enforces NetworkPolicy (kind's default kindnet
-// does NOT -- see `make e2e-cluster`, which builds kind + Calico).
+// does NOT -- see `make e2e-cluster`, which builds kind + Calico), and, for
+// operator_reachability_test.go, the operator running in it (`make
+// e2e-operator`).
 package e2e
 
 import (
@@ -46,13 +48,16 @@ const (
 	policySettle = 5 * time.Second
 )
 
+func kubeconfigPath() string {
+	if path := os.Getenv("KUBECONFIG"); path != "" {
+		return path
+	}
+	return os.Getenv("HOME") + "/.kube/config"
+}
+
 func clientset(t *testing.T) *kubernetes.Clientset {
 	t.Helper()
-	path := os.Getenv("KUBECONFIG")
-	if path == "" {
-		path = os.Getenv("HOME") + "/.kube/config"
-	}
-	cfg, err := clientcmd.BuildConfigFromFlags("", path)
+	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath())
 	if err != nil {
 		t.Fatalf("kubeconfig: %v", err)
 	}
@@ -277,7 +282,10 @@ func TestNamespaceDefaultDenyLimitsUnregisteredPods(t *testing.T) {
 	target := runningPod(t, cs, ns, "some-target",
 		map[string]string{"role": "target"}, []string{"nc -lk -p 8080 -e /bin/true"})
 
-	applyPolicy(t, cs, networkpolicy.BuildNamespaceDefaultDenyEgress(ns))
+	// The label is the operator's cue: it writes the default-deny itself, so
+	// the test waits for that instead of applying the builder's copy, which
+	// would race the operator for the same name (#208).
+	waitForOperatorPolicy(t, crClient(t), ns, networkpolicy.DefaultDenyEgressName, ns)
 
 	// No provider label: this pod matches no per-server allow policy.
 	if canReach(t, cs, ns, "probe-shadow", map[string]string{"role": "shadow"},

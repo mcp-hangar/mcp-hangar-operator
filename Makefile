@@ -245,8 +245,21 @@ ifeq ($(E2E_NODELOCAL_DNS),1)
 	@test/e2e/nodelocaldns.sh kind-$(E2E_CLUSTER) $(NODELOCAL_DNS_IP) $(NODELOCAL_DNS_K8S_REF)
 endif
 
+E2E_OPERATOR_IMAGE ?= localhost/mcp-hangar-operator:e2e
+
+.PHONY: e2e-operator
+e2e-operator: ## Build the operator from this checkout and run it in the e2e cluster (#208).
+	$(CONTAINER_TOOL) build -t $(E2E_OPERATOR_IMAGE) .
+	kind load docker-image $(E2E_OPERATOR_IMAGE) --name $(E2E_CLUSTER)
+	kubectl --context kind-$(E2E_CLUSTER) apply --server-side -f config/crd/bases/
+	kubectl --context kind-$(E2E_CLUSTER) wait --for=condition=Established --timeout=60s \
+		$$(kubectl --context kind-$(E2E_CLUSTER) get crd -o name | grep 'mcp-hangar.io')
+	kubectl --context kind-$(E2E_CLUSTER) apply -k test/e2e/operator
+	kubectl --context kind-$(E2E_CLUSTER) -n mcp-hangar rollout status \
+		deploy/mcp-hangar-operator-controller-manager --timeout=180s
+
 .PHONY: e2e
-e2e: ## Run reachability tests against the current kube context (E2E_CNI gates CNI-specific tests).
+e2e: ## Run reachability tests against the current kube context (run e2e-operator first; E2E_CNI gates CNI-specific tests).
 	E2E_CNI=$(E2E_CNI) E2E_NODELOCAL_DNS=$(E2E_NODELOCAL_DNS) NODELOCAL_DNS_IP=$(NODELOCAL_DNS_IP) \
 		go test -tags e2e ./test/e2e/... -v -timeout 20m
 
