@@ -142,6 +142,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		logger.Error(err, "Failed to get MCPServer")
 		return ctrl.Result{}, err
 	}
+	ctx = withStatusBase(ctx, mcpServer)
 
 	// Handle deletion
 	if !mcpServer.ObjectMeta.DeletionTimestamp.IsZero() {
@@ -185,7 +186,7 @@ func (r *MCPServerReconciler) reconcileNormal(ctx context.Context, mcpServer *mc
 		// against future enum additions or direct-cache manipulation.
 		logger.Error(nil, "Unknown provider mode", "mode", mcpServer.Spec.Mode)
 		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "InvalidMode", "Unknown provider mode")
-		if err := r.Status().Update(ctx, mcpServer); err != nil {
+		if err := writeStatus(ctx, r.Client, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
@@ -200,7 +201,7 @@ func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mc
 	if mcpServer.Spec.Image == "" {
 		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "InvalidSpec", "Container mode requires image")
 		mcpServer.Status.State = mcpv1alpha2.MCPServerStateDead
-		if err := r.Status().Update(ctx, mcpServer); err != nil {
+		if err := writeStatus(ctx, r.Client, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
 		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonFailed, ActionReconcile,
@@ -232,7 +233,7 @@ func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mc
 	if err != nil {
 		logger.Error(err, "Failed to build Pod spec")
 		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "PodBuildFailed", err.Error())
-		if err := r.Status().Update(ctx, mcpServer); err != nil {
+		if err := writeStatus(ctx, r.Client, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: errorRequeueAfter}, nil
@@ -269,7 +270,7 @@ func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mc
 		// count against it, or one more failure would land it at the cap.
 		mcpServer.Status.ConsecutiveFailures = 0
 		setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "SpecChanged", "Provider spec changed, recreating Pod")
-		if err := r.Status().Update(ctx, mcpServer); err != nil {
+		if err := writeStatus(ctx, r.Client, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
 		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonUpdated, ActionReconcile,
@@ -297,7 +298,7 @@ func (r *MCPServerReconciler) handlePodNotFound(ctx context.Context, mcpServer *
 		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "Cold", "spec.replicas is 0, so no provider pod runs; set it to 1 to start one")
 		setServerCondition(mcpServer, ConditionAvailable, metav1.ConditionFalse, "Cold", "No replicas requested")
 
-		if err := r.Status().Update(ctx, mcpServer); err != nil {
+		if err := writeStatus(ctx, r.Client, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
 
@@ -319,7 +320,7 @@ func (r *MCPServerReconciler) handlePodNotFound(ctx context.Context, mcpServer *
 		logger.Error(err, "Failed to create Pod")
 		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "PodCreateFailed", err.Error())
 		mcpServer.Status.State = mcpv1alpha2.MCPServerStateDead
-		if err := r.Status().Update(ctx, mcpServer); err != nil {
+		if err := writeStatus(ctx, r.Client, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
 		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonFailed, ActionReconcile,
@@ -335,7 +336,7 @@ func (r *MCPServerReconciler) handlePodNotFound(ctx context.Context, mcpServer *
 	mcpServer.Status.LastStartedAt = &now
 	setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "PodCreated", "Pod created, waiting for ready")
 
-	if err := r.Status().Update(ctx, mcpServer); err != nil {
+	if err := writeStatus(ctx, r.Client, mcpServer); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -398,7 +399,7 @@ func (r *MCPServerReconciler) syncPodStatus(ctx context.Context, mcpServer *mcpv
 		mcpServer.Status.Capabilities = nil
 	}
 
-	if err := r.Status().Update(ctx, mcpServer); err != nil {
+	if err := writeStatus(ctx, r.Client, mcpServer); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -549,7 +550,7 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 	if endpoint == "" {
 		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "NoEndpoint", "Remote provider requires endpoint")
 		mcpServer.Status.State = mcpv1alpha2.MCPServerStateDead
-		if err := r.Status().Update(ctx, mcpServer); err != nil {
+		if err := writeStatus(ctx, r.Client, mcpServer); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
@@ -656,7 +657,7 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 		mcpServer.Status.Capabilities = nil
 	}
 
-	if err := r.Status().Update(ctx, mcpServer); err != nil {
+	if err := writeStatus(ctx, r.Client, mcpServer); err != nil {
 		return ctrl.Result{}, err
 	}
 

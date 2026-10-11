@@ -139,6 +139,7 @@ func (r *MCPDiscoverySourceReconciler) Reconcile(ctx context.Context, req ctrl.R
 		logger.Error(err, "Failed to get MCPDiscoverySource")
 		return ctrl.Result{}, err
 	}
+	ctx = withStatusBase(ctx, source)
 
 	// Handle deletion
 	if !source.ObjectMeta.DeletionTimestamp.IsZero() {
@@ -168,7 +169,7 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 		logger.Info("MCPDiscoverySource is paused, skipping sync")
 		setCondition(source, ConditionPaused, metav1.ConditionTrue, "Paused", "Discovery is paused")
 		setCondition(source, ConditionSynced, metav1.ConditionUnknown, "Paused", "Sync suspended while paused")
-		if err := r.Status().Update(ctx, source); err != nil {
+		if err := writeStatus(ctx, r.Client, source); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: pausedRequeueAfter}, nil
@@ -204,7 +205,7 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 		source.Status.LastSyncError = err.Error()
 		setCondition(source, ConditionSynced, metav1.ConditionFalse, "DiscoveryFailed", err.Error())
 		setCondition(source, ConditionReady, metav1.ConditionFalse, "DiscoveryFailed", err.Error())
-		if statusErr := r.Status().Update(ctx, source); statusErr != nil {
+		if statusErr := writeStatus(ctx, r.Client, source); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
 		r.Recorder.Eventf(source, nil, corev1.EventTypeWarning, ReasonSyncFailed, ActionReconcile,
@@ -296,7 +297,7 @@ func (r *MCPDiscoverySourceReconciler) reconcileNormal(ctx context.Context, sour
 	metrics.DiscoverySourceCount.WithLabelValues(source.Namespace, source.Name).Set(float64(len(discovered)))
 	metrics.DiscoverySyncDuration.WithLabelValues(source.Namespace, source.Name).Observe(syncDuration.Seconds())
 
-	if err := r.Status().Update(ctx, source); err != nil {
+	if err := writeStatus(ctx, r.Client, source); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -497,7 +498,7 @@ func (r *MCPDiscoverySourceReconciler) refuseCrossNamespace(ctx context.Context,
 	source.Status.LastSyncError = msg
 	setCondition(source, ConditionSynced, metav1.ConditionFalse, ReasonCrossNamespaceRefused, msg)
 	setCondition(source, ConditionReady, metav1.ConditionFalse, ReasonCrossNamespaceRefused, msg)
-	if err := r.Status().Update(ctx, source); err != nil {
+	if err := writeStatus(ctx, r.Client, source); err != nil {
 		return ctrl.Result{}, err
 	}
 	if transition {
