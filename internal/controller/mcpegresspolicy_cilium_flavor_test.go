@@ -163,3 +163,45 @@ func TestEgressPolicy_CiliumRequestedAgentMissing_Degraded(t *testing.T) {
 	assert.Equal(t, metav1.ConditionTrue, degraded.Status)
 	assert.Equal(t, "CiliumAgentNotObserved", degraded.Reason)
 }
+
+// countingMapper counts CiliumNetworkPolicy lookups. On a cluster without
+// Cilium each one is a discovery request, so the count is the cost.
+type countingMapper struct {
+	meta.RESTMapper
+	cilium int
+}
+
+func (m *countingMapper) RESTMapping(gk schema.GroupKind, versions ...string) (*meta.RESTMapping, error) {
+	if gk.Group == networkpolicy.CiliumGroup && gk.Kind == networkpolicy.CiliumNetworkPolicyKind {
+		m.cilium++
+	}
+	return m.RESTMapper.RESTMapping(gk, versions...)
+}
+
+// The CRD lookup is reused across reconciles instead of repeated per pass (#210).
+func TestEgressPolicy_CiliumCRDLookupIsCached(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, mcpv1alpha2.AddToScheme(scheme))
+	base := meta.NewDefaultRESTMapper(nil)
+	for gvk := range scheme.AllKnownTypes() {
+		base.Add(gvk, meta.RESTScopeNamespace)
+	}
+	mapper := &countingMapper{RESTMapper: base}
+
+	p := cidrPolicy("pol")
+	c := fake.NewClientBuilder().WithScheme(scheme).WithRESTMapper(mapper).
+		WithObjects(testServer("srv", "default"), p).
+		WithStatusSubresource(&mcpv1alpha2.MCPEgressPolicy{}).Build()
+	r := &MCPEgressPolicyReconciler{
+		Client:           c,
+		Scheme:           scheme,
+		Recorder:         events.NewFakeRecorder(10),
+		EnforcementProbe: &networkpolicy.EnforcementProbe{Override: networkpolicy.EnforcementObserved},
+	}
+
+	for range 3 {
+		reconcilePolicy(t, r, p)
+	}
+	assert.Equal(t, 1, mapper.cilium, "the CiliumNetworkPolicy CRD was looked up on every reconcile")
+}
