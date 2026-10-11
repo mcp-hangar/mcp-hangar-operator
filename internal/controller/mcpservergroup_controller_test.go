@@ -5,10 +5,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
@@ -498,6 +501,76 @@ func TestMCPServerGroup_StatusWriteStormBounded(t *testing.T) {
 
 	errorCount := testutil.ToFloat64(metrics.GroupStatusWriteTotal.WithLabelValues(ns.Name, groupName, "error"))
 	assert.Zero(t, errorCount, "no reconcile errors expected from status writes at this scale with the fix applied")
+}
+
+// groupSeries counts the group_provider_count series a group has.
+func groupSeries(namespace, name string) int {
+	ch := make(chan prometheus.Metric, 64)
+	go func() {
+		metrics.GroupMCPServerCount.Collect(ch)
+		close(ch)
+	}()
+	n := 0
+	for m := range ch {
+		pb := &dto.Metric{}
+		if m.Write(pb) != nil {
+			continue
+		}
+		labels := map[string]string{}
+		for _, l := range pb.GetLabel() {
+			labels[l.GetName()] = l.GetValue()
+		}
+		if labels["namespace"] == namespace && labels["name"] == name {
+			n++
+		}
+	}
+	return n
+}
+
+// A group owns nothing, so it takes no finalizer: one only cleared metrics and
+// blocked deletion while the operator was down (#210). Its series still go
+// when it is deleted.
+func TestMCPServerGroup_NoFinalizer(t *testing.T) {
+	ns := createNamespace(t, "test-group-nofin")
+	defer k8sClient.Delete(ctx, ns)
+
+	labels := map[string]string{"tier": "nofin"}
+	group := &mcpv1alpha2.MCPServerGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: "nofin-group", Namespace: ns.Name},
+		Spec:       mcpv1alpha2.MCPServerGroupSpec{Selector: &metav1.LabelSelector{MatchLabels: labels}},
+	}
+	require.NoError(t, k8sClient.Create(ctx, group))
+	createMCPServer(t, "member", ns.Name, mcpv1alpha2.MCPServerStateReady, labels)
+	settled := waitForGroupCounts(t, "nofin-group", ns.Name, groupCounts{Provider: 1, Ready: 1})
+	assert.Empty(t, settled.Finalizers, "a reconciled group must carry no finalizer")
+	require.Positive(t, groupSeries(ns.Name, "nofin-group"))
+
+	require.NoError(t, k8sClient.Delete(ctx, group))
+	require.Eventually(t, func() bool {
+		return groupSeries(ns.Name, "nofin-group") == 0
+	}, 10*time.Second, 100*time.Millisecond, "a deleted group kept its metric series")
+}
+
+// A group created by an older operator carries the finalizer. The controller
+// takes it off, so the group can still be deleted.
+func TestMCPServerGroup_LegacyFinalizerIsRemoved(t *testing.T) {
+	ns := createNamespace(t, "test-group-legacyfin")
+	defer k8sClient.Delete(ctx, ns)
+
+	group := &mcpv1alpha2.MCPServerGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: "legacy-group", Namespace: ns.Name, Finalizers: []string{finalizerName}},
+		Spec:       mcpv1alpha2.MCPServerGroupSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"tier": "legacy"}}},
+	}
+	require.NoError(t, k8sClient.Create(ctx, group))
+	require.Eventually(t, func() bool {
+		g := &mcpv1alpha2.MCPServerGroup{}
+		return k8sClient.Get(ctx, client.ObjectKeyFromObject(group), g) == nil && len(g.Finalizers) == 0
+	}, 10*time.Second, 100*time.Millisecond, "the legacy finalizer was not removed")
+
+	require.NoError(t, k8sClient.Delete(ctx, group))
+	require.Eventually(t, func() bool {
+		return apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(group), &mcpv1alpha2.MCPServerGroup{}))
+	}, 10*time.Second, 100*time.Millisecond, "the group was not deleted")
 }
 
 // A member that is starting is not cold: Cold means replicas: 0. Folding

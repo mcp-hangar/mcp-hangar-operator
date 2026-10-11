@@ -38,6 +38,8 @@ type MCPServerGroupReconciler struct {
 
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservergroups,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservergroups/status,verbs=get;update;patch
+// The finalizers grant stays while groups created by an older operator may
+// still carry its finalizer, which this controller removes (#210).
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservergroups/finalizers,verbs=update
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
@@ -52,26 +54,27 @@ func (r *MCPServerGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	group := &mcpv1alpha2.MCPServerGroup{}
 	if err := r.Get(ctx, req.NamespacedName, group); err != nil {
 		if errors.IsNotFound(err) {
-			logger.Info("MCPServerGroup resource not found, ignoring")
+			// Deleted: drop its series. A group has no finalizer, so this is
+			// where its metrics are cleared.
+			metrics.ClearGroupMetrics(req.Namespace, req.Name)
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get MCPServerGroup")
 		return ctrl.Result{}, err
 	}
 
-	// Handle deletion
-	if !group.ObjectMeta.DeletionTimestamp.IsZero() {
-		return r.reconcileDelete(ctx, group)
-	}
-
-	// Add finalizer if not present
-	if !controllerutil.ContainsFinalizer(group, finalizerName) {
-		controllerutil.AddFinalizer(group, finalizerName)
+	// A group owns nothing, so it takes no finalizer. One used to only clear
+	// metrics, which the NotFound branch above now does, and it blocked the
+	// group's deletion whenever the operator was down (#210). Groups created
+	// by an older operator still carry it: take it off.
+	if controllerutil.ContainsFinalizer(group, finalizerName) {
+		controllerutil.RemoveFinalizer(group, finalizerName)
 		if err := r.Update(ctx, group); err != nil {
 			return ctrl.Result{}, err
 		}
-		// Carry on in the same pass: Requeue is deprecated in controller-runtime
-		// 0.25, and the update refreshed the object's resourceVersion (#210).
+	}
+	if !group.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, nil
 	}
 
 	// Main reconciliation logic
@@ -307,27 +310,6 @@ func (r *MCPServerGroupReconciler) evaluateConditions(group *mcpv1alpha2.MCPServ
 	} else {
 		setGroupCondition(group, ConditionDegraded, metav1.ConditionFalse, "AllHealthy", "All providers healthy")
 	}
-}
-
-// reconcileDelete handles group deletion by cleaning up the finalizer and metrics
-func (r *MCPServerGroupReconciler) reconcileDelete(ctx context.Context, group *mcpv1alpha2.MCPServerGroup) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-	logger.Info("Handling deletion for MCPServerGroup")
-
-	// Clear group metrics
-	metrics.ClearGroupMetrics(group.Namespace, group.Name)
-
-	// Remove finalizer
-	controllerutil.RemoveFinalizer(group, finalizerName)
-	if err := r.Update(ctx, group); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	r.Recorder.Eventf(group, nil, "Normal", ReasonDeleted, ActionReconcile,
-		"Provider group deleted")
-	logger.Info("MCPServerGroup deleted successfully")
-
-	return ctrl.Result{}, nil
 }
 
 // findGroupsForMCPServer returns reconcile requests for all MCPServerGroups
