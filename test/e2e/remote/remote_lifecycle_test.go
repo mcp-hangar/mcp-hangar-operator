@@ -13,6 +13,8 @@
 //     satisfy, because Ready requires decoding core's actual health shape;
 //   - an unregistered server yields a condition an operator can act on
 //     ("not registered with core"), not a JSON decode error;
+//   - an MCPEgressPolicy's L7 half is held by core, read back from core's own
+//     l7_policy route, not only reported on the CR (#208);
 //   - with core unreachable, probing is SUSTAINED at roughly the 10s
 //     errorRequeueAfter cadence (~6/min) -- not the ~168/s self-trigger loop of
 //     #105, and not stalled. Asserted as a rate window, deliberately not a
@@ -26,6 +28,7 @@ package remote
 import (
 	"context"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -155,6 +158,9 @@ func TestRemoteLifecycle(t *testing.T) {
 	})
 	t.Run("UnregisteredServerSaysSo", func(t *testing.T) {
 		testNotRegistered(t, cl)
+	})
+	t.Run("EgressPolicyL7ReachesCore", func(t *testing.T) {
+		testL7Delivered(t, cl)
 	})
 	t.Run("CoreUnreachableProbeCadence", func(t *testing.T) {
 		testProbeCadence(t, cl, cs)
@@ -305,6 +311,97 @@ func testProbeCadence(t *testing.T, cl crclient.Client, cs *kubernetes.Clientset
 				name, srv.Status.ConsecutiveFailures)
 		}
 	}
+}
+
+// l7DeniedTool is a tool only this test's policy denies. Finding it in core's
+// copy of the policy proves the operator delivered this policy, not that some
+// earlier one happens to be there.
+const l7DeniedTool = "long_job_consent"
+
+// testL7Delivered creates an MCPEgressPolicy for "backend" and reads the policy
+// back from core. The CR's L7Delivered condition is the operator's own claim;
+// core's GET /api/mcp_servers/backend/l7_policy is the evidence. If
+// pushL7Policy were a no-op the condition would never be set and core would
+// answer 404 no_l7_policy, so both assertions fail (#208).
+func testL7Delivered(t *testing.T, cl crclient.Client) {
+	ctx := context.Background()
+	name := "backend-egress"
+
+	old := &mcpv1alpha2.MCPEgressPolicy{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: stackNamespace}}
+	if err := cl.Delete(ctx, old); err != nil && !apierrors.IsNotFound(err) {
+		t.Fatalf("delete leftover policy: %v", err)
+	}
+	policy := &mcpv1alpha2.MCPEgressPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: stackNamespace},
+		Spec: mcpv1alpha2.MCPEgressPolicySpec{
+			TargetRef:     mcpv1alpha2.EgressTargetRef{Kind: "MCPServer", Name: registeredName},
+			DefaultAction: mcpv1alpha2.EgressActionAllow,
+			Upstreams: []mcpv1alpha2.UpstreamRule{{
+				Name:  "task-upstream",
+				Match: mcpv1alpha2.UpstreamMatch{Host: "task-upstream.hangar-e2e.svc.cluster.local"},
+				Tools: &mcpv1alpha2.ToolRules{Deny: []string{l7DeniedTool}},
+			}},
+		},
+	}
+	// A policy left by an earlier local run may still be terminating.
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		err := cl.Create(ctx, policy)
+		if err == nil {
+			break
+		}
+		if !apierrors.IsAlreadyExists(err) || time.Now().After(deadline) {
+			t.Fatalf("create MCPEgressPolicy: %v", err)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Cleanup(func() { _ = cl.Delete(context.Background(), policy) })
+
+	var delivered *metav1.Condition
+	deadline = time.Now().Add(2 * time.Minute)
+	for time.Now().Before(deadline) {
+		got := &mcpv1alpha2.MCPEgressPolicy{}
+		if err := cl.Get(ctx, types.NamespacedName{Name: name, Namespace: stackNamespace}, got); err == nil {
+			delivered = apimeta.FindStatusCondition(got.Status.Conditions, "L7Delivered")
+			if delivered != nil && delivered.Status == metav1.ConditionTrue {
+				break
+			}
+		}
+		time.Sleep(3 * time.Second)
+	}
+	if delivered == nil || delivered.Status != metav1.ConditionTrue {
+		t.Fatalf("MCPEgressPolicy %q never reported L7Delivered=True; last condition: %+v", name, delivered)
+	}
+
+	body := coreGet(t, "/api/mcp_servers/"+registeredName+"/l7_policy")
+	if !strings.Contains(body, l7DeniedTool) {
+		t.Fatalf("core's l7_policy for %q does not deny %q, so the operator's claim is not what core holds: %s",
+			registeredName, l7DeniedTool, body)
+	}
+}
+
+// coreGet runs a GET from inside the core pod. The API port is not published
+// outside the cluster, and core rejects a Host it does not trust, so up.sh
+// reaches it the same way: the image ships python3, not curl.
+func coreGet(t *testing.T, path string) string {
+	t.Helper()
+	pod, err := exec.Command("kubectl", "-n", stackNamespace, "get", "pod", "-l", "app=mcp-hangar",
+		"-o", "jsonpath={.items[0].metadata.name}").Output()
+	if err != nil {
+		t.Fatalf("find core pod: %v", err)
+	}
+	script := `import sys, urllib.request, urllib.error
+try:
+    print(urllib.request.urlopen("http://localhost:8080" + sys.argv[1], timeout=30).read().decode())
+except urllib.error.HTTPError as e:
+    print("HTTP %d: %s" % (e.code, e.read().decode()))
+`
+	out, err := exec.Command("kubectl", "-n", stackNamespace, "exec", string(pod), "--",
+		"python3", "-c", script, path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("GET %s in core: %v: %s", path, err, out)
+	}
+	return string(out)
 }
 
 func operatorPodName(t *testing.T, cs *kubernetes.Clientset) string {
