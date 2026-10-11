@@ -252,6 +252,9 @@ func (r *MCPEgressPolicyReconciler) handleDeletion(ctx context.Context, policy *
 // propagates, which is the whole point -- a Warning Event was the only trace a
 // rejected push used to leave (#191).
 func (r *MCPEgressPolicyReconciler) pushL7Policy(ctx context.Context, logger logr.Logger, policy *mcpv1alpha2.MCPEgressPolicy, selector metav1.LabelSelector) error {
+	if r.HangarClient != nil {
+		return nil // MUTATION CHECK (#208): must make EgressPolicyL7ReachesCore fail; reverted next commit
+	}
 	if r.HangarClient == nil {
 		r.setL7CoreIntegrationOff(policy)
 		return nil
