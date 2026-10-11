@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Boot the remote-lifecycle e2e stack (#106): kind + a live core + a minimal
-# MCP backend + the released operator. The Go test in this directory then
+# MCP backend + the operator built from this checkout. The Go test in this directory then
 # drives the MCPServer CR lifecycle against it.
 #
-# Pins live in files, not here: the core image tag in manifests/core.yaml, the
-# operator tag in operator/kustomization.yaml. CORE_REF below only selects
+# Pins live in files, not here: the core image tag in manifests/core.yaml. The
+# operator is built from ROOT, so the e2e exercises the code under review (#208). CORE_REF below only selects
 # which tag of core's examples/task_upstream the backend image is built from --
 # keep it the same release as the core image.
 set -euo pipefail
@@ -13,6 +13,7 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 CLUSTER="${E2E_REMOTE_CLUSTER:-mcp-remote-e2e}"
 CORE_REF="${CORE_REF:-v2.12.0}"
 BACKEND_IMAGE="localhost/mcp-task-upstream:e2e"
+OPERATOR_IMAGE="localhost/mcp-hangar-operator:e2e"
 KCTL=(kubectl --context "kind-${CLUSTER}")
 
 if ! kind get clusters 2>/dev/null | grep -qx "${CLUSTER}"; then
@@ -29,6 +30,10 @@ echo "building the MCP backend from core ${CORE_REF} (examples/task_upstream)...
 docker build -t "${BACKEND_IMAGE}" \
   "https://github.com/mcp-hangar/mcp-hangar.git#${CORE_REF}:examples/task_upstream"
 kind load docker-image "${BACKEND_IMAGE}" --name "${CLUSTER}"
+
+echo "building the operator from ${ROOT}..."
+docker build -t "${OPERATOR_IMAGE}" "${ROOT}"
+kind load docker-image "${OPERATOR_IMAGE}" --name "${CLUSTER}"
 
 echo "deploying backend + core..."
 "${KCTL[@]}" apply -f "${ROOT}/test/e2e/remote/manifests/backend.yaml"

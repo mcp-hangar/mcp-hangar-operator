@@ -257,11 +257,11 @@ e2e-clean: ## Delete the e2e cluster.
 ##@ End-to-end (remote lifecycle, #106)
 
 # Boots a plain kind cluster (default CNI -- nothing here needs NetworkPolicy
-# enforcement) with a LIVE core, a minimal MCP backend and the released
-# operator, then drives the mode:remote MCPServer lifecycle against it: Ready
+# enforcement) with a LIVE core, a minimal MCP backend and the operator built
+# from this checkout, then drives the mode:remote MCPServer lifecycle against it: Ready
 # with a real tool count, the not-registered condition, and the sustained
-# core-unreachable probe cadence. Image pins live in
-# test/e2e/remote/manifests/core.yaml and test/e2e/remote/operator/.
+# core-unreachable probe cadence, and an MCPEgressPolicy's L7 half reaching
+# core. The core image pin lives in test/e2e/remote/manifests/core.yaml.
 
 E2E_REMOTE_CLUSTER ?= mcp-remote-e2e
 

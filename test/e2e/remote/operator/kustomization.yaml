@@ -5,9 +5,9 @@
 # CRD validity is already covered by the crd-install CI job, and the CRDs are
 # applied straight from config/crd/bases by up.sh (same as that job).
 #
-# The image is the published GHCR release, pinned. Must be >= 0.15.2: that is
-# the first tag carrying #107, without which the core-unreachable cadence this
-# e2e asserts (~6/min) reads ~168/s.
+# The image is the one up.sh builds from this checkout and loads into kind
+# (#208). It used to be a pinned GHCR release, so the e2e tested a past
+# operator against the present CRDs and RBAC and could not see a PR's change.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -25,9 +25,12 @@ resources:
 
 images:
   # config/manager already rewrites `controller` to the GHCR name with :latest;
-  # this overlay only pins the tag (matching on the post-rewrite name).
+  # this overlay swaps in the local build (matching on the post-rewrite name).
+  # A tag other than latest keeps imagePullPolicy at IfNotPresent, so the
+  # kubelet uses the image kind loaded instead of pulling.
   - name: ghcr.io/mcp-hangar/mcp-hangar-operator
-    newTag: "0.16.0"
+    newName: localhost/mcp-hangar-operator
+    newTag: e2e
 
 patches:
   # Point the manager at the live core deployed by manifests/core.yaml.
