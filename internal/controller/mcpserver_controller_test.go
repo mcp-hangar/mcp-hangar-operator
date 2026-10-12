@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -61,7 +62,7 @@ func getMCPServer(t *testing.T, r *MCPServerReconciler, name, namespace string) 
 	return p
 }
 
-func TestMCPServer_ContainerMode_CreatesPod(t *testing.T) {
+func TestMCPServer_ContainerMode_CreatesDeployment(t *testing.T) {
 	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-container", Namespace: "default", UID: "uid-1"},
 		Spec: mcpv1alpha2.MCPServerSpec{
@@ -71,27 +72,15 @@ func TestMCPServer_ContainerMode_CreatesPod(t *testing.T) {
 	}
 	r := newMCPServerReconciler(p)
 
-	// First reconcile: adds finalizer
 	reconcileMCPServer(t, r, "test-container", "default")
 
-	// Second reconcile: creates Pod
-	reconcileMCPServer(t, r, "test-container", "default")
-
-	// Verify Pod was created
-	pod := &corev1.Pod{}
-	err := r.Get(context.Background(), types.NamespacedName{Name: "mcp-provider-test-container", Namespace: "default"}, pod)
+	dep := &appsv1.Deployment{}
+	err := r.Get(context.Background(), types.NamespacedName{Name: "mcp-provider-test-container", Namespace: "default"}, dep)
 	require.NoError(t, err)
-	assert.Equal(t, "busybox:latest", pod.Spec.Containers[0].Image)
-	assert.Equal(t, corev1.RestartPolicyNever, pod.Spec.RestartPolicy)
-
-	// Verify owner reference
-	require.Len(t, pod.OwnerReferences, 1)
-	assert.Equal(t, "MCPServer", pod.OwnerReferences[0].Kind)
-
-	// Verify provider status
-	result := getMCPServer(t, r, "test-container", "default")
-	assert.Equal(t, mcpv1alpha2.MCPServerStateInitializing, result.Status.State)
-	assert.Equal(t, "mcp-provider-test-container", result.Status.PodName)
+	assert.Equal(t, "busybox:latest", dep.Spec.Template.Spec.Containers[0].Image)
+	assert.Equal(t, corev1.RestartPolicyAlways, dep.Spec.Template.Spec.RestartPolicy)
+	require.Len(t, dep.OwnerReferences, 1)
+	assert.Equal(t, "MCPServer", dep.OwnerReferences[0].Kind)
 }
 
 func TestMCPServer_ContainerMode_NoImage_MarksDead(t *testing.T) {
@@ -272,46 +261,8 @@ func TestMCPServer_RemoteMode_Healthy_RequeuesSlow(t *testing.T) {
 	assert.Equal(t, mcpv1alpha2.MCPServerStateReady, got.Status.State)
 }
 
-func TestMCPServer_SpecDrift_RecreatesPod(t *testing.T) {
-	p := &mcpv1alpha2.MCPServer{
-		ObjectMeta: metav1.ObjectMeta{Name: "drift-test", Namespace: "default", UID: "uid-6",
-			Generation: 1, Finalizers: []string{finalizerName}},
-		Spec: mcpv1alpha2.MCPServerSpec{
-			Mode:  mcpv1alpha2.MCPServerModeContainer,
-			Image: "busybox:1.0",
-		},
-	}
-	r := newMCPServerReconciler(p)
 
-	// First reconcile: creates Pod with generation=1 annotation
-	reconcileMCPServer(t, r, "drift-test", "default")
-	pod := &corev1.Pod{}
-	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "mcp-provider-drift-test", Namespace: "default"}, pod))
-	assert.Equal(t, "1", pod.Annotations[provider.AnnotationGeneration])
-
-	// Simulate spec change: bump generation, change image
-	pv := getMCPServer(t, r, "drift-test", "default")
-	pv.Generation = 2
-	pv.Spec.Image = "busybox:2.0"
-	require.NoError(t, r.Update(context.Background(), pv))
-
-	// Second reconcile: detects drift, deletes old Pod
-	reconcileMCPServer(t, r, "drift-test", "default")
-
-	// Verify old Pod was deleted
-	err := r.Get(context.Background(), types.NamespacedName{Name: "mcp-provider-drift-test", Namespace: "default"}, pod)
-	assert.Error(t, err, "old Pod should be deleted after spec drift")
-
-	// Third reconcile: creates new Pod with generation=2
-	reconcileMCPServer(t, r, "drift-test", "default")
-
-	newPod := &corev1.Pod{}
-	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "mcp-provider-drift-test", Namespace: "default"}, newPod))
-	assert.Equal(t, "busybox:2.0", newPod.Spec.Containers[0].Image)
-	assert.Equal(t, "2", newPod.Annotations[provider.AnnotationGeneration])
-}
-
-func TestMCPServer_Deletion_CleansPodAndFinalizer(t *testing.T) {
+func TestMCPServer_Deletion_CleansDeploymentAndFinalizer(t *testing.T) {
 	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "del-test", Namespace: "default", UID: "uid-7",
@@ -322,23 +273,17 @@ func TestMCPServer_Deletion_CleansPodAndFinalizer(t *testing.T) {
 			Image: "busybox:latest",
 		},
 	}
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "mcp-provider-del-test", Namespace: "default"},
-		Spec: corev1.PodSpec{
-			Containers:    []corev1.Container{{Name: "provider", Image: "busybox:latest"}},
-			RestartPolicy: corev1.RestartPolicyNever,
-		},
-	}
-	r := newMCPServerReconciler(p, pod)
+	dep, err := provider.BuildDeploymentForMCPServer(p)
+	require.NoError(t, err)
+	r := newMCPServerReconciler(p, dep)
 
 	// Call reconcileDelete directly (fake client cannot set DeletionTimestamp)
 	fresh := getMCPServer(t, r, "del-test", "default")
-	_, err := r.reconcileDelete(context.Background(), fresh)
+	_, err = r.reconcileDelete(context.Background(), fresh)
 	require.NoError(t, err)
 
-	// Pod should be deleted
-	err = r.Get(context.Background(), types.NamespacedName{Name: "mcp-provider-del-test", Namespace: "default"}, &corev1.Pod{})
-	assert.Error(t, err, "Pod should be deleted during cleanup")
+	err = r.Get(context.Background(), types.NamespacedName{Name: "mcp-provider-del-test", Namespace: "default"}, &appsv1.Deployment{})
+	assert.True(t, apierrors.IsNotFound(err), "the Deployment is deleted during cleanup")
 
 	// Finalizer should be removed
 	updated := getMCPServer(t, r, "del-test", "default")
@@ -418,26 +363,10 @@ func TestMCPServer_PodRunning_SetsReady(t *testing.T) {
 		},
 	}
 	// Create existing Pod in Running phase with all containers ready
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "mcp-provider-running-test", Namespace: "default",
-			Annotations: map[string]string{provider.AnnotationGeneration: strconv.FormatInt(1, 10)},
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: "mcp-hangar.io/v1alpha1", Kind: "MCPServer",
-				Name: "running-test", UID: "uid-11",
-			}},
-		},
-		Spec: corev1.PodSpec{
-			Containers:    []corev1.Container{{Name: "provider", Image: "busybox:latest"}},
-			RestartPolicy: corev1.RestartPolicyNever,
-		},
-		Status: corev1.PodStatus{
-			Phase: corev1.PodRunning,
-			ContainerStatuses: []corev1.ContainerStatus{
-				{Name: "provider", Ready: true},
-			},
-		},
-	}
+	pod := deploymentPod("running-test", corev1.PodStatus{
+		Phase:             corev1.PodRunning,
+		ContainerStatuses: []corev1.ContainerStatus{{Name: "provider", Ready: true}},
+	})
 	r := newMCPServerReconciler(p, pod)
 
 	reconcileMCPServer(t, r, "running-test", "default")
@@ -452,7 +381,7 @@ func TestMCPServer_PodRunning_SetsReady(t *testing.T) {
 	assert.Equal(t, metav1.ConditionTrue, cond.Status)
 }
 
-func TestMCPServer_PodFailed_SetsDeadWithBackoff(t *testing.T) {
+func TestMCPServer_PodFailed_IsDead(t *testing.T) {
 	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "failed-test", Namespace: "default", UID: "uid-12",
 			Generation: 1, Finalizers: []string{finalizerName}},
@@ -461,36 +390,16 @@ func TestMCPServer_PodFailed_SetsDeadWithBackoff(t *testing.T) {
 			Image: "busybox:latest",
 		},
 	}
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "mcp-provider-failed-test", Namespace: "default",
-			Annotations: map[string]string{provider.AnnotationGeneration: strconv.FormatInt(1, 10)},
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: "mcp-hangar.io/v1alpha1", Kind: "MCPServer",
-				Name: "failed-test", UID: "uid-12",
-			}},
-		},
-		Spec: corev1.PodSpec{
-			Containers:    []corev1.Container{{Name: "provider", Image: "busybox:latest"}},
-			RestartPolicy: corev1.RestartPolicyNever,
-		},
-		Status: corev1.PodStatus{
-			Phase: corev1.PodFailed,
-			ContainerStatuses: []corev1.ContainerStatus{
-				{Name: "provider", State: corev1.ContainerState{
-					Terminated: &corev1.ContainerStateTerminated{
-						Reason: "OOMKilled", ExitCode: 137,
-					},
-				}},
-			},
-		},
-	}
+	// Under a Deployment a pod fails only by eviction; the ReplicaSet replaces it.
+	pod := deploymentPod("failed-test", corev1.PodStatus{
+		Phase: corev1.PodFailed, Reason: "Evicted", Message: "low on memory",
+	})
 	r := newMCPServerReconciler(p, pod)
 
 	reconcileMCPServer(t, r, "failed-test", "default")
 
 	result := getMCPServer(t, r, "failed-test", "default")
 	assert.Equal(t, mcpv1alpha2.MCPServerStateDead, result.Status.State)
-	assert.Equal(t, int32(1), result.Status.ConsecutiveFailures)
 	assert.Equal(t, int32(0), result.Status.ReadyReplicas)
+	assert.Equal(t, "PodFailed", getCondition(result.Status.Conditions, ConditionReady).Reason)
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -86,10 +87,18 @@ func TestMCPServer_ContainerMode_HealthyPod_StatusIsAcceptedByTheAPIServer(t *te
 	_, err = r.Reconcile(ctx, req)
 	require.NoError(t, err)
 
-	podKey := types.NamespacedName{Name: "mcp-provider-" + name, Namespace: nsName}
-	pod := &corev1.Pod{}
-	require.NoError(t, k8sClient.Get(ctx, podKey, pod),
-		"the second reconcile should have created the provider Pod")
+	dep := &appsv1.Deployment{}
+	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: "mcp-provider-" + name, Namespace: nsName}, dep),
+		"the second reconcile should have created the provider Deployment")
+
+	// envtest runs no controller-manager either, so create the pod the
+	// Deployment's ReplicaSet would, from its template.
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "mcp-provider-" + name + "-abc12", Namespace: nsName,
+			Labels: dep.Spec.Template.Labels, Annotations: dep.Spec.Template.Annotations},
+		Spec: dep.Spec.Template.Spec,
+	}
+	require.NoError(t, k8sClient.Create(ctx, pod))
 
 	// envtest runs no kubelet, so publish the status a kubelet would: the pod
 	// is Running and every container is Ready. This is the live situation the

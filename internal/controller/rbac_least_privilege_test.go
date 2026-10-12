@@ -41,3 +41,18 @@ func TestRBAC_LeaderElectionRoleIsLeasesAndEvents(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{"leases", "events"}, resources)
 }
+
+// Since container-mode servers run as Deployments (#221) the operator never
+// creates or edits a pod; it only reads them and deletes a legacy one.
+func TestRBAC_ManagerRoleDoesNotWritePods(t *testing.T) {
+	for _, rule := range loadRole(t, "role.yaml").Rules {
+		for _, res := range rule.Resources {
+			if res != "pods" {
+				continue
+			}
+			assert.NotContains(t, rule.Verbs, "create")
+			assert.NotContains(t, rule.Verbs, "update")
+			assert.NotContains(t, rule.Verbs, "patch")
+		}
+	}
+}

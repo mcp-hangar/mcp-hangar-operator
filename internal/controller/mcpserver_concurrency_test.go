@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -103,12 +104,12 @@ func TestMCPServer_SlowCore_DoesNotStallOtherServers(t *testing.T) {
 	created = append(created, container)
 
 	require.Eventually(t, func() bool {
-		var pods corev1.PodList
-		if err := k8sClient.List(ctx, &pods, client.InNamespace(nsName),
+		var deps appsv1.DeploymentList
+		if err := k8sClient.List(ctx, &deps, client.InNamespace(nsName),
 			client.MatchingLabels{networkpolicy.LabelProvider: container.Name}); err != nil {
 			return false
 		}
-		return len(pods.Items) > 0
+		return len(deps.Items) > 0
 	}, 10*time.Second, 100*time.Millisecond,
-		"the container server's pod must be created while remote servers wait on a slow core")
+		"the container server's Deployment must be created while remote servers wait on a slow core")
 }
