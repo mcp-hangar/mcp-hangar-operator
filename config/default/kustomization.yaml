@@ -21,6 +21,9 @@ resources:
 # [CERTMANAGER] Provisions the webhook serving certificate via cert-manager.
 # Requires cert-manager to be installed in the cluster.
 - ../certmanager
+# ValidatingAdmissionPolicies for the annotation-gated MCPServer rules
+# (wildcard egress, image digest). Enforced by the apiserver, webhooks or not.
+- ../admissionpolicy
 
 patches:
 # [WEBHOOK] Mount the serving cert and open the webhook port on the manager.
@@ -35,6 +38,11 @@ patches:
     - op: add
       path: /spec/template/spec/containers/0/args/-
       value: --enable-webhooks
+    # The admission policies above enforce the wildcard egress opt-in and the
+    # image digest policy; do not run the webhook copies on top of them.
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: --webhook-annotation-rules=false
 # [CERTMANAGER] Inject the CA bundle into the ValidatingWebhookConfiguration.
 - path: webhookcainjection_patch.yaml
 

@@ -62,6 +62,7 @@ func main() {
 		dnsEgressCIDRs          string
 		dnsEgressSelectors      string
 		imageDigestPolicy       string
+		webhookAnnotationRules  bool
 		npEnforcement           string
 		gatewaySelector         string
 		maxConcurrent           int
@@ -109,7 +110,12 @@ func main() {
 		"How admission handles container images that are not digest-pinned "+
 			"(image@sha256:...): \"block\" rejects, \"warn\" emits an admission warning, "+
 			"\"off\" ignores. A single MCPServer can opt out with the annotation "+
-			"hangar.io/allow-mutable-image: \"true\".")
+			"hangar.io/allow-mutable-image: \"true\". With --webhook-annotation-rules=false the "+
+			"image-digest ValidatingAdmissionPolicy enforces this instead, at the level its params ConfigMap names.")
+	flag.BoolVar(&webhookAnnotationRules, "webhook-annotation-rules", true,
+		"Also enforce the image digest policy and the wildcard egress opt-in in the MCPServer webhook. "+
+			"The ValidatingAdmissionPolicies in config/admissionpolicy enforce both in the apiserver; set false "+
+			"once they are installed. Deprecated: the flag and the webhook copies go in the next release.")
 
 	flag.StringVar(&gatewaySelector, "hangar-gateway-selector", controller.DefaultGatewayPodSelector,
 		"Label selector for the core gateway pods. When one becomes Ready, every MCPEgressPolicy is "+
@@ -157,6 +163,7 @@ func main() {
 		setupLog.Error(err, "invalid --image-digest-policy")
 		os.Exit(1)
 	}
+	webhook.SetAnnotationRules(webhookAnnotationRules)
 
 	if maxConcurrent < 1 {
 		setupLog.Error(fmt.Errorf("must be at least 1, got %d", maxConcurrent), "invalid --max-concurrent-reconciles")

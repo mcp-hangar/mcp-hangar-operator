@@ -1,0 +1,126 @@
+# Container images that are not pinned by digest (#219), at the level the
+# params ConfigMap names: imageDigestPolicy "block" denies, "warn" (the
+# default) returns an admission warning, "off" does neither. The level lives in
+# the ConfigMap rather than the bindings so it can be changed without touching
+# them; a binding's validationActions cannot hold Deny and Warn at once, so each
+# level is its own policy, and the one the ConfigMap does not name passes.
+#
+# A single MCPServer opts out with hangar.io/allow-mutable-image: "true".
+# Without the ConfigMap, both bindings allow (parameterNotFoundAction: Allow),
+# which is "off": an absent ConfigMap must not refuse every MCPServer write.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: image-digest-block
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["mcp-hangar.io"]
+      apiVersions: ["*"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["mcpservers"]
+  matchConditions:
+  - name: not-deleting
+    expression: "!has(object.metadata.deletionTimestamp)"
+  - name: container-mode
+    expression: "object.spec.mode == 'container'"
+  - name: image-or-opt-out-changed
+    expression: >-
+      request.operation != 'UPDATE' ||
+      (has(object.spec.image) ? object.spec.image : '') != (has(oldObject.spec.image) ? oldObject.spec.image : '') ||
+      (has(object.metadata.annotations) && 'hangar.io/allow-mutable-image' in object.metadata.annotations
+        ? object.metadata.annotations['hangar.io/allow-mutable-image'] : '') !=
+      (has(oldObject.metadata.annotations) && 'hangar.io/allow-mutable-image' in oldObject.metadata.annotations
+        ? oldObject.metadata.annotations['hangar.io/allow-mutable-image'] : '')
+  variables:
+  - name: level
+    expression: >-
+      has(params.data) && 'imageDigestPolicy' in params.data ? params.data.imageDigestPolicy : 'warn'
+  - name: image
+    expression: "has(object.spec.image) ? object.spec.image : ''"
+  # Mirrors webhook.IsImageDigestPinned.
+  - name: pinned
+    expression: >-
+      variables.image == '' || variables.image.contains('@sha256:') ||
+      (has(object.metadata.annotations) && 'hangar.io/allow-mutable-image' in object.metadata.annotations &&
+        object.metadata.annotations['hangar.io/allow-mutable-image'] == 'true')
+  validations:
+  - expression: "variables.level != 'block' || variables.pinned"
+    messageExpression: >-
+      'spec.image "' + variables.image + '" is not digest-pinned; use an image@sha256:... reference ' +
+      '(or set annotation hangar.io/allow-mutable-image: "true" to allow a mutable tag)'
+    reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: image-digest-warn
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["mcp-hangar.io"]
+      apiVersions: ["*"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["mcpservers"]
+  matchConditions:
+  - name: not-deleting
+    expression: "!has(object.metadata.deletionTimestamp)"
+  - name: container-mode
+    expression: "object.spec.mode == 'container'"
+  - name: image-or-opt-out-changed
+    expression: >-
+      request.operation != 'UPDATE' ||
+      (has(object.spec.image) ? object.spec.image : '') != (has(oldObject.spec.image) ? oldObject.spec.image : '') ||
+      (has(object.metadata.annotations) && 'hangar.io/allow-mutable-image' in object.metadata.annotations
+        ? object.metadata.annotations['hangar.io/allow-mutable-image'] : '') !=
+      (has(oldObject.metadata.annotations) && 'hangar.io/allow-mutable-image' in oldObject.metadata.annotations
+        ? oldObject.metadata.annotations['hangar.io/allow-mutable-image'] : '')
+  variables:
+  - name: level
+    expression: >-
+      has(params.data) && 'imageDigestPolicy' in params.data ? params.data.imageDigestPolicy : 'warn'
+  - name: image
+    expression: "has(object.spec.image) ? object.spec.image : ''"
+  # Mirrors webhook.IsImageDigestPinned.
+  - name: pinned
+    expression: >-
+      variables.image == '' || variables.image.contains('@sha256:') ||
+      (has(object.metadata.annotations) && 'hangar.io/allow-mutable-image' in object.metadata.annotations &&
+        object.metadata.annotations['hangar.io/allow-mutable-image'] == 'true')
+  validations:
+  - expression: "variables.level != 'warn' || variables.pinned"
+    messageExpression: >-
+      'spec.image "' + variables.image + '" is not digest-pinned; a mutable tag can change under you after ' +
+      'admission. Pin by digest (image@sha256:...) for reproducible, verifiable deploys.'
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: image-digest-block
+spec:
+  policyName: image-digest-block
+  validationActions: ["Deny"]
+  paramRef:
+    name: admission-policy-params
+    namespace: system
+    parameterNotFoundAction: Allow
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: image-digest-warn
+spec:
+  policyName: image-digest-warn
+  validationActions: ["Warn"]
+  paramRef:
+    name: admission-policy-params
+    namespace: system
+    parameterNotFoundAction: Allow

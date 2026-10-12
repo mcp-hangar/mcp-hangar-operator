@@ -19,8 +19,9 @@ import (
 // referenced self.metadata.annotations, which CRD validation does not expose
 // (only name/generateName). Recent apiservers reject such a CRD at install
 // (#54), and the earlier Go-mirror test here gave false confidence because it
-// re-implemented the CEL instead of exercising the real path. The authoritative
-// tests now live in internal/webhook (TestValidateProvider_WildcardEgress*).
+// re-implemented the CEL instead of exercising the real path. The rule is a
+// ValidatingAdmissionPolicy now (#219), tested against a real apiserver in
+// internal/admissionpolicy; the webhook copy is tested in internal/webhook.
 //
 // The envtest cases below still verify that the API server accepts providers
 // which do not trigger any CRD-schema rejection.
