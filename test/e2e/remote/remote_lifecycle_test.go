@@ -440,7 +440,9 @@ func testContainerMode(t *testing.T, cl crclient.Client, cs *kubernetes.Clientse
 		ObjectMeta: metav1.ObjectMeta{Name: containerName, Namespace: stackNamespace},
 		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode:  mcpv1alpha2.MCPServerModeContainer,
-			Image: "localhost/mcp-task-upstream:e2e",
+			// From the local registry up.sh runs: a mutable tag is pulled
+			// with imagePullPolicy Always, so a kind-loaded image is not enough.
+			Image: "localhost:5001/mcp-task-upstream:e2e",
 			Env: []corev1.EnvVar{
 				{Name: "MCP_HOST", Value: "0.0.0.0"},
 				{Name: "MCP_PORT", Value: "8080"},
@@ -484,8 +486,14 @@ func testContainerMode(t *testing.T, cl crclient.Client, cs *kubernetes.Clientse
 	}
 	ready := apimeta.FindStatusCondition(last.Status.Conditions, "Ready")
 	if ready == nil || ready.Status != metav1.ConditionTrue || last.Status.ToolsCount != backendToolCount {
-		t.Fatalf("container-mode MCPServer %q never reached Ready with %d tools; pod phase %s; status: %+v; core: %s",
-			containerName, backendToolCount, pod.Status.Phase, last.Status,
+		var waiting []string
+		for _, s := range pod.Status.ContainerStatuses {
+			if s.State.Waiting != nil {
+				waiting = append(waiting, s.State.Waiting.Reason+": "+s.State.Waiting.Message)
+			}
+		}
+		t.Fatalf("container-mode MCPServer %q never reached Ready with %d tools; pod phase %s %v; status: %+v; core: %s",
+			containerName, backendToolCount, pod.Status.Phase, waiting, last.Status,
 			strings.TrimSpace(coreGet(t, "/api/mcp_servers/"+containerName)))
 	}
 	if body := coreGet(t, "/api/mcp_servers/"+containerName); strings.HasPrefix(body, "HTTP ") {
