@@ -1,0 +1,9 @@
+# Parameters the image-digest policies read. imageDigestPolicy is "warn",
+# "block" or "off", as --image-digest-policy was for the webhook.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: admission-policy-params
+  namespace: system
+data:
+  imageDigestPolicy: warn

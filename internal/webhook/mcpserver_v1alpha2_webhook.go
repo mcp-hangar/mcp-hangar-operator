@@ -60,10 +60,12 @@ func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 	// Mode-specific field requirements.
 	switch p.Spec.Mode {
 	case mcpv1alpha2.MCPServerModeContainer:
-		if e, w := checkImageDigest(p.Spec.Image, p.Annotations); e != "" {
-			errs = append(errs, e)
-		} else if w != "" {
-			warnings = append(warnings, w)
+		if annotationRules {
+			if e, w := checkImageDigest(p.Spec.Image, p.Annotations); e != "" {
+				errs = append(errs, e)
+			} else if w != "" {
+				warnings = append(warnings, w)
+			}
 		}
 		if p.Spec.Endpoint != "" {
 			warnings = append(warnings, "spec.endpoint is ignored when mode is \"container\"")
@@ -83,7 +85,7 @@ func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 	// v1alpha1 validator when that one was deleted (#125) -- this check lived
 	// only there, so without the port the guard would have died with the API
 	// version while looking covered.
-	if hasWildcardEgressV2(p) && p.Annotations[unrestrictedEgressAnnotation] != "true" {
+	if annotationRules && hasWildcardEgressV2(p) && p.Annotations[unrestrictedEgressAnnotation] != "true" {
 		errs = append(errs, fmt.Sprintf(
 			"spec.capabilities.network.egress with host \"*\" or cidr 0.0.0.0/0 or ::/0 (unrestricted egress) "+
 				"requires annotation %s: \"true\"",
@@ -99,6 +101,20 @@ func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 // unrestrictedEgressAnnotation opts a provider into wildcard egress (host "*",
 // cidr 0.0.0.0/0 or ::/0).
 const unrestrictedEgressAnnotation = "hangar.io/allow-unrestricted-egress"
+
+// annotationRules keeps the image digest policy and the wildcard egress opt-in
+// in this webhook. Both are ValidatingAdmissionPolicies now
+// (config/admissionpolicy, #219), which the apiserver enforces with the
+// webhooks off as well; the copies here stay for one release so a cluster that
+// upgrades the operator before it installs the policies is not left without
+// them, and are removed in the next. Set once at startup via SetAnnotationRules.
+var annotationRules = true
+
+// SetAnnotationRules turns the webhook copies of the two annotation-gated rules
+// on or off.
+func SetAnnotationRules(on bool) {
+	annotationRules = on
+}
 
 // ciliumDetected records whether this cluster runs Cilium (its CRD is
 // installed). Set once at operator startup via SetCiliumDetected; false means

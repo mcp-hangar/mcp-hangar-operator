@@ -1,0 +1,22 @@
+# Let namePrefix and namespace reach the references a binding holds, so a
+# binding never names a policy or ConfigMap that does not exist -- a dangling
+# policyName enforces nothing and reports nothing.
+nameReference:
+- kind: ValidatingAdmissionPolicy
+  group: admissionregistration.k8s.io
+  fieldSpecs:
+  - kind: ValidatingAdmissionPolicyBinding
+    group: admissionregistration.k8s.io
+    path: spec/policyName
+- kind: ConfigMap
+  version: v1
+  fieldSpecs:
+  - kind: ValidatingAdmissionPolicyBinding
+    group: admissionregistration.k8s.io
+    path: spec/paramRef/name
+
+namespace:
+- kind: ValidatingAdmissionPolicyBinding
+  group: admissionregistration.k8s.io
+  path: spec/paramRef/namespace
+  create: false

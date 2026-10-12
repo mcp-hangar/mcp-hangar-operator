@@ -1,0 +1,71 @@
+# Wildcard egress needs an explicit opt-in (#219). A ValidatingAdmissionPolicy
+# sees metadata.annotations, which CRD CEL cannot, and runs in the apiserver:
+# the rule holds with the operator's webhooks off, which is the default.
+#
+# No paramKind on purpose: there is no ConfigMap whose absence turns it off.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: wildcard-egress
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["mcp-hangar.io"]
+      apiVersions: ["*"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["mcpservers"]
+  matchConditions:
+  # An object on its way out only loses finalizers; refusing that would leave
+  # it stuck in Terminating.
+  - name: not-deleting
+    expression: "!has(object.metadata.deletionTimestamp)"
+  # Ratchet: an update that leaves the spec and the opt-in alone (a finalizer,
+  # a label) is not re-judged, so an object admitted before the policy existed
+  # can still be reconciled and deleted.
+  - name: spec-or-opt-in-changed
+    expression: >-
+      request.operation != 'UPDATE' ||
+      object.spec != oldObject.spec ||
+      (has(object.metadata.annotations) && 'hangar.io/allow-unrestricted-egress' in object.metadata.annotations
+        ? object.metadata.annotations['hangar.io/allow-unrestricted-egress'] : '') !=
+      (has(oldObject.metadata.annotations) && 'hangar.io/allow-unrestricted-egress' in oldObject.metadata.annotations
+        ? oldObject.metadata.annotations['hangar.io/allow-unrestricted-egress'] : '')
+  variables:
+  - name: egress
+    expression: >-
+      has(object.spec.capabilities) && has(object.spec.capabilities.network) &&
+      has(object.spec.capabilities.network.egress) ? object.spec.capabilities.network.egress : []
+  - name: optedIn
+    expression: >-
+      has(object.metadata.annotations) && 'hangar.io/allow-unrestricted-egress' in object.metadata.annotations &&
+      object.metadata.annotations['hangar.io/allow-unrestricted-egress'] == 'true'
+  # Mirrors networkpolicy.IsUnrestrictedEgress: host "*", or a cidr or host
+  # that parses as a prefix of length 0 (0.0.0.0/0, ::/0, 10.0.0.0/0). The CEL
+  # cidr() library is not in the 1.30 floor's apiserver, so this is a pattern:
+  # an exact IPv4 address, or anything of hex digits, colons and dots holding a
+  # colon, then /0. The IPv6 side admits some strings Go would not parse
+  # (":::/0"), which only ever refuses more than the webhook did.
+  - name: zeroPrefix
+    expression: >-
+      r'^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])/0$|^[0-9A-Fa-f.]*:[0-9A-Fa-f:.]*/0$'
+  - name: unrestricted
+    expression: >-
+      variables.egress.exists(r,
+        r.host == '*' ||
+        r.host.trim().matches(variables.zeroPrefix) ||
+        (has(r.cidr) && r.cidr.trim().matches(variables.zeroPrefix)))
+  validations:
+  - expression: "variables.optedIn || !variables.unrestricted"
+    message: >-
+      spec.capabilities.network.egress with host "*" or cidr 0.0.0.0/0 or ::/0 (unrestricted egress)
+      requires annotation hangar.io/allow-unrestricted-egress: "true"
+    reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: wildcard-egress
+spec:
+  policyName: wildcard-egress
+  validationActions: ["Deny"]

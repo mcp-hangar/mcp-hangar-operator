@@ -1,0 +1,7 @@
+resources:
+- wildcard_egress.yaml
+- image_digest.yaml
+- params.yaml
+
+configurations:
+- kustomizeconfig.yaml
