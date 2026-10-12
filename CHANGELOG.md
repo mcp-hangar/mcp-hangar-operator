@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.17.19](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.18...v0.17.19) (2026-10-11)
+
+### Changed
+
+- **controller:** the MCPServer, MCPDiscoverySource and MCPEgressPolicy
+  controllers write status as a merge patch against what they read, with an
+  optimistic lock, and skip the write when a reconcile computed the status it
+  already had; a steady policy no longer rewrites its status every pass ([#295](https://github.com/mcp-hangar/mcp-hangar-operator/pull/295))
+
 ## [0.17.18](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.17...v0.17.18) (2026-10-11)
 
 ### Added
