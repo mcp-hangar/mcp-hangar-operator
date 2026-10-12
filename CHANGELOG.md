@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.17.20](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.19...v0.17.20) (2026-10-12)
+
+### Changed
+
+- **controller:** the NetworkPolicies and CiliumNetworkPolicies the operator owns are written with Server-Side Apply under the field manager `mcp-hangar-operator`. Before, they were written with a full Update. A label or annotation that another actor adds to the per-server policy or to an MCPEgressPolicy backstop now survives a reconcile; the old Update replaced them. Pods are still written as before. ([#302](https://github.com/mcp-hangar/mcp-hangar-operator/pull/302))
+
+### Fixed
+
+- **controller:** deleting a `mode: remote` MCPServer no longer deletes the server of the same name in core. Such a CR only mirrors a server declared elsewhere, usually core's config, and deleting it took that server out of core until the next reload. The operator now deregisters a remote server only when the CR carries `mcp-hangar.io/registered-by: operator`, and emits a `DeregistrationSkipped` Event otherwise. Container-mode servers are deregistered as before. ([#299](https://github.com/mcp-hangar/mcp-hangar-operator/pull/299))
+- **controller:** an MCPEgressPolicy with FQDN upstreams on Cilium now reports `Degraded` with reason `FQDNLookupsUnobserved` when NodeLocal DNSCache keeps Cilium's DNS proxy from seeing the lookups. The status used to say "FQDN + CIDR enforced" while every hostname upstream was denied. There are two such cases, and the message names the cache, the denied upstreams and the fix for each:
+
+  - The cache runs on the host network. Run it as a pod behind a CiliumLocalRedirectPolicy instead.
+  - The cache runs as a pod, but `--dns-egress-selectors` does not select its pods. Add `--dns-egress-selectors=kube-system/k8s-app=node-local-dns`. ([#300](https://github.com/mcp-hangar/mcp-hangar-operator/pull/300))
+
+### Security
+
+- **controller:** the Cilium-flavor MCPEgressPolicy backstop now denies port 53 to `world`. Before, a governed pod got answers from a DNS resolver on the internet even though the DNS allow rule names only the cluster resolver. That channel bypassed the egress allow-list, for example for DNS tunnelling. The Vanilla flavor was not affected. A policy with a CIDR upstream on port 53 outside the cluster is now denied on that port. ([#305](https://github.com/mcp-hangar/mcp-hangar-operator/pull/305))
+
 ## [0.17.19](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.18...v0.17.19) (2026-10-11)
 
 ### Changed
