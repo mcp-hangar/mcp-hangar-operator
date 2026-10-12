@@ -14,7 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/networkpolicy"
@@ -157,7 +156,7 @@ func TestNamespaceEgress_NoEnforcer_WarnsOnWrite(t *testing.T) {
 		UID:    "ns-uid-199",
 		Labels: map[string]string{networkpolicy.EnforceEgressLabel: "true"},
 	}}
-	c := fake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(ns).Build()
+	c := newFakeClientBuilder().WithScheme(scheme.Scheme).WithObjects(ns).Build()
 
 	for _, tc := range []struct {
 		verdict networkpolicy.EnforcementVerdict

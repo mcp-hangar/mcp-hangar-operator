@@ -100,7 +100,7 @@ func (r *NamespaceEgressReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	if apierrors.IsNotFound(getErr) {
-		if err := r.Create(ctx, desired); err != nil {
+		if err := applyOwned(ctx, r.Client, desired); err != nil {
 			return ctrl.Result{}, fmt.Errorf("create default-deny egress: %w", err)
 		}
 		logger.Info("created default-deny egress", "namespace", ns.Name)
@@ -129,17 +129,7 @@ func (r *NamespaceEgressReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) ||
 		!labelsContain(existing.Labels, desired.Labels) ||
 		!metav1.IsControlledBy(&existing, &ns) {
-		existing.Spec = desired.Spec
-		if existing.Labels == nil {
-			existing.Labels = map[string]string{}
-		}
-		for k, v := range desired.Labels {
-			existing.Labels[k] = v
-		}
-		if err := controllerutil.SetControllerReference(&ns, &existing, r.Scheme); err != nil {
-			return ctrl.Result{}, fmt.Errorf("set owner reference on default-deny egress: %w", err)
-		}
-		if err := r.Update(ctx, &existing); err != nil {
+		if err := applyOwned(ctx, r.Client, desired); err != nil {
 			return ctrl.Result{}, fmt.Errorf("update default-deny egress: %w", err)
 		}
 		logger.Info("reconciled default-deny egress spec", "namespace", ns.Name)
