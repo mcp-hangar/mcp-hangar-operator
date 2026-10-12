@@ -723,7 +723,7 @@ func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpSer
 		// Create
 		logger.Info("Creating NetworkPolicy for provider",
 			"networkPolicy", desired.Name, "provider", mcpServer.Name)
-		if err := r.Create(ctx, desired); err != nil {
+		if err := applyOwned(ctx, r.Client, desired); err != nil {
 			return fmt.Errorf("failed to create NetworkPolicy: %w", err)
 		}
 		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, "NetworkPolicyCreated", ActionReconcile,
@@ -747,16 +747,14 @@ func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpSer
 		return nil
 	}
 
-	// Update if spec changed, or adopt a policy this operator wrote before it
-	// set owner references.
-	if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) || !metav1.IsControlledBy(existing, mcpServer) {
+	// Apply if what the operator sets has drifted, or adopt a policy this
+	// operator wrote before it set owner references. An apply leaves alone what
+	// it does not set, so a label someone else added survives (#220).
+	if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) || !metav1.IsControlledBy(existing, mcpServer) ||
+		!labelsContain(existing.Labels, desired.Labels) || !labelsContain(existing.Annotations, desired.Annotations) {
 		logger.Info("Updating NetworkPolicy for provider",
 			"networkPolicy", desired.Name, "provider", mcpServer.Name)
-		existing.Spec = desired.Spec
-		existing.Labels = desired.Labels
-		existing.Annotations = desired.Annotations
-		existing.OwnerReferences = desired.OwnerReferences
-		if err := r.Update(ctx, existing); err != nil {
+		if err := applyOwned(ctx, r.Client, desired); err != nil {
 			return fmt.Errorf("failed to update NetworkPolicy: %w", err)
 		}
 		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, "NetworkPolicyUpdated", ActionReconcile,

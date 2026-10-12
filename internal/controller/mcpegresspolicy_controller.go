@@ -654,7 +654,7 @@ func (r *MCPEgressPolicyReconciler) applyBackstop(ctx context.Context, policy *m
 	key := types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}
 	err := r.Get(ctx, key, existing)
 	if apierrors.IsNotFound(err) {
-		if err := r.Create(ctx, desired); err != nil {
+		if err := applyOwned(ctx, r.Client, desired); err != nil {
 			return fmt.Errorf("create backstop: %w", err)
 		}
 		r.Recorder.Eventf(policy, nil, corev1.EventTypeNormal, "BackstopCreated", ActionReconcile,
@@ -664,10 +664,10 @@ func (r *MCPEgressPolicyReconciler) applyBackstop(ctx context.Context, policy *m
 	if err != nil {
 		return err
 	}
-	if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) {
-		existing.Spec = desired.Spec
-		existing.Labels = desired.Labels
-		if err := r.Update(ctx, existing); err != nil {
+	// An apply leaves alone what it does not set, so a label someone else
+	// added survives (#220).
+	if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) || !labelsContain(existing.Labels, desired.Labels) {
+		if err := applyOwned(ctx, r.Client, desired); err != nil {
 			return fmt.Errorf("update backstop: %w", err)
 		}
 		r.Recorder.Eventf(policy, nil, corev1.EventTypeNormal, "BackstopUpdated", ActionReconcile,
@@ -724,7 +724,7 @@ func (r *MCPEgressPolicyReconciler) applyCiliumBackstop(ctx context.Context, pol
 	existing := newCiliumBackstopStub(policy)
 	err := r.Get(ctx, types.NamespacedName{Name: desired.GetName(), Namespace: desired.GetNamespace()}, existing)
 	if apierrors.IsNotFound(err) {
-		if err := r.Create(ctx, desired); err != nil {
+		if err := applyOwned(ctx, r.Client, desired); err != nil {
 			return fmt.Errorf("create cilium backstop: %w", err)
 		}
 		r.Recorder.Eventf(policy, nil, corev1.EventTypeNormal, "BackstopCreated", ActionReconcile,
@@ -736,10 +736,8 @@ func (r *MCPEgressPolicyReconciler) applyCiliumBackstop(ctx context.Context, pol
 	}
 	desiredSpec, _, _ := unstructured.NestedMap(desired.Object, "spec")
 	existingSpec, _, _ := unstructured.NestedMap(existing.Object, "spec")
-	if !equality.Semantic.DeepEqual(existingSpec, desiredSpec) {
-		_ = unstructured.SetNestedMap(existing.Object, desiredSpec, "spec")
-		existing.SetLabels(desired.GetLabels())
-		if err := r.Update(ctx, existing); err != nil {
+	if !equality.Semantic.DeepEqual(existingSpec, desiredSpec) || !labelsContain(existing.GetLabels(), desired.GetLabels()) {
+		if err := applyOwned(ctx, r.Client, desired); err != nil {
 			return fmt.Errorf("update cilium backstop: %w", err)
 		}
 		r.Recorder.Eventf(policy, nil, corev1.EventTypeNormal, "BackstopUpdated", ActionReconcile,

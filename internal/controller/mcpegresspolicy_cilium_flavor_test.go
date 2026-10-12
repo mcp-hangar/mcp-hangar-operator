@@ -17,7 +17,6 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/networkpolicy"
@@ -45,7 +44,7 @@ func newCiliumCRDReconciler(t *testing.T, objs ...client.Object) *MCPEgressPolic
 		mapper.Add(gvk, meta.RESTScopeNamespace)
 	}
 
-	c := fake.NewClientBuilder().
+	c := newFakeClientBuilder().
 		WithScheme(scheme).
 		WithRESTMapper(mapper).
 		WithObjects(objs...).
@@ -190,7 +189,7 @@ func TestEgressPolicy_CiliumCRDLookupIsCached(t *testing.T) {
 	mapper := &countingMapper{RESTMapper: base}
 
 	p := cidrPolicy("pol")
-	c := fake.NewClientBuilder().WithScheme(scheme).WithRESTMapper(mapper).
+	c := newFakeClientBuilder().WithScheme(scheme).WithRESTMapper(mapper).
 		WithObjects(testServer("srv", "default"), p).
 		WithStatusSubresource(&mcpv1alpha2.MCPEgressPolicy{}).Build()
 	r := &MCPEgressPolicyReconciler{
