@@ -27,6 +27,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,6 +134,21 @@ func canReach(t *testing.T, cs *kubernetes.Clientset, ns, name string, labels ma
 // to copy the poll loop.
 func probeVerdict(t *testing.T, cs *kubernetes.Clientset, ns, name string, labels map[string]string, script, yes, no string) bool {
 	t.Helper()
+	out := probeOutput(t, cs, ns, name, labels, script)
+	switch {
+	case contains(out, yes):
+		return true
+	case contains(out, no):
+		return false
+	default:
+		t.Fatalf("probe %s produced no verdict, output: %q", name, out)
+		return false
+	}
+}
+
+// probeOutput runs script in a pod and returns what it printed once it exits.
+func probeOutput(t *testing.T, cs *kubernetes.Clientset, ns, name string, labels map[string]string, script string) string {
+	t.Helper()
 	runningPodNoWait(t, cs, ns, name, labels, []string{script})
 
 	deadline := time.Now().Add(90 * time.Second)
@@ -143,20 +159,12 @@ func probeVerdict(t *testing.T, cs *kubernetes.Clientset, ns, name string, label
 			if lerr != nil {
 				t.Fatalf("logs for %s: %v", name, lerr)
 			}
-			out := string(logs)
-			switch {
-			case contains(out, yes):
-				return true
-			case contains(out, no):
-				return false
-			default:
-				t.Fatalf("probe %s produced no verdict, output: %q", name, out)
-			}
+			return string(logs)
 		}
 		time.Sleep(2 * time.Second)
 	}
 	t.Fatalf("probe %s did not finish", name)
-	return false
+	return ""
 }
 
 func runningPodNoWait(t *testing.T, cs *kubernetes.Clientset, ns, name string, labels map[string]string, args []string) {
@@ -298,14 +306,22 @@ func TestNamespaceDefaultDenyLimitsUnregisteredPods(t *testing.T) {
 // query directly.
 const externalResolver = "1.1.1.1"
 
-// queriesDirectly reports whether a pod gets an answer from externalResolver
-// itself, bypassing the cluster's DNS. busybox nslookup exits non-zero when no
-// server answers.
+// queriesDirectly reports whether a pod gets a resolved address from
+// externalResolver itself, bypassing the cluster's DNS. A refusal is not an
+// answer: Cilium's DNS proxy replies REFUSED to a lookup its policy denies,
+// which reaches the pod and is not the query leaving the cluster. Only an
+// answer record (a "Name:" line) counts, and what came back is logged.
 func queriesDirectly(t *testing.T, cs *kubernetes.Clientset, ns, name string, labels map[string]string) bool {
 	t.Helper()
-	script := fmt.Sprintf("nslookup -timeout=5 -retry=1 kubernetes.io %s >/dev/null 2>&1 && echo ANSWERED || echo NO_ANSWER",
-		externalResolver)
-	return probeVerdict(t, cs, ns, name, labels, script, "ANSWERED", "NO_ANSWER")
+	script := fmt.Sprintf("nslookup -timeout=5 -retry=1 kubernetes.io %s 2>&1; true", externalResolver)
+	out := probeOutput(t, cs, ns, name, labels, script)
+	t.Logf("%s: nslookup kubernetes.io %s:\n%s", name, externalResolver, out)
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "Name:") {
+			return true
+		}
+	}
+	return false
 }
 
 // TestDNSEgressIsScopedToTheClusterResolver pins #56 on the wire: the DNS rule
