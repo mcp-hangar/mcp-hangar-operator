@@ -133,6 +133,18 @@ func EgressPolicyBackstopName(policyName string) string {
 	return "mcp-egresspolicy-" + policyName
 }
 
+// FQDNUpstreams returns the policy's upstream hosts that are hostnames rather
+// than IPs or CIDRs: the ones only a toFQDNs rule can allow.
+func FQDNUpstreams(policy *mcpv1alpha2.MCPEgressPolicy) []string {
+	var hosts []string
+	for _, u := range policy.Spec.Upstreams {
+		if _, ok := asCIDR(u.Match.Host); !ok {
+			hosts = append(hosts, u.Match.Host)
+		}
+	}
+	return hosts
+}
+
 // BuildEgressPolicyBackstop builds the Vanilla L3/L4 network backstop for an
 // MCPEgressPolicy: a default-deny egress NetworkPolicy scoped to the target's
 // pods that allows DNS plus any upstream whose host is a literal IP or CIDR.

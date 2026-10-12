@@ -567,10 +567,22 @@ func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, l
 		if err := r.deleteBackstopIfExists(ctx, policy); err != nil { // remove the Vanilla NP if switching
 			return err
 		}
+		enforced, degradedReason, degradedMsg := "FQDN + CIDR enforced", "", ""
+		if fqdns := networkpolicy.FQDNUpstreams(policy); len(fqdns) > 0 && signal.NodeLocalDNSOnHost != "" {
+			// The lookups never pass Cilium's DNS proxy, so the toFQDNs list
+			// stays empty and these upstreams are denied: fail closed, but
+			// not the policy that was asked for (#178).
+			enforced = "CIDR enforced; FQDN upstreams denied, see Degraded"
+			degradedReason = "FQDNLookupsUnobserved"
+			degradedMsg = fmt.Sprintf("NodeLocal DNSCache %s runs on the host network, so Cilium's DNS proxy "+
+				"never sees the lookups and these FQDN upstreams are denied: %s. Run the cache as a pod "+
+				"behind a CiliumLocalRedirectPolicy so lookups pass the proxy",
+				signal.NodeLocalDNSOnHost, strings.Join(fqdns, ", "))
+		}
 		r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionTrue,
-			"BackstopApplied", fmt.Sprintf("Cilium backstop %q applied for %q (FQDN + CIDR enforced)%s",
-				cnp.GetName(), targetName, ciliumCIDRCaveat(policy, ciliumRunning)))
-		r.recordEnforcement(ctx, policy, "", "")
+			"BackstopApplied", fmt.Sprintf("Cilium backstop %q applied for %q (%s)%s",
+				cnp.GetName(), targetName, enforced, ciliumCIDRCaveat(policy, ciliumRunning)))
+		r.recordEnforcement(ctx, policy, degradedReason, degradedMsg)
 		logger.Info("Reconciled MCPEgressPolicy backstop", "policy", policy.Name, "target", targetName, "flavor", "Cilium")
 		return nil
 	}

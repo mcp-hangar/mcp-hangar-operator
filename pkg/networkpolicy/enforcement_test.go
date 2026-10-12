@@ -208,3 +208,44 @@ func TestProbe_CachesForTheTTL(t *testing.T) {
 	p.Signal(context.Background())
 	assert.Equal(t, 2, reader.calls, "the verdict must expire, so a newly installed CNI is seen")
 }
+
+func nodeLocalDNSReader(t *testing.T, name string, hostNetwork bool) client.Reader {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	cache := &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "kube-system"}}
+	cache.Spec.Template.Spec.HostNetwork = hostNetwork
+	cilium := &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "cilium", Namespace: "kube-system"}}
+	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(cache, cilium).Build()
+}
+
+// A cache on the host network is the topology where Cilium's DNS proxy never
+// sees a lookup (#178); both names it ships under are recognised.
+func TestProbe_NodeLocalDNSOnTheHostNetwork_Reported(t *testing.T) {
+	for _, name := range []string{"node-local-dns", "nodelocaldns"} {
+		p := &EnforcementProbe{Mapper: ciliumCRDMapper(), Reader: nodeLocalDNSReader(t, name, true)}
+
+		signal := p.Signal(context.Background())
+
+		assert.Equal(t, "kube-system/"+name, signal.NodeLocalDNSOnHost)
+		assert.True(t, signal.CiliumAgent)
+	}
+}
+
+// A cache running as a pod, behind a CiliumLocalRedirectPolicy, is the
+// supported topology: lookups pass the proxy, so nothing is reported.
+func TestProbe_NodeLocalDNSAsAPod_NotReported(t *testing.T) {
+	p := &EnforcementProbe{Mapper: ciliumCRDMapper(), Reader: nodeLocalDNSReader(t, "node-local-dns", false)}
+
+	assert.Empty(t, p.Signal(context.Background()).NodeLocalDNSOnHost)
+}
+
+// The flag asserts a verdict, not the cluster's DNS topology.
+func TestProbe_Override_KeepsTheNodeLocalDNSFact(t *testing.T) {
+	p := &EnforcementProbe{
+		Mapper: ciliumCRDMapper(), Reader: nodeLocalDNSReader(t, "node-local-dns", true),
+		Override: EnforcementObserved,
+	}
+
+	assert.Equal(t, "kube-system/node-local-dns", p.Signal(context.Background()).NodeLocalDNSOnHost)
+}
