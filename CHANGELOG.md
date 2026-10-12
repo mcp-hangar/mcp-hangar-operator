@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.17.23](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.22...v0.17.23) (2026-10-12)
+
+### Fixed
+
+- **webhook:** the wildcard-egress admission policy re-judges an update only when
+  the egress rules or the opt-in annotation change, as the 0.17.22 upgrade note
+  says. It compared the whole spec, so a server stored before the policy, with
+  wildcard egress and no opt-in, was refused any spec change, including the
+  endpoint or image the discovery controller rewrites on resync ([#313](https://github.com/mcp-hangar/mcp-hangar-operator/pull/313))
+
 ## [0.17.22](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.21...v0.17.22) (2026-10-12)
 
 ### Added
