@@ -22,6 +22,18 @@ data:
     logging:
       level: INFO
       json_format: true
+    # Kubernetes discovery for the container-mode leg (#294): a container-mode
+    # MCPServer reaches core only through the annotations the operator stamps
+    # on its pod. Additive, so the config-defined "backend" is untouched.
+    discovery:
+      enabled: true
+      refresh_interval_s: 5
+      sources:
+        - type: kubernetes
+          mode: additive
+          in_cluster: true
+          namespaces: [hangar-e2e]
+          allowed_namespaces: [hangar-e2e]
     mcp_servers:
       backend:
         mode: remote
@@ -43,9 +55,10 @@ spec:
     metadata:
       labels: { app: mcp-hangar }
     spec:
+      serviceAccountName: mcp-hangar
       containers:
         - name: core
-          image: ghcr.io/mcp-hangar/mcp-hangar:2.12.0
+          image: ghcr.io/mcp-hangar/mcp-hangar:2.25.0
           # args, NOT command: the image's ENTRYPOINT is `mcp-hangar` and its
           # CMD is the serve arguments. Kubernetes `command` replaces the
           # ENTRYPOINT (compose's `command` replaces CMD, which is why the
@@ -106,3 +119,35 @@ spec:
   ports:
     - port: 8080
       targetPort: 8080
+---
+# What core's kubernetes discovery source needs to read the pods in the one
+# namespace it watches, and nothing more.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcp-hangar
+  namespace: hangar-e2e
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mcp-hangar-discovery
+  namespace: hangar-e2e
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mcp-hangar-discovery
+  namespace: hangar-e2e
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mcp-hangar-discovery
+subjects:
+  - kind: ServiceAccount
+    name: mcp-hangar
+    namespace: hangar-e2e

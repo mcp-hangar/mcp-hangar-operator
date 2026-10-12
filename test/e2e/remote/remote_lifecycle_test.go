@@ -17,6 +17,9 @@
 //     l7_policy route, not only reported on the CR (#208);
 //   - deleting a remote CR that mirrors a config-defined server leaves that
 //     server in core (#202);
+//   - a container-mode CR runs a pod the operator stamps with the discovery
+//     annotations, core's kubernetes discovery registers it, and the CR reaches
+//     Ready with the backend's tool count; deleting the CR takes it out (#294);
 //   - with core unreachable, probing is SUSTAINED at roughly the 10s
 //     errorRequeueAfter cadence (~6/min) -- not the ~168/s self-trigger loop of
 //     #105, and not stalled. Asserted as a rate window, deliberately not a
@@ -166,6 +169,9 @@ func TestRemoteLifecycle(t *testing.T) {
 	})
 	t.Run("DeletingAMirrorLeavesCoreAlone", func(t *testing.T) {
 		testDeleteMirror(t, cl)
+	})
+	t.Run("ContainerModeThroughDiscovery", func(t *testing.T) {
+		testContainerMode(t, cl, cs)
 	})
 	t.Run("CoreUnreachableProbeCadence", func(t *testing.T) {
 		testProbeCadence(t, cl, cs)
@@ -414,6 +420,93 @@ func testDeleteMirror(t *testing.T, cl crclient.Client) {
 	}
 
 	testReady(t, cl)
+}
+
+// containerName is the container-mode CR; core knows it only by discovering
+// its pod.
+const containerName = "boxed"
+
+// testContainerMode drives a container-mode MCPServer end to end (#294). The
+// operator runs the task_upstream image as the CR's pod and stamps the
+// discovery annotations on it (pkg/provider/builder.go); core's kubernetes
+// discovery source reads them and registers the pod as a server; the CR then
+// reaches Ready with the backend's three tools. If the builder stopped
+// stamping the annotations, core would never hear of the server and the CR
+// would never be Ready.
+func testContainerMode(t *testing.T, cl crclient.Client, cs *kubernetes.Clientset) {
+	ctx := context.Background()
+	nonRoot := int64(1000)
+	cr := &mcpv1alpha2.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: containerName, Namespace: stackNamespace},
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode:  mcpv1alpha2.MCPServerModeContainer,
+			Image: "localhost/mcp-task-upstream:e2e",
+			Env: []corev1.EnvVar{
+				{Name: "MCP_HOST", Value: "0.0.0.0"},
+				{Name: "MCP_PORT", Value: "8080"},
+				{Name: "MCP_HTTP_PATH", Value: "/mcp"},
+			},
+			// The image has no USER; the operator's pod defaults are non-root.
+			ContainerSecurityContext: &corev1.SecurityContext{RunAsUser: &nonRoot},
+		},
+	}
+	old := &mcpv1alpha2.MCPServer{ObjectMeta: metav1.ObjectMeta{Name: containerName, Namespace: stackNamespace}}
+	_ = cl.Delete(ctx, old)
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		err := cl.Create(ctx, cr)
+		if err == nil {
+			break
+		}
+		if !apierrors.IsAlreadyExists(err) || time.Now().After(deadline) {
+			t.Fatalf("create container-mode MCPServer: %v", err)
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	var last *mcpv1alpha2.MCPServer
+	deadline = time.Now().Add(readyTimeout)
+	for time.Now().Before(deadline) {
+		last = getServer(t, cl, containerName)
+		ready := apimeta.FindStatusCondition(last.Status.Conditions, "Ready")
+		if ready != nil && ready.Status == metav1.ConditionTrue && last.Status.ToolsCount == backendToolCount {
+			break
+		}
+		time.Sleep(3 * time.Second)
+	}
+	pods, err := cs.CoreV1().Pods(stackNamespace).List(ctx, metav1.ListOptions{LabelSelector: "mcp-hangar.io/provider=" + containerName})
+	if err != nil || len(pods.Items) == 0 {
+		t.Fatalf("no pod for the container-mode CR: err=%v; status: %+v", err, last.Status)
+	}
+	pod := pods.Items[0]
+	if pod.Annotations["mcp-hangar.io/enabled"] != "true" || pod.Annotations["mcp-hangar.io/name"] != containerName {
+		t.Errorf("the pod lacks the discovery annotations core reads: %v", pod.Annotations)
+	}
+	ready := apimeta.FindStatusCondition(last.Status.Conditions, "Ready")
+	if ready == nil || ready.Status != metav1.ConditionTrue || last.Status.ToolsCount != backendToolCount {
+		t.Fatalf("container-mode MCPServer %q never reached Ready with %d tools; pod phase %s; status: %+v; core: %s",
+			containerName, backendToolCount, pod.Status.Phase, last.Status,
+			strings.TrimSpace(coreGet(t, "/api/mcp_servers/"+containerName)))
+	}
+	if body := coreGet(t, "/api/mcp_servers/"+containerName); strings.HasPrefix(body, "HTTP ") {
+		t.Errorf("core does not list %q although the CR is Ready: %s", containerName, strings.TrimSpace(body))
+	}
+
+	// Deleting the CR takes the server out of core: the operator deregisters
+	// what its pod put there (#202), and the pod is gone for discovery too.
+	if err := cl.Delete(ctx, cr); err != nil {
+		t.Fatalf("delete container-mode MCPServer: %v", err)
+	}
+	deadline = time.Now().Add(2 * time.Minute)
+	body := ""
+	for time.Now().Before(deadline) {
+		body = coreGet(t, "/api/mcp_servers/"+containerName)
+		if strings.HasPrefix(body, "HTTP 404") {
+			return
+		}
+		time.Sleep(3 * time.Second)
+	}
+	t.Errorf("core still has %q two minutes after its CR was deleted: %s", containerName, strings.TrimSpace(body))
 }
 
 // coreGet runs a GET from inside the core pod. The API port is not published
