@@ -191,14 +191,19 @@ endef
 
 E2E_CLUSTER ?= mcp-np-e2e
 E2E_CNI ?= calico
-# E2E_NODELOCAL_DNS=1 puts NodeLocal DNSCache in the cluster's DNS path and
-# points kubelet at it, so pods resolve through a link-local address instead of
-# the kube-dns endpoints a generated DNS egress rule selects (#145).
+# E2E_NODELOCAL_DNS=1 puts NodeLocal DNSCache in the cluster's DNS path the
+# way Cilium supports it (#178): the cache runs as an ordinary pod and a
+# CiliumLocalRedirectPolicy steers traffic for the kube-dns service to the
+# cache on the same node, so Cilium's DNS proxy still sees every lookup. Pods
+# keep the kube-dns service IP in resolv.conf. The link-local topology (kubelet
+# pointed at 169.254.20.10, the cache on the host network) is the one where the
+# proxy sees nothing and toFQDNs denies the allow-listed name; the operator
+# reports that as Degraded rather than testing it here. Cilium only.
 E2E_NODELOCAL_DNS ?=
-NODELOCAL_DNS_IP ?= 169.254.20.10
-# The addon manifest is pinned: master would let an upstream edit change what
-# this leg tests without a commit here.
-NODELOCAL_DNS_K8S_REF ?= v1.34.1
+# After the redirect a lookup's destination is a node-local-dns pod, and
+# Cilium's DNS proxy inspects only lookups to the endpoints the policy's DNS
+# rule names, so the operator is told about the cache pods.
+NODELOCAL_DNS_SELECTOR ?= kube-system/k8s-app=node-local-dns
 CALICO_VERSION ?= v3.28.2
 CILIUM_VERSION ?= v1.20.1
 CILIUM_CLI_VERSION ?= v0.19.7
@@ -214,23 +219,22 @@ ifeq ($(E2E_CNI),cilium)
 e2e-cluster: cilium-cli
 endif
 
-# Pointing kubelet at the cache is what makes the cache the resolver every pod
-# uses; installing the DaemonSet alone would leave pods talking to kube-dns and
-# the leg would test nothing.
+# The redirect needs Cilium's local redirect policies; kind keeps kube-proxy, and
+# Cilium handles ClusterIP traffic from pods itself once this is on.
 ifeq ($(E2E_NODELOCAL_DNS),1)
-KIND_KUBELET_PATCH = kubeadmConfigPatches:\n  - |\n    kind: KubeletConfiguration\n    clusterDNS:\n      - $(NODELOCAL_DNS_IP)\n
+CILIUM_EXTRA_SETS = --set localRedirectPolicies.enabled=true
 endif
 
 .PHONY: e2e-cluster
 e2e-cluster: ## Create a kind cluster with a NetworkPolicy-enforcing CNI (E2E_CNI=calico|cilium).
 	@kind get clusters 2>/dev/null | grep -qx $(E2E_CLUSTER) || \
-		printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: "192.168.0.0/16"\n$(KIND_KUBELET_PATCH)nodes:\n  - role: control-plane\n' \
+		printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: "192.168.0.0/16"\nnodes:\n  - role: control-plane\n' \
 		| kind create cluster --name $(E2E_CLUSTER) --config -
 	@echo "waiting for the API server..."
 	@until kubectl --context kind-$(E2E_CLUSTER) get --raw /healthz >/dev/null 2>&1; do sleep 5; done
 ifeq ($(E2E_CNI),cilium)
 	@$(CILIUM_CLI) install --context kind-$(E2E_CLUSTER) --version $(CILIUM_VERSION) \
-		--set policyCIDRMatchMode='{pods}' --wait
+		--set policyCIDRMatchMode='{pods}' $(CILIUM_EXTRA_SETS) --wait
 	@$(CILIUM_CLI) status --context kind-$(E2E_CLUSTER) --wait
 	@echo "waiting for the node to become Ready (Cilium must be up first)..."
 	@until [ "$$(kubectl --context kind-$(E2E_CLUSTER) get nodes -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}')" = "True" ]; do sleep 10; done
@@ -242,7 +246,7 @@ else
 endif
 ifeq ($(E2E_NODELOCAL_DNS),1)
 	@kubectl --context kind-$(E2E_CLUSTER) -n kube-system rollout status deployment/coredns --timeout=180s
-	@test/e2e/nodelocaldns.sh kind-$(E2E_CLUSTER) $(NODELOCAL_DNS_IP) $(NODELOCAL_DNS_K8S_REF)
+	@test/e2e/nodelocaldns.sh kind-$(E2E_CLUSTER) $(CILIUM_VERSION)
 endif
 
 E2E_OPERATOR_IMAGE ?= localhost/mcp-hangar-operator:e2e
@@ -255,12 +259,16 @@ e2e-operator: ## Build the operator from this checkout and run it in the e2e clu
 	kubectl --context kind-$(E2E_CLUSTER) wait --for=condition=Established --timeout=60s \
 		$$(kubectl --context kind-$(E2E_CLUSTER) get crd -o name | grep 'mcp-hangar.io')
 	kubectl --context kind-$(E2E_CLUSTER) apply -k test/e2e/operator
+ifeq ($(E2E_NODELOCAL_DNS),1)
+	kubectl --context kind-$(E2E_CLUSTER) -n mcp-hangar patch deploy/mcp-hangar-operator-controller-manager --type=json \
+		-p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--dns-egress-selectors=$(NODELOCAL_DNS_SELECTOR)"}]'
+endif
 	kubectl --context kind-$(E2E_CLUSTER) -n mcp-hangar rollout status \
 		deploy/mcp-hangar-operator-controller-manager --timeout=180s
 
 .PHONY: e2e
 e2e: ## Run reachability tests against the current kube context (run e2e-operator first; E2E_CNI gates CNI-specific tests).
-	E2E_CNI=$(E2E_CNI) E2E_NODELOCAL_DNS=$(E2E_NODELOCAL_DNS) NODELOCAL_DNS_IP=$(NODELOCAL_DNS_IP) \
+	E2E_CNI=$(E2E_CNI) E2E_NODELOCAL_DNS=$(E2E_NODELOCAL_DNS) \
 		go test -tags e2e ./test/e2e/... -v -timeout 20m
 
 .PHONY: e2e-clean

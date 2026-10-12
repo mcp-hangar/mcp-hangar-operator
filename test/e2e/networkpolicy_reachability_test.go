@@ -27,6 +27,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,6 +134,21 @@ func canReach(t *testing.T, cs *kubernetes.Clientset, ns, name string, labels ma
 // to copy the poll loop.
 func probeVerdict(t *testing.T, cs *kubernetes.Clientset, ns, name string, labels map[string]string, script, yes, no string) bool {
 	t.Helper()
+	out := probeOutput(t, cs, ns, name, labels, script)
+	switch {
+	case contains(out, yes):
+		return true
+	case contains(out, no):
+		return false
+	default:
+		t.Fatalf("probe %s produced no verdict, output: %q", name, out)
+		return false
+	}
+}
+
+// probeOutput runs script in a pod and returns what it printed once it exits.
+func probeOutput(t *testing.T, cs *kubernetes.Clientset, ns, name string, labels map[string]string, script string) string {
+	t.Helper()
 	runningPodNoWait(t, cs, ns, name, labels, []string{script})
 
 	deadline := time.Now().Add(90 * time.Second)
@@ -143,20 +159,12 @@ func probeVerdict(t *testing.T, cs *kubernetes.Clientset, ns, name string, label
 			if lerr != nil {
 				t.Fatalf("logs for %s: %v", name, lerr)
 			}
-			out := string(logs)
-			switch {
-			case contains(out, yes):
-				return true
-			case contains(out, no):
-				return false
-			default:
-				t.Fatalf("probe %s produced no verdict, output: %q", name, out)
-			}
+			return string(logs)
 		}
 		time.Sleep(2 * time.Second)
 	}
 	t.Fatalf("probe %s did not finish", name)
-	return false
+	return ""
 }
 
 func runningPodNoWait(t *testing.T, cs *kubernetes.Clientset, ns, name string, labels map[string]string, args []string) {
@@ -291,6 +299,60 @@ func TestNamespaceDefaultDenyLimitsUnregisteredPods(t *testing.T) {
 	if canReach(t, cs, ns, "probe-shadow", map[string]string{"role": "shadow"},
 		target.Status.PodIP, 8080) {
 		t.Error("an unregistered pod reached an upstream; the namespace default-deny is not enforced")
+	}
+}
+
+// externalResolver is a public resolver a governed pod must not be able to
+// query directly.
+const externalResolver = "1.1.1.1"
+
+// queriesDirectly reports whether a pod gets a resolved address from
+// externalResolver itself, bypassing the cluster's DNS. A refusal is not an
+// answer: Cilium's DNS proxy replies REFUSED to a lookup its policy denies,
+// which reaches the pod and is not the query leaving the cluster. Only an
+// answer record (a "Name:" line) counts, and what came back is logged.
+func queriesDirectly(t *testing.T, cs *kubernetes.Clientset, ns, name string, labels map[string]string) bool {
+	t.Helper()
+	script := fmt.Sprintf("nslookup -timeout=5 -retry=1 kubernetes.io %s 2>&1; true", externalResolver)
+	out := probeOutput(t, cs, ns, name, labels, script)
+	t.Logf("%s: nslookup kubernetes.io %s:\n%s", name, externalResolver, out)
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "Name:") {
+			return true
+		}
+	}
+	return false
+}
+
+// TestDNSEgressIsScopedToTheClusterResolver pins #56 on the wire: the DNS rule
+// in a backstop allows port 53 to the cluster's resolver, not to any address,
+// so a governed pod cannot use an outside resolver as a channel. Without a
+// peer on the rule, "port 53" means port 53 anywhere.
+func TestDNSEgressIsScopedToTheClusterResolver(t *testing.T) {
+	cs := clientset(t)
+	ns := namespace(t, cs, nil)
+
+	if !queriesDirectly(t, cs, ns, "control-direct-dns", map[string]string{"role": "control"}) {
+		t.Fatalf("%s does not answer with NO policy applied, so the deny below would pass for the "+
+			"wrong reason", externalResolver)
+	}
+
+	policy := &mcpv1alpha2.MCPEgressPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "dns-scope", Namespace: ns},
+		Spec: mcpv1alpha2.MCPEgressPolicySpec{
+			Mode: mcpv1alpha2.EgressPolicyModeEnforce,
+			Upstreams: []mcpv1alpha2.UpstreamRule{
+				{Name: "net", Match: mcpv1alpha2.UpstreamMatch{Host: "10.0.0.0/8"}},
+			},
+		},
+	}
+	target := metav1.LabelSelector{MatchLabels: map[string]string{networkpolicy.LabelProvider: "srv"}}
+	backstop, _ := networkpolicy.BuildEgressPolicyBackstop(policy, target)
+	applyPolicy(t, cs, backstop)
+
+	if queriesDirectly(t, cs, ns, "probe-direct-dns", map[string]string{networkpolicy.LabelProvider: "srv"}) {
+		t.Errorf("a governed pod got an answer from %s directly: the backstop's DNS rule does not "+
+			"scope port 53 to the cluster resolver (#56)", externalResolver)
 	}
 }
 
