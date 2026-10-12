@@ -103,8 +103,8 @@ a=$(m)
 echo "requests before=$b after=$a"
 awk -v a="$a" -v b="$b" 'BEGIN { if (a - b >= 10) print "VIA_CACHE"; else print "NOT_VIA_CACHE" }'`, metrics)
 	if !probeVerdict(t, cs, ns, "resolver-check", nil, script, "VIA_CACHE", "NOT_VIA_CACHE") {
-		t.Fatalf("lookups through kube-dns did not reach the node-local-dns cache -- the "+
-			"CiliumLocalRedirectPolicy is not steering DNS, and every assertion on this leg would "+
+		t.Fatalf("lookups through kube-dns did not reach the node-local-dns cache -- the " +
+			"CiliumLocalRedirectPolicy is not steering DNS, and every assertion on this leg would " +
 			"pass for the wrong reason")
 	}
 }
