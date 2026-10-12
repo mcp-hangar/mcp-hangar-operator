@@ -492,9 +492,9 @@ func testContainerMode(t *testing.T, cl crclient.Client, cs *kubernetes.Clientse
 				waiting = append(waiting, s.State.Waiting.Reason+": "+s.State.Waiting.Message)
 			}
 		}
-		t.Fatalf("container-mode MCPServer %q never reached Ready with %d tools; pod phase %s %v; status: %+v; core: %s",
+		t.Fatalf("container-mode MCPServer %q never reached Ready with %d tools; pod phase %s %v; status: %+v; core: %s\ncore discovery log:\n%s",
 			containerName, backendToolCount, pod.Status.Phase, waiting, last.Status,
-			strings.TrimSpace(coreGet(t, "/api/mcp_servers/"+containerName)))
+			strings.TrimSpace(coreGet(t, "/api/mcp_servers/"+containerName)), coreLogLines("discover"))
 	}
 	if body := coreGet(t, "/api/mcp_servers/"+containerName); strings.HasPrefix(body, "HTTP ") {
 		t.Errorf("core does not list %q although the CR is Ready: %s", containerName, strings.TrimSpace(body))
@@ -515,6 +515,25 @@ func testContainerMode(t *testing.T, cl crclient.Client, cs *kubernetes.Clientse
 		time.Sleep(3 * time.Second)
 	}
 	t.Errorf("core still has %q two minutes after its CR was deleted: %s", containerName, strings.TrimSpace(body))
+}
+
+// coreLogLines returns core's log lines that mention substr, for a failure
+// message: the workflow's diagnostics do not collect core's log.
+func coreLogLines(substr string) string {
+	out, err := exec.Command("kubectl", "-n", stackNamespace, "logs", "-l", "app=mcp-hangar", "--tail=2000").CombinedOutput()
+	if err != nil {
+		return "(core logs unavailable: " + err.Error() + ")"
+	}
+	var lines []string
+	for _, l := range strings.Split(string(out), "\n") {
+		if strings.Contains(strings.ToLower(l), substr) {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) > 40 {
+		lines = lines[len(lines)-40:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // coreGet runs a GET from inside the core pod. The API port is not published
