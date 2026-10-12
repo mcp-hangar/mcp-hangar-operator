@@ -151,4 +151,14 @@ func TestCiliumFQDNAllowedConnectsAndDisallowedIsBlocked(t *testing.T) {
 	if canReach(t, cs, ns, "probe-fqdn-disallowed", selected, disallowedFQDN, fqdnPort) {
 		t.Errorf("%s is outside the FQDN allow-list but was reachable; toFQDNs egress is not enforced", disallowedFQDN)
 	}
+	// The DNS rule must stay scoped to the cluster resolver: an answer from an
+	// internet resolver is a channel past the allow-list (#304). A lookup that
+	// is answered prints a "Name:" record; a dropped one times out.
+	direct := "nslookup -timeout=5 -retry=1 kubernetes.io 1.1.1.1 2>&1 | grep -q '^Name:' && echo ANSWERED || echo NO_ANSWER"
+	if !probeVerdict(t, cs, ns, "control-direct-dns", map[string]string{"role": "control"}, direct, "ANSWERED", "NO_ANSWER") {
+		t.Fatalf("1.1.1.1 does not answer with NO policy applied, so the DNS deny check would pass for the wrong reason")
+	}
+	if probeVerdict(t, cs, ns, "probe-direct-dns", selected, direct, "ANSWERED", "NO_ANSWER") {
+		t.Errorf("a governed pod got an answer from 1.1.1.1 directly under the CiliumNetworkPolicy: DNS is not scoped to the cluster resolver (#304)")
+	}
 }

@@ -260,11 +260,35 @@ func BuildEgressPolicyCiliumNetworkPolicy(policy *mcpv1alpha2.MCPEgressPolicy, t
 			"spec": map[string]interface{}{
 				"endpointSelector": labelSelectorToUnstructured(target),
 				"egress":           egress,
+				"egressDeny":       dnsToWorldDeny(),
 			},
 		},
 	}
 	cnp.SetGroupVersionKind(schema.GroupVersionKind{Group: CiliumGroup, Version: CiliumVersion, Kind: CiliumNetworkPolicyKind})
 	return cnp
+}
+
+// dnsToWorldDeny is the CiliumNetworkPolicy deny rule that keeps port 53 inside
+// the cluster (#304). The DNS allow rule names the cluster resolver as its
+// peer, but with the L7 DNS rule that toFQDNs needs, a governed pod still got
+// answers from a resolver on the internet, measured on the wire -- a channel
+// past the allow-list, the one #56 closed for the Vanilla flavor. Cilium
+// evaluates deny before allow, and the cluster resolver (kube-dns pods, or the
+// node-local cache pods behind a CiliumLocalRedirectPolicy) is not "world".
+func dnsToWorldDeny() []interface{} {
+	return []interface{}{
+		map[string]interface{}{
+			"toEntities": []interface{}{"world"},
+			"toPorts": []interface{}{
+				map[string]interface{}{
+					"ports": []interface{}{
+						map[string]interface{}{"port": "53", "protocol": "UDP"},
+						map[string]interface{}{"port": "53", "protocol": "TCP"},
+					},
+				},
+			},
+		},
+	}
 }
 
 // labelSelectorToUnstructured renders a metav1.LabelSelector as the map shape a
