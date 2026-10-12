@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.17.22](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.21...v0.17.22) (2026-10-12)
+
+### Added
+
+- **webhook:** ship the wildcard egress opt-in and the image digest policy as
+  ValidatingAdmissionPolicies in `config/admissionpolicy/`, so the apiserver
+  enforces them with the operator's webhooks off. The digest level is the
+  `imageDigestPolicy` key of a params ConfigMap (`warn`, `block`, `off`). The
+  webhook copies stay behind `--webhook-annotation-rules` (default true) for this
+  release; `config/default` installs the policies and sets it false ([#310](https://github.com/mcp-hangar/mcp-hangar-operator/pull/310))
+
 ## [0.17.21](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.20...v0.17.21) (2026-10-12)
 
 ### Changed
