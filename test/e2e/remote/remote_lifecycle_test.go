@@ -466,6 +466,18 @@ func testContainerMode(t *testing.T, cl crclient.Client, cs *kubernetes.Clientse
 		time.Sleep(2 * time.Second)
 	}
 
+	// Core registers a discovered server cold, as config does "backend"; up.sh
+	// starts that one, and this starts the discovered one once core has it, so
+	// its tools are listed.
+	deadline = time.Now().Add(readyTimeout)
+	for time.Now().Before(deadline) {
+		if !strings.HasPrefix(coreGet(t, "/api/mcp_servers/"+containerName), "HTTP ") {
+			corePost(t, "/api/mcp_servers/"+containerName+"/start")
+			break
+		}
+		time.Sleep(3 * time.Second)
+	}
+
 	var last *mcpv1alpha2.MCPServer
 	deadline = time.Now().Add(readyTimeout)
 	for time.Now().Before(deadline) {
@@ -534,6 +546,30 @@ func coreLogLines(substr string) string {
 		lines = lines[len(lines)-40:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// corePost runs a body-less POST from inside the core pod, as coreGet does a GET.
+func corePost(t *testing.T, path string) string {
+	t.Helper()
+	pod, err := exec.Command("kubectl", "-n", stackNamespace, "get", "pod", "-l", "app=mcp-hangar",
+		"-o", "jsonpath={.items[0].metadata.name}").Output()
+	if err != nil {
+		t.Fatalf("find core pod: %v", err)
+	}
+	script := `import sys, urllib.request, urllib.error
+req = urllib.request.Request("http://localhost:8080" + sys.argv[1], method="POST")
+try:
+    print(urllib.request.urlopen(req, timeout=60).read().decode())
+except urllib.error.HTTPError as e:
+    print("HTTP %d: %s" % (e.code, e.read().decode()))
+`
+	out, err := exec.Command("kubectl", "-n", stackNamespace, "exec", string(pod), "--",
+		"python3", "-c", script, path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("POST %s in core: %v: %s", path, err, out)
+	}
+	t.Logf("POST %s: %s", path, strings.TrimSpace(string(out)))
+	return string(out)
 }
 
 // coreGet runs a GET from inside the core pod. The API port is not published
