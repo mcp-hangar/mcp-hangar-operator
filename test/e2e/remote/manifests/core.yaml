@@ -34,6 +34,10 @@ data:
           in_cluster: true
           namespaces: [hangar-e2e]
           allowed_namespaces: [hangar-e2e]
+      # task_upstream serves only /mcp, no /health, and core quarantines a
+      # discovered server whose health check fails (#306).
+      security:
+        require_health_check: false
     mcp_servers:
       backend:
         mode: remote
