@@ -22,7 +22,7 @@
 
 ### Prerequisites
 
-- Kubernetes 1.25+
+- Kubernetes 1.30+
 - Helm 3.x
 - kubectl configured for your cluster
 
