@@ -15,6 +15,8 @@
 //     ("not registered with core"), not a JSON decode error;
 //   - an MCPEgressPolicy's L7 half is held by core, read back from core's own
 //     l7_policy route, not only reported on the CR (#208);
+//   - deleting a remote CR that mirrors a config-defined server leaves that
+//     server in core (#202);
 //   - with core unreachable, probing is SUSTAINED at roughly the 10s
 //     errorRequeueAfter cadence (~6/min) -- not the ~168/s self-trigger loop of
 //     #105, and not stalled. Asserted as a rate window, deliberately not a
@@ -161,6 +163,9 @@ func TestRemoteLifecycle(t *testing.T) {
 	})
 	t.Run("EgressPolicyL7ReachesCore", func(t *testing.T) {
 		testL7Delivered(t, cl)
+	})
+	t.Run("DeletingAMirrorLeavesCoreAlone", func(t *testing.T) {
+		testDeleteMirror(t, cl)
 	})
 	t.Run("CoreUnreachableProbeCadence", func(t *testing.T) {
 		testProbeCadence(t, cl, cs)
@@ -378,6 +383,37 @@ func testL7Delivered(t *testing.T, cl crclient.Client) {
 		t.Fatalf("core's l7_policy for %q does not deny %q, so the operator's claim is not what core holds: %s",
 			registeredName, l7DeniedTool, body)
 	}
+}
+
+// testDeleteMirror deletes the "backend" CR, which mirrors a server core has
+// from its config, and asks core whether the server is still there. The
+// operator used to send DELETE /api/mcp_servers/backend on every CR deletion,
+// which took the config-defined server out of core until a reload (#202). The
+// CR is recreated afterwards: the cadence test reads it.
+func testDeleteMirror(t *testing.T, cl crclient.Client) {
+	ctx := context.Background()
+	cr := &mcpv1alpha2.MCPServer{ObjectMeta: metav1.ObjectMeta{Name: registeredName, Namespace: stackNamespace}}
+	if err := cl.Delete(ctx, cr); err != nil {
+		t.Fatalf("delete MCPServer %q: %v", registeredName, err)
+	}
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		err := cl.Get(ctx, types.NamespacedName{Name: registeredName, Namespace: stackNamespace}, &mcpv1alpha2.MCPServer{})
+		if apierrors.IsNotFound(err) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("MCPServer %q still present 60s after delete; the finalizer was not released", registeredName)
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	if body := coreGet(t, "/api/mcp_servers/"+registeredName); strings.HasPrefix(body, "HTTP ") {
+		t.Errorf("core lost %q when its mirror CR was deleted: GET /api/mcp_servers/%s answered %s",
+			registeredName, registeredName, strings.TrimSpace(body))
+	}
+
+	testReady(t, cl)
 }
 
 // coreGet runs a GET from inside the core pod. The API port is not published
