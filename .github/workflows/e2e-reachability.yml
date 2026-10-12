@@ -54,10 +54,12 @@ jobs:
         # flavor emits (issue #110) -- without this leg, the feature's headline
         # capability is covered by API-object assertions only.
         # cilium-nodelocaldns is the same CNI with a per-node DNS cache as the
-        # resolver (issue #145). It is a third leg rather than a change to the
-        # second: a cluster whose pods resolve through kube-dns and one whose
-        # pods resolve through a link-local cache are different claims, and
-        # folding them together would retire the plain one.
+        # resolver (issue #145), installed the way Cilium supports it: the
+        # cache as a pod behind a CiliumLocalRedirectPolicy (issue #178). It is
+        # a third leg rather than a change to the second: a cluster whose pods
+        # resolve through kube-dns and one whose lookups are redirected to a
+        # per-node cache are different claims, and folding them together would
+        # retire the plain one.
         include:
           - leg: calico
             cni: calico
