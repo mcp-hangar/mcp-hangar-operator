@@ -360,3 +360,46 @@ func TestPolicies_RatchetOnUpdate(t *testing.T) {
 	p.Annotations = nil
 	require.NoError(t, k8sClient.Update(ctx, p))
 }
+
+// TestWildcardEgress_LegacyServerKeepsReconciling: a server stored before the
+// policy existed, with wildcard egress and no opt-in, still takes writes that
+// leave its egress and opt-in alone -- replicas, an endpoint or image the
+// discovery controller rewrites on resync. Only an egress change is judged.
+func TestWildcardEgress_LegacyServerKeepsReconciling(t *testing.T) {
+	setDigestLevel(t, "off")
+
+	binding := &admissionregistrationv1.ValidatingAdmissionPolicyBinding{}
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: "wildcard-egress"}, binding))
+	saved := binding.DeepCopy()
+	require.NoError(t, k8sClient.Delete(ctx, binding))
+
+	legacy := withEgress(containerServer("legacy-wildcard", "ghcr.io/example/app:1.0", nil),
+		mcpv1alpha2.EgressRuleSpec{Host: "*"})
+	probe := withEgress(containerServer("legacy-probe", pinnedImage, nil), mcpv1alpha2.EgressRuleSpec{Host: "*"})
+	require.Eventually(t, func() bool {
+		return dryRunCreate(probe) == nil
+	}, 30*time.Second, 200*time.Millisecond, "the wildcard binding never stopped applying")
+	require.NoError(t, k8sClient.Create(ctx, legacy))
+	t.Cleanup(func() { _ = k8sClient.Delete(ctx, legacy) })
+
+	restored := &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: saved.Name},
+		Spec:       saved.Spec,
+	}
+	require.NoError(t, k8sClient.Create(ctx, restored))
+	require.Eventually(t, func() bool {
+		return dryRunCreate(probe) != nil
+	}, 30*time.Second, 200*time.Millisecond, "the wildcard binding never applied again")
+
+	zero := int32(0)
+	legacy.Spec.Replicas = &zero
+	legacy.Spec.Image = "ghcr.io/example/app:2.0"
+	require.NoError(t, k8sClient.Update(ctx, legacy), "a spec change outside egress must not be re-judged")
+
+	narrowed := legacy.DeepCopy()
+	narrowed.Spec.Capabilities.Network.Egress = append(narrowed.Spec.Capabilities.Network.Egress,
+		mcpv1alpha2.EgressRuleSpec{Host: "api.example.com"})
+	err := k8sClient.Update(ctx, narrowed, client.DryRunAll)
+	require.Error(t, err, "an egress change is judged, and the wildcard is still there")
+	assert.Contains(t, err.Error(), egressOptIn)
+}

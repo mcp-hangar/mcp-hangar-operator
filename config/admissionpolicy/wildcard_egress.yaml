@@ -20,13 +20,18 @@ spec:
   # it stuck in Terminating.
   - name: not-deleting
     expression: "!has(object.metadata.deletionTimestamp)"
-  # Ratchet: an update that leaves the spec and the opt-in alone (a finalizer,
-  # a label) is not re-judged, so an object admitted before the policy existed
-  # can still be reconciled and deleted.
-  - name: spec-or-opt-in-changed
+  # Ratchet: an update that leaves the egress rules and the opt-in alone (a
+  # finalizer, a label, replicas, an endpoint the discovery controller
+  # rewrites) is not re-judged, so an object admitted before the policy
+  # existed can still be reconciled and deleted. Compares only what the rule
+  # reads, as image-digest does.
+  - name: egress-or-opt-in-changed
     expression: >-
       request.operation != 'UPDATE' ||
-      object.spec != oldObject.spec ||
+      (has(object.spec.capabilities) && has(object.spec.capabilities.network) &&
+        has(object.spec.capabilities.network.egress) ? object.spec.capabilities.network.egress : []) !=
+      (has(oldObject.spec.capabilities) && has(oldObject.spec.capabilities.network) &&
+        has(oldObject.spec.capabilities.network.egress) ? oldObject.spec.capabilities.network.egress : []) ||
       (has(object.metadata.annotations) && 'hangar.io/allow-unrestricted-egress' in object.metadata.annotations
         ? object.metadata.annotations['hangar.io/allow-unrestricted-egress'] : '') !=
       (has(oldObject.metadata.annotations) && 'hangar.io/allow-unrestricted-egress' in oldObject.metadata.annotations
