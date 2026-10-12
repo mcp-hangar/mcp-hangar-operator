@@ -41,6 +41,15 @@ const (
 	// Finalizer name
 	finalizerName = "mcp-hangar.io/finalizer"
 
+	// AnnotationRegisteredBy marks an MCPServer whose server in core this
+	// operator created. Deleting the CR deletes that server in core only when
+	// the mark is there: a remote CR without it mirrors a server something else
+	// declared (core's config, say), and deleting the mirror must not delete
+	// the real server (#202).
+	AnnotationRegisteredBy = "mcp-hangar.io/registered-by"
+	// RegisteredByOperator is the AnnotationRegisteredBy value this operator writes.
+	RegisteredByOperator = "operator"
+
 	// Condition types
 	ConditionReady                = "Ready"
 	ConditionProgressing          = "Progressing"
@@ -93,6 +102,7 @@ const (
 	ReasonViolationCleared          = "ViolationCleared"
 	ReasonUnrestrictedEgressAllowed = "UnrestrictedEgressAllowed"
 	ReasonCoreAuthRejected          = "CoreAuthRejected"
+	ReasonDeregistrationSkipped     = "DeregistrationSkipped"
 )
 
 // MCPServerReconciler reconciles a MCPServer object
@@ -1045,11 +1055,20 @@ func (r *MCPServerReconciler) reconcileDelete(ctx context.Context, mcpServer *mc
 		}
 	}
 
-	// Deregister from MCP-Hangar core
+	// Deregister from MCP-Hangar core, but only a server this operator put
+	// there. A container-mode server exists in core because of the pod this
+	// operator ran; a remote one only if the operator registered it.
 	if r.HangarClient != nil {
-		if err := r.HangarClient.DeregisterMCPServer(ctx, mcpServer.Name, mcpServer.Namespace); err != nil {
-			logger.Error(err, "Failed to deregister provider from Hangar")
-			// Continue anyway - don't block deletion
+		if ownsCoreServer(mcpServer) {
+			if err := r.HangarClient.DeregisterMCPServer(ctx, mcpServer.Name, mcpServer.Namespace); err != nil {
+				logger.Error(err, "Failed to deregister provider from Hangar")
+				// Continue anyway - don't block deletion
+			}
+		} else {
+			r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonDeregistrationSkipped, ActionReconcile,
+				"Left %q in core: this operator did not register it (no %s=%s annotation), "+
+					"so the CR only mirrored a server declared elsewhere", mcpServer.Name,
+				AnnotationRegisteredBy, RegisteredByOperator)
 		}
 	}
 
@@ -1067,6 +1086,15 @@ func (r *MCPServerReconciler) reconcileDelete(ctx context.Context, mcpServer *mc
 	logger.Info("MCPServer deleted successfully")
 
 	return ctrl.Result{}, nil
+}
+
+// ownsCoreServer reports whether the server core holds under this CR's name
+// is one this operator is entitled to delete.
+func ownsCoreServer(mcpServer *mcpv1alpha2.MCPServer) bool {
+	if mcpServer.IsContainerMode() {
+		return true
+	}
+	return mcpServer.Annotations[AnnotationRegisteredBy] == RegisteredByOperator
 }
 
 // SetupWithManager sets up the controller with the Manager
