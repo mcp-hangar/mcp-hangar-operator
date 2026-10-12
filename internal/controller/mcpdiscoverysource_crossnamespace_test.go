@@ -15,7 +15,6 @@ import (
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
@@ -120,7 +119,7 @@ func TestMCPDiscoverySource_CrossNamespaceWarningOnce(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "providers", Namespace: "team-b"},
 		Data:       map[string]string{"providers.yaml": containerProviderYAML},
 	}
-	c := fake.NewClientBuilder().
+	c := newFakeClientBuilder().
 		WithScheme(scheme).
 		WithObjects(source, cm).
 		WithStatusSubresource(&mcpv1alpha2.MCPDiscoverySource{}).
