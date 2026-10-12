@@ -5,10 +5,10 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -64,19 +64,10 @@ const (
 	readyRequeueAfter   = 5 * time.Minute
 	coldRequeueAfter    = 10 * time.Minute
 
-	// maxConsecutiveFailures caps Status.ConsecutiveFailures so the counter
-	// cannot grow without bound while a provider stays unhealthy. Once a pod
-	// has failed this many times in a row, it is retried every
-	// failedPodRetryAfter instead of on the short backoff.
+	// maxConsecutiveFailures caps Status.ConsecutiveFailures, which mirrors
+	// the pod's restart count (#221) and the failed core probes, so the
+	// counter cannot grow without bound while a provider stays unhealthy.
 	maxConsecutiveFailures = int32(5)
-
-	// maxPodRestartBackoff bounds the doubling backoff between pod restarts.
-	maxPodRestartBackoff = 5 * time.Minute
-
-	// failedPodRetryAfter is how often a pod that keeps failing is retried
-	// after maxConsecutiveFailures. It used to be never: one capped server
-	// stayed Dead until someone edited it (#209).
-	failedPodRetryAfter = 10 * time.Minute
 
 	// ActionReconcile is the events.k8s.io `action` field on every Event this
 	// operator emits. The new events API splits what the legacy API called a
@@ -126,7 +117,8 @@ type MCPServerReconciler struct {
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservers/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=mcp-hangar.io,resources=mcpservers/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // Events now go to events.k8s.io/v1 (the recorder migration in #58). The
@@ -238,171 +230,42 @@ func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mc
 	// Audit wildcard egress override usage (emits Warning event for audit trail)
 	r.reconcileEgressAudit(ctx, mcpServer)
 
-	// Build desired Pod spec
-	desiredPod, err := provider.BuildPodForMCPServer(mcpServer)
-	if err != nil {
-		logger.Error(err, "Failed to build Pod spec")
-		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "PodBuildFailed", err.Error())
-		if err := writeStatus(ctx, r.Client, mcpServer); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: errorRequeueAfter}, nil
-	}
-
-	// Set owner reference
-	if err := controllerutil.SetControllerReference(mcpServer, desiredPod, r.Scheme); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// Check if Pod exists
-	existingPod := &corev1.Pod{}
-	podKey := types.NamespacedName{Name: desiredPod.Name, Namespace: desiredPod.Namespace}
-	err = r.Get(ctx, podKey, existingPod)
-
-	if errors.IsNotFound(err) {
-		return r.handlePodNotFound(ctx, mcpServer, desiredPod)
-	} else if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// Detect spec drift: if the provider generation changed since the Pod was
-	// created, delete the stale Pod and let the next reconcile recreate it.
-	if r.podSpecDrifted(mcpServer, existingPod) {
-		logger.Info("Provider spec changed, recreating Pod",
-			"provider", mcpServer.Name,
-			"podGeneration", existingPod.Annotations[provider.AnnotationGeneration],
-			"providerGeneration", mcpServer.Generation)
-		if err := r.Delete(ctx, existingPod); err != nil && !errors.IsNotFound(err) {
-			return ctrl.Result{}, err
-		}
-		mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
-		// A new spec is a new attempt: failures of the old one must not
-		// count against it, or one more failure would land it at the cap.
-		mcpServer.Status.ConsecutiveFailures = 0
-		setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "SpecChanged", "Provider spec changed, recreating Pod")
-		if err := writeStatus(ctx, r.Client, mcpServer); err != nil {
-			return ctrl.Result{}, err
-		}
-		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonUpdated, ActionReconcile,
-			"Spec changed, recreating Pod")
-		metrics.MCPServerRestarts.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Inc()
-		return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
-	}
-
-	// Pod exists - sync status
-	return r.syncPodStatus(ctx, mcpServer, existingPod)
+	return r.reconcileDeployment(ctx, mcpServer)
 }
 
-// handlePodNotFound handles the case when the provider Pod doesn't exist
-func (r *MCPServerReconciler) handlePodNotFound(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer, desiredPod *corev1.Pod) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	// Check if we should create (replicas > 0)
-	if mcpServer.IsCold() {
-		// Cold state - don't create pod
-		logger.Info("Provider is cold (replicas=0), not creating Pod")
-		mcpServer.Status.State = mcpv1alpha2.MCPServerStateCold
-		mcpServer.Status.Replicas = 0
-		mcpServer.Status.ReadyReplicas = 0
-		mcpServer.Status.AvailableReplicas = 0
-		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "Cold", "spec.replicas is 0, so no provider pod runs; set it to 1 to start one")
-		setServerCondition(mcpServer, ConditionAvailable, metav1.ConditionFalse, "Cold", "No replicas requested")
-
-		if err := writeStatus(ctx, r.Client, mcpServer); err != nil {
-			return ctrl.Result{}, err
-		}
-
-		metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, string(mcpv1alpha2.MCPServerStateCold))
-		return ctrl.Result{RequeueAfter: coldRequeueAfter}, nil
-	}
-
-	// Honour the restart backoff here, where the pod is created. Returning a
-	// RequeueAfter from the failure branch did not: deleting the failed pod
-	// fires the watch, and the next reconcile recreated it at once (#209).
-	if wait := restartWaitRemaining(mcpServer, time.Now()); wait > 0 {
-		logger.Info("Waiting out the restart backoff", "failures", mcpServer.Status.ConsecutiveFailures, "wait", wait)
-		return ctrl.Result{RequeueAfter: wait}, nil
-	}
-
-	// Create Pod
-	logger.Info("Creating Pod for provider", "pod", desiredPod.Name)
-	if err := r.Create(ctx, desiredPod); err != nil {
-		logger.Error(err, "Failed to create Pod")
-		setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "PodCreateFailed", err.Error())
-		mcpServer.Status.State = mcpv1alpha2.MCPServerStateDead
-		if err := writeStatus(ctx, r.Client, mcpServer); err != nil {
-			return ctrl.Result{}, err
-		}
-		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonFailed, ActionReconcile,
-			"Failed to create Pod: %v", err)
-		return ctrl.Result{RequeueAfter: errorRequeueAfter}, nil
-	}
-
-	// Update status
-	mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
-	mcpServer.Status.PodName = desiredPod.Name
-	mcpServer.Status.Replicas = 1
-	now := metav1.Now()
-	mcpServer.Status.LastStartedAt = &now
-	setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "PodCreated", "Pod created, waiting for ready")
-
-	if err := writeStatus(ctx, r.Client, mcpServer); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonStarting, ActionReconcile,
-		"Creating provider Pod")
-	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, string(mcpv1alpha2.MCPServerStateInitializing))
-
-	return ctrl.Result{RequeueAfter: defaultRequeueAfter}, nil
-}
-
-// syncPodStatus synchronizes MCPServer status with Pod status
+// syncPodStatus synchronizes MCPServer status with the Deployment's pod.
+//
+// Under the Deployment the pod restarts in place (RestartPolicy Always), so a
+// crashing server is not a Failed pod but a Running or Pending one whose
+// container waits in CrashLoopBackOff with a rising restart count. That is
+// read first; the phase only says what is left (#221).
 func (r *MCPServerReconciler) syncPodStatus(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer, pod *corev1.Pod) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	requeueAfter := defaultRequeueAfter
 
-	// Map Pod phase to Provider state
-	switch pod.Status.Phase {
-	case corev1.PodRunning:
-		requeueAfter = r.handlePodRunning(ctx, mcpServer, pod)
-
-	case corev1.PodPending:
-		mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
-		mcpServer.Status.ReadyReplicas = 0
-		setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "PodPending", "Pod is pending")
-		metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Initializing")
-
-	case corev1.PodFailed:
-		requeueAfter = r.handlePodFailed(ctx, mcpServer, pod)
-
-	case corev1.PodSucceeded:
-		// The server exited 0. Nothing asked it to stop, so it is restarted,
-		// and it is not Cold: Cold means replicas: 0, and reporting it made a
-		// running server look switched off (#209).
-		logger.Info("Pod exited cleanly, restarting")
-		mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
-		setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "PodExited",
-			"Pod exited with status 0, restarting")
-		if err := r.Delete(ctx, pod); err != nil && !errors.IsNotFound(err) {
-			return ctrl.Result{}, err
+	if reason, msg, restarts, stuck := containerStuck(pod); stuck {
+		requeueAfter = r.reportPodStuck(mcpServer, reason, msg, restarts)
+	} else {
+		switch pod.Status.Phase {
+		case corev1.PodRunning:
+			requeueAfter = r.handlePodRunning(ctx, mcpServer, pod)
+		case corev1.PodPending:
+			mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
+			mcpServer.Status.ReadyReplicas = 0
+			setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "PodPending", "Pod is pending")
+			metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Initializing")
+		case corev1.PodFailed:
+			// Evicted, typically; the ReplicaSet starts a replacement.
+			requeueAfter = r.reportPodStuck(mcpServer, "PodFailed", pod.Status.Reason+": "+pod.Status.Message, 0)
+		default:
+			logger.Info("Unhandled pod phase", "phase", pod.Status.Phase)
 		}
-		metrics.MCPServerRestarts.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Inc()
-		metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Initializing")
-
-	default:
-		logger.Info("Unknown pod phase", "phase", pod.Status.Phase)
 	}
 
-	// Update status
 	mcpServer.Status.PodName = pod.Name
 	mcpServer.Status.Replicas = 1
-	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
-		mcpServer.Status.Replicas = 0 // deleted above
-	}
 
 	// Propagate capabilities from spec to status (Phase 38).
-	// Phase 39 may enrich status.capabilities with resolved IPs and computed fields.
 	if mcpServer.Spec.Capabilities != nil {
 		mcpServer.Status.Capabilities = mcpServer.Spec.Capabilities.DeepCopy()
 	} else {
@@ -482,72 +345,28 @@ func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *m
 	return readyRequeueAfter
 }
 
-// handlePodFailed handles a failed Pod
-func (r *MCPServerReconciler) handlePodFailed(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer, pod *corev1.Pod) time.Duration {
-	logger := log.FromContext(ctx)
-
-	mcpServer.Status.State = mcpv1alpha2.MCPServerStateDead
-	if mcpServer.Status.ConsecutiveFailures < maxConsecutiveFailures {
-		mcpServer.Status.ConsecutiveFailures++
+// reportPodStuck records a server whose pod cannot run: a container in
+// CrashLoopBackOff or an image that cannot be pulled, or a failed pod. Kubelet
+// and the ReplicaSet do the restarting; the operator only reports, once per
+// change, with the restart count as ConsecutiveFailures (capped, as before).
+func (r *MCPServerReconciler) reportPodStuck(mcpServer *mcpv1alpha2.MCPServer, reason, msg string, restarts int32) time.Duration {
+	if restarts > maxConsecutiveFailures {
+		restarts = maxConsecutiveFailures
 	}
+	mcpServer.Status.State = mcpv1alpha2.MCPServerStateDead
+	mcpServer.Status.ConsecutiveFailures = restarts
 	mcpServer.Status.ReadyReplicas = 0
 	mcpServer.Status.AvailableReplicas = 0
-	now := metav1.Now()
-	mcpServer.Status.LastStoppedAt = &now
-
-	// Get failure reason
-	reason := "Unknown"
-	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.State.Terminated != nil {
-			reason = cs.State.Terminated.Reason
-			if cs.State.Terminated.Message != "" {
-				reason = fmt.Sprintf("%s: %s", reason, cs.State.Terminated.Message)
-			}
-			break
-		}
+	if conditionChanges(mcpServer.Status.Conditions, ConditionReady, metav1.ConditionFalse, reason) {
+		now := metav1.Now()
+		mcpServer.Status.LastStoppedAt = &now
+		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonFailed, ActionReconcile,
+			"Pod cannot run: %s: %s", reason, msg)
 	}
-
-	setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, "PodFailed", reason)
-	setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, "PodFailed", reason)
-	r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonFailed, ActionReconcile,
-		"Pod failed: %s", reason)
+	setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, reason, msg)
+	setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, reason, msg)
 	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Dead")
-
-	// Delete the failed pod either way; handlePodNotFound recreates it once
-	// the backoff for this many failures has passed.
-	if err := r.Delete(ctx, pod); err != nil && !errors.IsNotFound(err) {
-		logger.Error(err, "Failed to delete failed Pod")
-	}
-	backoff := restartBackoff(mcpServer.Status.ConsecutiveFailures)
-	logger.Info("Pod failed, restarting after backoff",
-		"failures", mcpServer.Status.ConsecutiveFailures, "backoff", backoff)
-	return backoff
-}
-
-// restartBackoff is the wait before restarting a pod that has failed n times
-// in a row: 10s doubling to maxPodRestartBackoff, then failedPodRetryAfter once
-// the counter is at its cap. It was n*10s and then never (#209).
-func restartBackoff(n int32) time.Duration {
-	if n <= 0 {
-		return 0
-	}
-	if n >= maxConsecutiveFailures {
-		return failedPodRetryAfter
-	}
-	d := 10 * time.Second << (n - 1)
-	if d > maxPodRestartBackoff {
-		d = maxPodRestartBackoff
-	}
-	return d
-}
-
-// restartWaitRemaining is how much of the restart backoff is left before a
-// pod may be created again, measured from the last failure.
-func restartWaitRemaining(mcpServer *mcpv1alpha2.MCPServer, now time.Time) time.Duration {
-	if mcpServer.Status.State != mcpv1alpha2.MCPServerStateDead || mcpServer.Status.LastStoppedAt == nil {
-		return 0
-	}
-	return mcpServer.Status.LastStoppedAt.Add(restartBackoff(mcpServer.Status.ConsecutiveFailures)).Sub(now)
+	return defaultRequeueAfter
 }
 
 // reconcileRemoteProvider handles remote-mode providers
@@ -1020,38 +839,24 @@ func perServerPolicyOwned(mcpServer *mcpv1alpha2.MCPServer, np *networkingv1.Net
 		np.Labels[networkpolicy.LabelManagedBy] == networkpolicy.DefaultManagerName
 }
 
-// podSpecDrifted returns true if the running Pod was built from an older
-// provider spec (detected via the generation annotation set by the Pod builder).
-// In Kubernetes, .metadata.generation is only incremented when .spec changes,
-// so finalizer or status updates do not trigger false drift.
-func (r *MCPServerReconciler) podSpecDrifted(mcpServer *mcpv1alpha2.MCPServer, pod *corev1.Pod) bool {
-	actual, ok := pod.Annotations[provider.AnnotationGeneration]
-	if !ok {
-		// Pod has no generation annotation -- was created before drift detection
-		// existed. Skip to avoid infinite recreate loops.
-		return false
-	}
-	expected := strconv.FormatInt(mcpServer.Generation, 10)
-	return actual != expected
-}
-
 // reconcileDelete handles provider deletion
 func (r *MCPServerReconciler) reconcileDelete(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("Handling deletion for MCPServer")
 
-	// Clean up Pod if container mode
+	// Clean up the Deployment (its pods go with it) and a legacy fixed-name
+	// pod, if container mode. Garbage collection would get there too, but not
+	// before the finalizer is released.
 	if mcpServer.IsContainerMode() {
-		pod := &corev1.Pod{}
-		podKey := types.NamespacedName{
-			Name:      mcpServer.GetPodName(),
-			Namespace: mcpServer.Namespace,
+		dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{
+			Name: provider.DeploymentName(mcpServer), Namespace: mcpServer.Namespace,
+		}}
+		logger.Info("Deleting Deployment", "deployment", dep.Name)
+		if err := r.Delete(ctx, dep); err != nil && !errors.IsNotFound(err) {
+			return ctrl.Result{}, err
 		}
-		if err := r.Get(ctx, podKey, pod); err == nil {
-			logger.Info("Deleting Pod", "pod", pod.Name)
-			if err := r.Delete(ctx, pod); err != nil && !errors.IsNotFound(err) {
-				return ctrl.Result{}, err
-			}
+		if err := r.removeLegacyPod(ctx, mcpServer); err != nil {
+			return ctrl.Result{}, err
 		}
 	}
 
@@ -1116,7 +921,11 @@ func (r *MCPServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			predicate.AnnotationChangedPredicate{},
 		))).
 		WithOptions(controller.Options{MaxConcurrentReconciles: r.MaxConcurrentReconciles}).
-		Owns(&corev1.Pod{}).
+		Owns(&appsv1.Deployment{}).
+		// The Deployment's pods belong to its ReplicaSet, not to the MCPServer,
+		// so a crash would wake nothing through Owns. They carry the server's
+		// name as a label (#221).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(providerPodToServer)).
 		Owns(&networkingv1.NetworkPolicy{}).
 		// The enforce-egress label decides whether an unpinned server's egress
 		// is withheld, and it lives on the Namespace, not the MCPServer. Without

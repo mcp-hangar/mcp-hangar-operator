@@ -14,12 +14,14 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -32,6 +34,7 @@ import (
 	"github.com/mcp-hangar/operator/internal/webhook"
 	"github.com/mcp-hangar/operator/pkg/hangar"
 	"github.com/mcp-hangar/operator/pkg/networkpolicy"
+	"github.com/mcp-hangar/operator/pkg/provider"
 	// Import metrics package for init()-based Prometheus registration.
 	_ "github.com/mcp-hangar/operator/pkg/metrics"
 )
@@ -189,7 +192,18 @@ func main() {
 		// Dropping managedFields is what it can do -- often the larger half of
 		// a cached object. ConfigMaps and Services are not cached at all:
 		// discovery reads them through the API reader (#195).
-		Cache: cache.Options{DefaultTransform: cache.TransformStripManagedFields()},
+		//
+		// Deployments are the one kind this operator alone creates, so their
+		// informer is scoped to its label: only provider Deployments are
+		// cached, not every Deployment in the cluster (#221).
+		Cache: cache.Options{
+			DefaultTransform: cache.TransformStripManagedFields(),
+			ByObject: map[client.Object]cache.ByObject{
+				&appsv1.Deployment{}: {Label: labels.SelectorFromSet(labels.Set{
+					provider.LabelManagedBy: provider.DefaultManagerName,
+				})},
+			},
+		},
 	}
 
 	if leaderElectionNamespace != "" {

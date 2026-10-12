@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	corev1 "k8s.io/api/core/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -17,7 +17,7 @@ import (
 // Requeue: true, and for MCPServer that requeue was load-bearing: the
 // finalizer write passes none of the controller's predicates, so nothing else
 // would bring it back. The first reconcile now goes on to create the pod (#210).
-func TestMCPServer_FirstReconcileAddsFinalizerAndCreatesThePod(t *testing.T) {
+func TestMCPServer_FirstReconcileAddsFinalizerAndCreatesTheDeployment(t *testing.T) {
 	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "one-pass", Namespace: "default", UID: "uid-one-pass"},
 		Spec:       mcpv1alpha2.MCPServerSpec{Mode: mcpv1alpha2.MCPServerModeContainer, Image: "busybox@sha256:abc"},
@@ -30,6 +30,6 @@ func TestMCPServer_FirstReconcileAddsFinalizerAndCreatesThePod(t *testing.T) {
 	out := getMCPServer(t, r, "one-pass", "default")
 	assert.Contains(t, out.Finalizers, finalizerName)
 	require.NoError(t, r.Get(context.Background(),
-		types.NamespacedName{Name: "mcp-provider-one-pass", Namespace: "default"}, &corev1.Pod{}),
-		"the pod is created in the same pass")
+		types.NamespacedName{Name: "mcp-provider-one-pass", Namespace: "default"}, &appsv1.Deployment{}),
+		"the Deployment is created in the same pass")
 }
