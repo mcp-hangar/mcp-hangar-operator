@@ -294,6 +294,52 @@ func TestNamespaceDefaultDenyLimitsUnregisteredPods(t *testing.T) {
 	}
 }
 
+// externalResolver is a public resolver a governed pod must not be able to
+// query directly.
+const externalResolver = "1.1.1.1"
+
+// queriesDirectly reports whether a pod gets an answer from externalResolver
+// itself, bypassing the cluster's DNS. busybox nslookup exits non-zero when no
+// server answers.
+func queriesDirectly(t *testing.T, cs *kubernetes.Clientset, ns, name string, labels map[string]string) bool {
+	t.Helper()
+	script := fmt.Sprintf("nslookup -timeout=5 -retry=1 kubernetes.io %s >/dev/null 2>&1 && echo ANSWERED || echo NO_ANSWER",
+		externalResolver)
+	return probeVerdict(t, cs, ns, name, labels, script, "ANSWERED", "NO_ANSWER")
+}
+
+// TestDNSEgressIsScopedToTheClusterResolver pins #56 on the wire: the DNS rule
+// in a backstop allows port 53 to the cluster's resolver, not to any address,
+// so a governed pod cannot use an outside resolver as a channel. Without a
+// peer on the rule, "port 53" means port 53 anywhere.
+func TestDNSEgressIsScopedToTheClusterResolver(t *testing.T) {
+	cs := clientset(t)
+	ns := namespace(t, cs, nil)
+
+	if !queriesDirectly(t, cs, ns, "control-direct-dns", map[string]string{"role": "control"}) {
+		t.Fatalf("%s does not answer with NO policy applied, so the deny below would pass for the "+
+			"wrong reason", externalResolver)
+	}
+
+	policy := &mcpv1alpha2.MCPEgressPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "dns-scope", Namespace: ns},
+		Spec: mcpv1alpha2.MCPEgressPolicySpec{
+			Mode: mcpv1alpha2.EgressPolicyModeEnforce,
+			Upstreams: []mcpv1alpha2.UpstreamRule{
+				{Name: "net", Match: mcpv1alpha2.UpstreamMatch{Host: "10.0.0.0/8"}},
+			},
+		},
+	}
+	target := metav1.LabelSelector{MatchLabels: map[string]string{networkpolicy.LabelProvider: "srv"}}
+	backstop, _ := networkpolicy.BuildEgressPolicyBackstop(policy, target)
+	applyPolicy(t, cs, backstop)
+
+	if queriesDirectly(t, cs, ns, "probe-direct-dns", map[string]string{networkpolicy.LabelProvider: "srv"}) {
+		t.Errorf("a governed pod got an answer from %s directly: the backstop's DNS rule does not "+
+			"scope port 53 to the cluster resolver (#56)", externalResolver)
+	}
+}
+
 // TestWithoutAPolicyTrafficFlows is the control.
 //
 // Without it, every test above would also pass on a cluster whose CNI silently

@@ -199,10 +199,11 @@ E2E_CNI ?= calico
 # pointed at 169.254.20.10, the cache on the host network) is the one where the
 # proxy sees nothing and toFQDNs denies the allow-listed name; the operator
 # reports that as Degraded rather than testing it here. Cilium only.
-# The operator runs with its defaults on this leg: the DNS rule naming kube-dns
-# already covers a lookup the redirect sends to the cache, so no DNS flag is
-# needed, and the leg proves exactly that.
 E2E_NODELOCAL_DNS ?=
+# After the redirect a lookup's destination is a node-local-dns pod, and
+# Cilium's DNS proxy inspects only lookups to the endpoints the policy's DNS
+# rule names, so the operator is told about the cache pods.
+NODELOCAL_DNS_SELECTOR ?= kube-system/k8s-app=node-local-dns
 CALICO_VERSION ?= v3.28.2
 CILIUM_VERSION ?= v1.20.1
 CILIUM_CLI_VERSION ?= v0.19.7
@@ -258,6 +259,10 @@ e2e-operator: ## Build the operator from this checkout and run it in the e2e clu
 	kubectl --context kind-$(E2E_CLUSTER) wait --for=condition=Established --timeout=60s \
 		$$(kubectl --context kind-$(E2E_CLUSTER) get crd -o name | grep 'mcp-hangar.io')
 	kubectl --context kind-$(E2E_CLUSTER) apply -k test/e2e/operator
+ifeq ($(E2E_NODELOCAL_DNS),1)
+	kubectl --context kind-$(E2E_CLUSTER) -n mcp-hangar patch deploy/mcp-hangar-operator-controller-manager --type=json \
+		-p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--dns-egress-selectors=$(NODELOCAL_DNS_SELECTOR)"}]'
+endif
 	kubectl --context kind-$(E2E_CLUSTER) -n mcp-hangar rollout status \
 		deploy/mcp-hangar-operator-controller-manager --timeout=180s
 

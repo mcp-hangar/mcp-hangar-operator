@@ -144,4 +144,10 @@ func TestCiliumFQDNAllowedConnectsAndDisallowedIsBlocked(t *testing.T) {
 	if canReach(t, cs, ns, "probe-fqdn-disallowed", selected, disallowedFQDN, fqdnPort) {
 		t.Errorf("%s is outside the FQDN allow-list but was reachable; toFQDNs egress is not enforced", disallowedFQDN)
 	}
+	// The DNS rule is an L7 rule here, and it must still be scoped to the
+	// cluster resolver: an outside one would be a channel past the allow-list.
+	if queriesDirectly(t, cs, ns, "probe-fqdn-direct-dns", selected) {
+		t.Errorf("a governed pod got an answer from %s directly under the CiliumNetworkPolicy (#56)",
+			externalResolver)
+	}
 }

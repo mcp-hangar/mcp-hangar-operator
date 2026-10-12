@@ -16,12 +16,14 @@
 // (test/e2e/nodelocaldns.sh), and what the operator's docs point people at;
 // the link-local topology is reported by the operator as Degraded instead.
 //
-// What it takes from policy: nothing extra. The first run of this leg expected
-// the DNS egress rule to need the cache pods named, since a redirected lookup
-// lands on a node-local-dns pod; it does not -- a rule naming only kube-dns
-// covers it, and the operator runs here with its defaults. What is asserted
-// instead is that the rule still scopes DNS: a governed pod cannot query a
-// resolver outside the cluster.
+// What it takes from policy: the DNS rule has to name the cache pods. After the
+// redirect a lookup's destination is a node-local-dns pod, and Cilium's DNS
+// proxy only inspects lookups to the endpoints the CiliumNetworkPolicy's DNS
+// rule selects; with kube-dns alone the lookup goes unobserved and toFQDNs
+// denies the allow-listed name, exactly as on the link-local topology. The
+// operator runs on this leg with
+// --dns-egress-selectors=kube-system/k8s-app=node-local-dns, and the suite's
+// own builds carry the same setting.
 //
 // This leg runs with E2E_NODELOCAL_DNS=1 (`make e2e-cluster E2E_CNI=cilium
 // E2E_NODELOCAL_DNS=1`). It is gated on the environment variable rather than on
@@ -42,9 +44,21 @@ import (
 	"github.com/mcp-hangar/operator/pkg/networkpolicy"
 )
 
-// externalResolver is a public resolver a governed pod must not be able to
-// query directly.
-const externalResolver = "1.1.1.1"
+// init configures the DNS-topology setting exactly as the operator does at
+// startup from --dns-egress-selectors, for the same reason: every policy built
+// afterwards has to carry the resolver this cluster actually uses.
+func init() {
+	if os.Getenv("E2E_NODELOCAL_DNS") != "1" {
+		return
+	}
+	if err := networkpolicy.SetExtraDNSSelectors([]string{nodeLocalDNSSelector}); err != nil {
+		panic(fmt.Sprintf("configuring the node-local resolver for the e2e leg: %v", err))
+	}
+}
+
+// nodeLocalDNSSelector names the cache pods, matching the flag `make
+// e2e-operator` gives the operator on this leg.
+const nodeLocalDNSSelector = "kube-system/k8s-app=node-local-dns"
 
 func requireNodeLocalDNSLeg(t *testing.T) {
 	t.Helper()
@@ -109,52 +123,42 @@ awk -v a="$a" -v b="$b" 'BEGIN { if (a - b >= 10) print "VIA_CACHE"; else print 
 	}
 }
 
-// TestNodeLocalDNSDefaultRuleCoversTheRedirectAndStaysScoped records what the
-// DNS egress rule does under the redirect. A governed pod resolves with the
-// rule the operator builds by default, naming only kube-dns, so the topology
-// the docs point at needs no DNS flag. And the rule still scopes DNS: the same
-// pod cannot ask a resolver outside the cluster, so "it resolves" is not the
-// rule having stopped mattering.
-func TestNodeLocalDNSDefaultRuleCoversTheRedirectAndStaysScoped(t *testing.T) {
+// TestNodeLocalDNSCiliumFQDNNeedsTheCachePodsInTheDNSRule records why the
+// operator needs --dns-egress-selectors on this topology: a CiliumNetworkPolicy
+// whose DNS rule names only kube-dns lets the redirected lookup through
+// unobserved, so the toFQDNs list stays empty and the allow-listed name is
+// denied. TestNodeLocalDNSCiliumFQDNAllowListHolds is the same policy with the
+// cache pods named, where the name connects.
+func TestNodeLocalDNSCiliumFQDNNeedsTheCachePodsInTheDNSRule(t *testing.T) {
 	requireNodeLocalDNSLeg(t)
+	requireCiliumLeg(t)
 	cs := clientset(t)
+	dyn := dynamicClient(t)
 	ns := namespace(t, cs, nil)
 
-	direct := fmt.Sprintf("nslookup %s %s >/dev/null 2>&1 && echo RESOLVED || echo UNRESOLVED", allowedFQDN, externalResolver)
-	control := map[string]string{"role": "control"}
-	if !resolves(t, cs, ns, "control-resolve", control, allowedFQDN) {
-		t.Fatalf("%s does not resolve with NO policy applied -- the cache is broken, and "+
-			"every verdict below would be about the wrong thing", allowedFQDN)
-	}
-	if !probeVerdict(t, cs, ns, "control-resolve-direct", control, direct, "RESOLVED", "UNRESOLVED") {
-		t.Fatalf("%s cannot be queried directly with NO policy applied, so the scoping check below "+
-			"would pass for the wrong reason", externalResolver)
+	if !canReach(t, cs, ns, "control-allowed", map[string]string{"role": "control"}, allowedFQDN, fqdnPort) {
+		t.Fatalf("%s:%d unreachable with NO policy applied", allowedFQDN, fqdnPort)
 	}
 
 	policy := &mcpv1alpha2.MCPEgressPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: "nodelocal-dns", Namespace: ns},
+		ObjectMeta: metav1.ObjectMeta{Name: "nodelocal-kubedns-only", Namespace: ns},
 		Spec: mcpv1alpha2.MCPEgressPolicySpec{
-			Mode: mcpv1alpha2.EgressPolicyModeEnforce,
-			Upstreams: []mcpv1alpha2.UpstreamRule{
-				{Name: "net", Match: mcpv1alpha2.UpstreamMatch{Host: "10.0.0.0/8"}},
-			},
+			Mode:      mcpv1alpha2.EgressPolicyModeEnforce,
+			Upstreams: []mcpv1alpha2.UpstreamRule{{Match: mcpv1alpha2.UpstreamMatch{Host: allowedFQDN}}},
 		},
 	}
 	target := metav1.LabelSelector{MatchLabels: map[string]string{networkpolicy.LabelProvider: "srv"}}
-	selected := map[string]string{networkpolicy.LabelProvider: "srv"}
+	saved := networkpolicy.ExtraDNSSelectors
+	networkpolicy.ExtraDNSSelectors = nil
+	kubeDNSOnly := networkpolicy.BuildEgressPolicyCiliumNetworkPolicy(policy, target)
+	networkpolicy.ExtraDNSSelectors = saved
+	applyCiliumPolicy(t, dyn, kubeDNSOnly)
 
-	if len(networkpolicy.ExtraDNSSelectors) > 0 || len(networkpolicy.ExtraDNSEgressPeers) > 0 {
-		t.Fatalf("the suite configured extra DNS peers; this test is about the default rule")
-	}
-	backstop, _ := networkpolicy.BuildEgressPolicyBackstop(policy, target)
-	applyPolicy(t, cs, backstop)
-	if !resolves(t, cs, ns, "probe-resolve", selected, allowedFQDN) {
-		t.Errorf("a governed pod cannot resolve %s through the redirected kube-dns service with the "+
-			"default DNS rule: the documented topology would need a DNS flag after all", allowedFQDN)
-	}
-	if probeVerdict(t, cs, ns, "probe-resolve-direct", selected, direct, "RESOLVED", "UNRESOLVED") {
-		t.Errorf("a governed pod queried %s directly: the DNS rule no longer scopes port 53 (#56)",
-			externalResolver)
+	if canReach(t, cs, ns, "probe-fqdn-kubedns-only", map[string]string{networkpolicy.LabelProvider: "srv"},
+		allowedFQDN, fqdnPort) {
+		t.Errorf("the allow-listed FQDN %s connected with a DNS rule naming only kube-dns: the proxy "+
+			"observes the redirected lookup after all, and --dns-egress-selectors is not needed here",
+			allowedFQDN)
 	}
 }
 
