@@ -101,15 +101,8 @@ func applyCiliumPolicy(t *testing.T, dyn dynamic.Interface, cnp *unstructured.Un
 // dropped -- via the toFQDNs rules the builder emits.
 func TestCiliumFQDNAllowedConnectsAndDisallowedIsBlocked(t *testing.T) {
 	requireCiliumLeg(t)
-	// Not on the NodeLocal DNSCache leg: there the allow-listed name is denied,
-	// because Cilium's DNS proxy never observes a lookup a per-node cache
-	// answers, so the toFQDNs allow-list stays empty (#178). That claim is
-	// asserted, as it actually behaves, in nodelocaldns_reachability_test.go.
-	// Letting this test fail there would report the same finding twice and turn
-	// the leg red for something already tracked.
-	if os.Getenv("E2E_NODELOCAL_DNS") == "1" {
-		t.Skip("E2E_NODELOCAL_DNS=1: see TestNodeLocalDNSCiliumFQDNUpstreamsAreDenied (#178)")
-	}
+	// Also on the NodeLocal DNSCache leg, where the cache sits behind a
+	// CiliumLocalRedirectPolicy: the claim has to hold there too (#178).
 	cs := clientset(t)
 	dyn := dynamicClient(t)
 	ns := namespace(t, cs, nil)
@@ -150,5 +143,15 @@ func TestCiliumFQDNAllowedConnectsAndDisallowedIsBlocked(t *testing.T) {
 	}
 	if canReach(t, cs, ns, "probe-fqdn-disallowed", selected, disallowedFQDN, fqdnPort) {
 		t.Errorf("%s is outside the FQDN allow-list but was reachable; toFQDNs egress is not enforced", disallowedFQDN)
+	}
+	// The DNS rule must stay scoped to the cluster resolver: an answer from an
+	// internet resolver is a channel past the allow-list (#304). A lookup that
+	// is answered prints a "Name:" record; a dropped one times out.
+	direct := "nslookup -timeout=5 -retry=1 kubernetes.io 1.1.1.1 2>&1 | grep -q '^Name:' && echo ANSWERED || echo NO_ANSWER"
+	if !probeVerdict(t, cs, ns, "control-direct-dns", map[string]string{"role": "control"}, direct, "ANSWERED", "NO_ANSWER") {
+		t.Fatalf("1.1.1.1 does not answer with NO policy applied, so the DNS deny check would pass for the wrong reason")
+	}
+	if probeVerdict(t, cs, ns, "probe-direct-dns", selected, direct, "ANSWERED", "NO_ANSWER") {
+		t.Errorf("a governed pod got an answer from 1.1.1.1 directly under the CiliumNetworkPolicy: DNS is not scoped to the cluster resolver (#304)")
 	}
 }

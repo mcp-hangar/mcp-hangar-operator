@@ -1,50 +1,55 @@
 #!/usr/bin/env bash
-# Install NodeLocal DNSCache into the e2e kind cluster.
+# Install NodeLocal DNSCache into the e2e kind cluster the way Cilium supports it.
 #
-# The topology this reproduces is the one the MCPEgressPolicy epic flagged at
-# design time and nothing tested (#145): pods resolve through a link-local
-# address served by a per-node cache, not through the kube-dns endpoints the
-# generated DNS egress rule selects. A policy whose DNS rule does not cover
-# that address blocks resolution outright, and a DNS path the CNI's proxy does
-# not observe cannot teach toFQDNs which IPs a name resolved to.
+# The cache runs as an ordinary pod (not on the host network) and a
+# CiliumLocalRedirectPolicy steers traffic for the kube-dns service to the
+# cache pod on the same node. Pods keep the kube-dns service IP in resolv.conf;
+# the redirect happens in Cilium's datapath, so its DNS proxy still observes
+# every lookup and toFQDNs learns the addresses a name resolved to.
 #
-# kubelet is pointed at the link-local address by the kind config in the
-# Makefile, so this uses the upstream substitution for that mode: the cache
-# binds only __PILLAR__LOCAL__DNS__ and forwards misses to the kube-dns
-# service IP.
+# The other topology -- kubelet pointed at a link-local address served by a
+# cache on the host network -- is the one #178 found: the proxy never sees a
+# lookup, the toFQDNs allow-list stays empty, and the allow-listed upstream is
+# denied. The operator reports that as Degraded; this leg proves the topology
+# it points people at.
+#
+# Both manifests are Cilium's own examples, pinned to the Cilium version the
+# cluster runs, so an upstream edit cannot change what this leg tests without
+# a commit here.
 set -euo pipefail
 
 CONTEXT="${1:?kube context}"
-LOCAL_DNS_IP="${2:?node-local DNS address}"
-K8S_REF="${3:?kubernetes ref for the addon manifest}"
-DNS_DOMAIN="${DNS_DOMAIN:-cluster.local}"
+CILIUM_REF="${2:?cilium ref for the example manifests}"
 
-manifest="$(mktemp)"
-trap 'rm -f "$manifest" "$manifest.bak"' EXIT
+base="https://raw.githubusercontent.com/cilium/cilium/${CILIUM_REF}/examples/kubernetes-local-redirect"
+dir="$(mktemp -d)"
+trap 'rm -rf "$dir"' EXIT
 
-curl -sSfL -o "$manifest" \
-  "https://raw.githubusercontent.com/kubernetes/kubernetes/${K8S_REF}/cluster/addons/dns/nodelocaldns/nodelocaldns.yaml"
+curl -sSfL -o "$dir/node-local-dns.yaml" "$base/node-local-dns.yaml"
+curl -sSfL -o "$dir/node-local-dns-lrp.yaml" "$base/node-local-dns-lrp.yaml"
 
 kubedns="$(kubectl --context "$CONTEXT" get svc kube-dns -n kube-system -o jsonpath='{.spec.clusterIP}')"
 test -n "$kubedns" || { echo "kube-dns has no clusterIP; is CoreDNS installed?" >&2; exit 1; }
 
-# The same substitution upstream documents for a kubelet pointed at the cache:
-# the kube-dns service IP is dropped from -localip (so the cache does not also
-# bind it) and becomes the upstream the cache forwards to.
-sed -i.bak \
-  -e "s/__PILLAR__LOCAL__DNS__/${LOCAL_DNS_IP}/g" \
-  -e "s/__PILLAR__DNS__DOMAIN__/${DNS_DOMAIN}/g" \
-  -e "s/,__PILLAR__DNS__SERVER__//g" \
-  -e "s/__PILLAR__CLUSTER__DNS__/${kubedns}/g" \
-  "$manifest"
+# The one substitution Cilium's guide documents for its example manifest.
+sed -i.bak -e "s/__PILLAR__DNS__SERVER__/${kubedns}/g" "$dir/node-local-dns.yaml"
 
-kubectl --context "$CONTEXT" apply -f "$manifest"
+kubectl --context "$CONTEXT" apply -f "$dir/node-local-dns.yaml"
 kubectl --context "$CONTEXT" -n kube-system rollout status daemonset/node-local-dns --timeout=180s
+kubectl --context "$CONTEXT" apply -f "$dir/node-local-dns-lrp.yaml"
 
 # A cache that is Running but not answering would make every DNS-dependent
-# assertion below fail for a reason that has nothing to do with policy, so
-# prove it resolves before handing the cluster to the tests.
-kubectl --context "$CONTEXT" run nodelocaldns-check \
-  --image=busybox:1.36 --restart=Never --rm -i --quiet --timeout=120s \
-  --command -- nslookup kubernetes.default.svc."${DNS_DOMAIN}" "${LOCAL_DNS_IP}" >/dev/null
-echo "node-local-dns answers on ${LOCAL_DNS_IP}"
+# assertion fail for a reason that has nothing to do with policy, so prove a
+# pod resolves through the service IP before handing the cluster to the tests.
+# Whether the answer came from the cache is the first test's job.
+for _ in $(seq 1 30); do
+  if kubectl --context "$CONTEXT" run nodelocaldns-check \
+      --image=busybox:1.36 --restart=Never --rm -i --quiet --timeout=60s \
+      --command -- nslookup kubernetes.default.svc.cluster.local >/dev/null 2>&1; then
+    echo "pods resolve through kube-dns (${kubedns}) with the node-local-dns redirect in place"
+    exit 0
+  fi
+  sleep 5
+done
+echo "pods could not resolve through kube-dns after installing the node-local-dns redirect" >&2
+exit 1

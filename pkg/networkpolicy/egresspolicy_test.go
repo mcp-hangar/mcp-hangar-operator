@@ -118,3 +118,23 @@ func TestBuildEgressPolicyCiliumNetworkPolicy_GroupSelector(t *testing.T) {
 	assert.Equal(t, "In", m["operator"])
 	assert.ElementsMatch(t, []interface{}{"srv-a", "srv-b"}, m["values"].([]interface{}))
 }
+
+// Port 53 to the world is denied outright (#304): the DNS allow rule alone let
+// a governed pod get answers from an internet resolver under Cilium.
+func TestBuildEgressPolicyCiliumNetworkPolicy_DeniesDNSToTheWorld(t *testing.T) {
+	cnp := BuildEgressPolicyCiliumNetworkPolicy(egressPolicy("api.github.com"), metav1.LabelSelector{
+		MatchLabels: map[string]string{LabelProvider: "srv"},
+	})
+
+	deny, found, err := unstructured.NestedSlice(cnp.Object, "spec", "egressDeny")
+	require.NoError(t, err)
+	require.True(t, found, "the CiliumNetworkPolicy must carry an egressDeny for DNS to the world")
+	require.Len(t, deny, 1)
+	rule := deny[0].(map[string]interface{})
+	assert.Equal(t, []interface{}{"world"}, rule["toEntities"])
+	ports := rule["toPorts"].([]interface{})[0].(map[string]interface{})["ports"].([]interface{})
+	assert.ElementsMatch(t, []interface{}{
+		map[string]interface{}{"port": "53", "protocol": "UDP"},
+		map[string]interface{}{"port": "53", "protocol": "TCP"},
+	}, ports)
+}
