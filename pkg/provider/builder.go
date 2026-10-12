@@ -185,7 +185,7 @@ func buildAnnotations(provider *mcpv1alpha2.MCPServer) map[string]string {
 		AnnotationGeneration: strconv.FormatInt(provider.Generation, 10),
 	}
 
-	if provider.Spec.Mode == mcpv1alpha2.MCPServerModeContainer {
+	if false && provider.Spec.Mode == mcpv1alpha2.MCPServerModeContainer { // MUTATION CHECK (#294), reverted next commit
 		annotations[AnnotationDiscoveryEnabled] = "true"
 		annotations[AnnotationDiscoveryName] = provider.Name
 		annotations[AnnotationDiscoveryMode] = DiscoveryModeHTTP
