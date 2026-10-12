@@ -16,10 +16,12 @@
 // (test/e2e/nodelocaldns.sh), and what the operator's docs point people at;
 // the link-local topology is reported by the operator as Degraded instead.
 //
-// What changes for policy: after the redirect, a lookup's destination is a
-// node-local-dns pod, not a kube-dns pod, so the DNS egress rule has to name
-// the cache pods (--dns-egress-selectors=kube-system/k8s-app=node-local-dns,
-// which `make e2e-operator` passes on this leg).
+// What it takes from policy: nothing extra. The first run of this leg expected
+// the DNS egress rule to need the cache pods named, since a redirected lookup
+// lands on a node-local-dns pod; it does not -- a rule naming only kube-dns
+// covers it, and the operator runs here with its defaults. What is asserted
+// instead is that the rule still scopes DNS: a governed pod cannot query a
+// resolver outside the cluster.
 //
 // This leg runs with E2E_NODELOCAL_DNS=1 (`make e2e-cluster E2E_CNI=cilium
 // E2E_NODELOCAL_DNS=1`). It is gated on the environment variable rather than on
@@ -40,28 +42,9 @@ import (
 	"github.com/mcp-hangar/operator/pkg/networkpolicy"
 )
 
-// init configures the DNS-topology setting exactly as the operator does at
-// startup from --dns-egress-selectors, for the same reason: every policy built
-// afterwards has to carry the resolver this cluster actually uses. Doing it
-// here rather than inside one test means the rest of the suite runs on this leg
-// under the same configuration a real deployment would have.
-func init() {
-	if os.Getenv("E2E_NODELOCAL_DNS") != "1" {
-		return
-	}
-	if err := networkpolicy.SetExtraDNSSelectors([]string{nodeLocalDNSSelector()}); err != nil {
-		panic(fmt.Sprintf("configuring the node-local resolver for the e2e leg: %v", err))
-	}
-}
-
-// nodeLocalDNSSelector names the cache pods, matching the Makefile's
-// NODELOCAL_DNS_SELECTOR and the flag the operator runs with on this leg.
-func nodeLocalDNSSelector() string {
-	if s := os.Getenv("NODELOCAL_DNS_SELECTOR"); s != "" {
-		return s
-	}
-	return "kube-system/k8s-app=node-local-dns"
-}
+// externalResolver is a public resolver a governed pod must not be able to
+// query directly.
+const externalResolver = "1.1.1.1"
 
 func requireNodeLocalDNSLeg(t *testing.T) {
 	t.Helper()
@@ -126,21 +109,26 @@ awk -v a="$a" -v b="$b" 'BEGIN { if (a - b >= 10) print "VIA_CACHE"; else print 
 	}
 }
 
-// TestNodeLocalDNSResolutionNeedsTheCacheInTheDNSEgressRule records that, under
-// the redirect, the DNS egress rule IS the control point -- the opposite of
-// what the link-local topology showed (#178), and the reason the operator has
-// to be told about the cache pods.
-//
-// Both configurations are asserted, because "resolution works" on its own
-// would pass just as happily if the setting were not load-bearing.
-func TestNodeLocalDNSResolutionNeedsTheCacheInTheDNSEgressRule(t *testing.T) {
+// TestNodeLocalDNSDefaultRuleCoversTheRedirectAndStaysScoped records what the
+// DNS egress rule does under the redirect. A governed pod resolves with the
+// rule the operator builds by default, naming only kube-dns, so the topology
+// the docs point at needs no DNS flag. And the rule still scopes DNS: the same
+// pod cannot ask a resolver outside the cluster, so "it resolves" is not the
+// rule having stopped mattering.
+func TestNodeLocalDNSDefaultRuleCoversTheRedirectAndStaysScoped(t *testing.T) {
 	requireNodeLocalDNSLeg(t)
 	cs := clientset(t)
 	ns := namespace(t, cs, nil)
 
-	if !resolves(t, cs, ns, "control-resolve", map[string]string{"role": "control"}, allowedFQDN) {
+	direct := fmt.Sprintf("nslookup %s %s >/dev/null 2>&1 && echo RESOLVED || echo UNRESOLVED", allowedFQDN, externalResolver)
+	control := map[string]string{"role": "control"}
+	if !resolves(t, cs, ns, "control-resolve", control, allowedFQDN) {
 		t.Fatalf("%s does not resolve with NO policy applied -- the cache is broken, and "+
 			"every verdict below would be about the wrong thing", allowedFQDN)
+	}
+	if !probeVerdict(t, cs, ns, "control-resolve-direct", control, direct, "RESOLVED", "UNRESOLVED") {
+		t.Fatalf("%s cannot be queried directly with NO policy applied, so the scoping check below "+
+			"would pass for the wrong reason", externalResolver)
 	}
 
 	policy := &mcpv1alpha2.MCPEgressPolicy{
@@ -155,27 +143,18 @@ func TestNodeLocalDNSResolutionNeedsTheCacheInTheDNSEgressRule(t *testing.T) {
 	target := metav1.LabelSelector{MatchLabels: map[string]string{networkpolicy.LabelProvider: "srv"}}
 	selected := map[string]string{networkpolicy.LabelProvider: "srv"}
 
-	// As the operator would build it, told about the cache pods.
-	withCache, _ := networkpolicy.BuildEgressPolicyBackstop(policy, target)
-	applyPolicy(t, cs, withCache)
-	if !resolves(t, cs, ns, "probe-resolve-configured", selected, allowedFQDN) {
-		t.Errorf("a governed pod cannot resolve %s even though the DNS egress rule names the "+
-			"node-local-dns pods (%s)", allowedFQDN, nodeLocalDNSSelector())
+	if len(networkpolicy.ExtraDNSSelectors) > 0 || len(networkpolicy.ExtraDNSEgressPeers) > 0 {
+		t.Fatalf("the suite configured extra DNS peers; this test is about the default rule")
 	}
-
-	// As an operator that was never told would build it: kube-dns only.
-	saved := networkpolicy.ExtraDNSSelectors
-	networkpolicy.ExtraDNSSelectors = nil
-	unconfigured, _ := networkpolicy.BuildEgressPolicyBackstop(policy, target)
-	networkpolicy.ExtraDNSSelectors = saved
-
-	ns2 := namespace(t, cs, nil)
-	unconfigured.Namespace = ns2
-	applyPolicy(t, cs, unconfigured)
-	if resolves(t, cs, ns2, "probe-resolve-unconfigured", selected, allowedFQDN) {
-		t.Errorf("a backstop whose DNS rule names only the kube-dns pods still resolved %s: the "+
-			"redirected lookup is not being matched against the cache pod, so "+
-			"--dns-egress-selectors is not load-bearing on this topology after all", allowedFQDN)
+	backstop, _ := networkpolicy.BuildEgressPolicyBackstop(policy, target)
+	applyPolicy(t, cs, backstop)
+	if !resolves(t, cs, ns, "probe-resolve", selected, allowedFQDN) {
+		t.Errorf("a governed pod cannot resolve %s through the redirected kube-dns service with the "+
+			"default DNS rule: the documented topology would need a DNS flag after all", allowedFQDN)
+	}
+	if probeVerdict(t, cs, ns, "probe-resolve-direct", selected, direct, "RESOLVED", "UNRESOLVED") {
+		t.Errorf("a governed pod queried %s directly: the DNS rule no longer scopes port 53 (#56)",
+			externalResolver)
 	}
 }
 
