@@ -16,7 +16,6 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
@@ -97,7 +96,7 @@ func TestDiscovery_SyncEventsOnlyWhenTheOutcomeChanges(t *testing.T) {
 			ConfigMapRef: &mcpv1alpha2.ConfigMapReference{Name: "cm"},
 		},
 	}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm, src).
+	c := newFakeClientBuilder().WithScheme(scheme).WithObjects(cm, src).
 		WithStatusSubresource(&mcpv1alpha2.MCPDiscoverySource{}, &mcpv1alpha2.MCPServer{}).Build()
 	rec := events.NewFakeRecorder(50)
 	r := &MCPDiscoverySourceReconciler{Client: c, Scheme: scheme, Recorder: rec}

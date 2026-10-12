@@ -13,7 +13,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/events"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/networkpolicy"
@@ -25,7 +24,7 @@ func newTestReconciler(objs ...runtime.Object) *MCPServerReconciler {
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = mcpv1alpha2.AddToScheme(scheme)
 
-	fakeClient := fake.NewClientBuilder().
+	fakeClient := newFakeClientBuilder().
 		WithScheme(scheme).
 		WithRuntimeObjects(objs...).
 		WithStatusSubresource(&mcpv1alpha2.MCPServer{}).
