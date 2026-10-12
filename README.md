@@ -147,7 +147,7 @@ Cilium are issue 178):
 | Flag | Use it for | Example |
 |------|------------|---------|
 | `--dns-egress-selectors` | Resolver pods that are not kube-dns: OpenShift/OKD, or a custom resolver Deployment. Semicolon-separated `<namespace>/<key>=<value>[,<key>=<value>...]`; at least one label. | `openshift-dns/dns.operator.openshift.io/daemonset-dns=default` |
-| `--dns-egress-cidrs` | A resolver reached by a node-local address, such as NodeLocal DNSCache. Comma-separated CIDRs. Not for a Service ClusterIP: CNIs match `ipBlock` after the ClusterIP is translated, so name the pods with `--dns-egress-selectors` instead. Read by the Vanilla backstop only: on Cilium, a cache on the host network hides lookups from the DNS proxy and FQDN upstreams are denied (reported as `Degraded`, reason `FQDNLookupsUnobserved`); run the cache as a pod behind a CiliumLocalRedirectPolicy instead. | `169.254.20.10/32` |
+| `--dns-egress-cidrs` | A resolver reached by a node-local address, such as NodeLocal DNSCache. Comma-separated CIDRs. Not for a Service ClusterIP: CNIs match `ipBlock` after the ClusterIP is translated, so name the pods with `--dns-egress-selectors` instead. Read by the Vanilla backstop only: on Cilium, a cache on the host network hides lookups from the DNS proxy and FQDN upstreams are denied (reported as `Degraded`, reason `FQDNLookupsUnobserved`); run the cache as a pod behind a CiliumLocalRedirectPolicy instead, and name its pods with `--dns-egress-selectors` (for example `kube-system/k8s-app=node-local-dns`). | `169.254.20.10/32` |
 
 Without the right one, pods in governed namespaces lose DNS entirely: it fails
 closed, not open.

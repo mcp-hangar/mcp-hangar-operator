@@ -568,16 +568,16 @@ func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, l
 			return err
 		}
 		enforced, degradedReason, degradedMsg := "FQDN + CIDR enforced", "", ""
-		if fqdns := networkpolicy.FQDNUpstreams(policy); len(fqdns) > 0 && signal.NodeLocalDNSOnHost != "" {
-			// The lookups never pass Cilium's DNS proxy, so the toFQDNs list
-			// stays empty and these upstreams are denied: fail closed, but
-			// not the policy that was asked for (#178).
-			enforced = "CIDR enforced; FQDN upstreams denied, see Degraded"
-			degradedReason = "FQDNLookupsUnobserved"
-			degradedMsg = fmt.Sprintf("NodeLocal DNSCache %s runs on the host network, so Cilium's DNS proxy "+
-				"never sees the lookups and these FQDN upstreams are denied: %s. Run the cache as a pod "+
-				"behind a CiliumLocalRedirectPolicy so lookups pass the proxy",
-				signal.NodeLocalDNSOnHost, strings.Join(fqdns, ", "))
+		if unobserved := fqdnLookupsUnobserved(signal); unobserved != "" {
+			if fqdns := networkpolicy.FQDNUpstreams(policy); len(fqdns) > 0 {
+				// The lookups never pass Cilium's DNS proxy, so the toFQDNs
+				// list stays empty and these upstreams are denied: fail
+				// closed, but not the policy that was asked for (#178).
+				enforced = "CIDR enforced; FQDN upstreams denied, see Degraded"
+				degradedReason = "FQDNLookupsUnobserved"
+				degradedMsg = fmt.Sprintf("%s, so these FQDN upstreams are denied: %s",
+					unobserved, strings.Join(fqdns, ", "))
+			}
 		}
 		r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionTrue,
 			"BackstopApplied", fmt.Sprintf("Cilium backstop %q applied for %q (%s)%s",
@@ -623,6 +623,29 @@ func (r *MCPEgressPolicyReconciler) applyFlavoredBackstop(ctx context.Context, l
 	logger.Info("Reconciled MCPEgressPolicy backstop",
 		"policy", policy.Name, "flavor", "Vanilla", "unenforceableUpstreams", len(unenforceable))
 	return nil
+}
+
+// fqdnLookupsUnobserved says why Cilium's DNS proxy cannot see the lookups of
+// a governed pod, or returns "" when nothing observed stands in its way. Both
+// cases are NodeLocal DNSCache (#178): on the host network the lookup goes to
+// the node and never passes the proxy; as a pod behind a
+// CiliumLocalRedirectPolicy it passes the proxy only if the DNS rule selects
+// the cache pods.
+func fqdnLookupsUnobserved(signal networkpolicy.EnforcementSignal) string {
+	if signal.NodeLocalDNSOnHost != "" {
+		return fmt.Sprintf("NodeLocal DNSCache %s runs on the host network, so Cilium's DNS proxy never sees "+
+			"the lookups; run the cache as a pod behind a CiliumLocalRedirectPolicy", signal.NodeLocalDNSOnHost)
+	}
+	if c := signal.NodeLocalDNSPod; c != nil && !c.SelectedByExtraDNSSelectors() {
+		hint := c.Namespace + "/<label>=<value>"
+		if v, ok := c.Labels["k8s-app"]; ok {
+			hint = c.Namespace + "/k8s-app=" + v
+		}
+		return fmt.Sprintf("NodeLocal DNSCache %s/%s answers redirected lookups, and the DNS rule does not "+
+			"select its pods, so Cilium's DNS proxy does not inspect them; start the operator with "+
+			"--dns-egress-selectors=%s", c.Namespace, c.Name, hint)
+	}
+	return ""
 }
 
 // ciliumNotRunningNote explains, on the Vanilla path, why a cluster that

@@ -215,6 +215,7 @@ func nodeLocalDNSReader(t *testing.T, name string, hostNetwork bool) client.Read
 	require.NoError(t, clientgoscheme.AddToScheme(scheme))
 	cache := &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "kube-system"}}
 	cache.Spec.Template.Spec.HostNetwork = hostNetwork
+	cache.Spec.Template.Labels = map[string]string{"k8s-app": name}
 	cilium := &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "cilium", Namespace: "kube-system"}}
 	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(cache, cilium).Build()
 }
@@ -228,16 +229,29 @@ func TestProbe_NodeLocalDNSOnTheHostNetwork_Reported(t *testing.T) {
 		signal := p.Signal(context.Background())
 
 		assert.Equal(t, "kube-system/"+name, signal.NodeLocalDNSOnHost)
+		assert.Nil(t, signal.NodeLocalDNSPod)
 		assert.True(t, signal.CiliumAgent)
 	}
 }
 
 // A cache running as a pod, behind a CiliumLocalRedirectPolicy, is the
-// supported topology: lookups pass the proxy, so nothing is reported.
-func TestProbe_NodeLocalDNSAsAPod_NotReported(t *testing.T) {
+// supported topology. It is reported with its pod labels, because the DNS rule
+// has to select those pods for the proxy to inspect redirected lookups.
+func TestProbe_NodeLocalDNSAsAPod_ReportedWithItsLabels(t *testing.T) {
 	p := &EnforcementProbe{Mapper: ciliumCRDMapper(), Reader: nodeLocalDNSReader(t, "node-local-dns", false)}
 
-	assert.Empty(t, p.Signal(context.Background()).NodeLocalDNSOnHost)
+	signal := p.Signal(context.Background())
+
+	assert.Empty(t, signal.NodeLocalDNSOnHost)
+	require.NotNil(t, signal.NodeLocalDNSPod)
+	assert.Equal(t, map[string]string{"k8s-app": "node-local-dns"}, signal.NodeLocalDNSPod.Labels)
+
+	t.Cleanup(func() { ExtraDNSSelectors = nil })
+	assert.False(t, signal.NodeLocalDNSPod.SelectedByExtraDNSSelectors())
+	require.NoError(t, SetExtraDNSSelectors([]string{"kube-system/k8s-app=node-local-dns"}))
+	assert.True(t, signal.NodeLocalDNSPod.SelectedByExtraDNSSelectors())
+	require.NoError(t, SetExtraDNSSelectors([]string{"other-ns/k8s-app=node-local-dns"}))
+	assert.False(t, signal.NodeLocalDNSPod.SelectedByExtraDNSSelectors(), "the namespace must match too")
 }
 
 // The flag asserts a verdict, not the cluster's DNS topology.
