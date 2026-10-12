@@ -58,7 +58,53 @@ type EnforcementSignal struct {
 	// flavor on the CRD alone wrote a CiliumNetworkPolicy nobody reads and
 	// deleted the NetworkPolicy the real CNI enforces.
 	CiliumAgent bool
+	// NodeLocalDNSOnHost names ("namespace/name") a NodeLocal DNSCache
+	// DaemonSet that runs on the host network, or is empty when none was
+	// listed. That is the topology where pods resolve through an address on
+	// the node itself, Cilium's DNS proxy never sees the lookup, and toFQDNs
+	// denies every hostname upstream (#178). A cache running as an ordinary
+	// pod, behind a CiliumLocalRedirectPolicy, is not reported: lookups reach
+	// it through the proxy.
+	NodeLocalDNSOnHost string
+	// NodeLocalDNSPod describes a NodeLocal DNSCache DaemonSet that runs as an
+	// ordinary pod -- Cilium's supported topology, behind a
+	// CiliumLocalRedirectPolicy -- or is nil when none was listed. There a
+	// redirected lookup lands on a cache pod, and Cilium's DNS proxy inspects
+	// it only if the policy's DNS rule selects that pod.
+	NodeLocalDNSPod *NodeLocalDNSPod
 }
+
+// NodeLocalDNSPod names a pod-network NodeLocal DNSCache and the labels its
+// pods carry.
+type NodeLocalDNSPod struct {
+	Namespace, Name string
+	Labels          map[string]string
+}
+
+// SelectedByExtraDNSSelectors reports whether one of ExtraDNSSelectors selects
+// the cache's pods, so the DNS rule covers lookups redirected to them.
+func (c *NodeLocalDNSPod) SelectedByExtraDNSSelectors() bool {
+	for _, sel := range ExtraDNSSelectors {
+		if sel.Namespace != c.Namespace {
+			continue
+		}
+		matches := true
+		for k, v := range sel.Labels {
+			if c.Labels[k] != v {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return true
+		}
+	}
+	return false
+}
+
+// nodeLocalDNSDaemonSets are the names NodeLocal DNSCache ships under: the
+// upstream addon's and kubespray's.
+var nodeLocalDNSDaemonSets = map[string]bool{"node-local-dns": true, "nodelocaldns": true}
 
 // defaultEnforcementProbeTTL is how long a verdict is reused. An enforcer is
 // installed once per cluster lifetime, so re-asking on every reconcile of every
@@ -142,8 +188,10 @@ func (p *EnforcementProbe) Signal(ctx context.Context) EnforcementSignal {
 		// Cilium flavor (#200).
 		return EnforcementSignal{
 			Verdict:     p.Override,
-			Source:      "asserted by the operator's --networkpolicy-enforcement flag, not by a look at this cluster",
-			CiliumAgent: signal.CiliumAgent,
+			Source:             "asserted by the operator's --networkpolicy-enforcement flag, not by a look at this cluster",
+			CiliumAgent:        signal.CiliumAgent,
+			NodeLocalDNSOnHost: signal.NodeLocalDNSOnHost,
+			NodeLocalDNSPod:    signal.NodeLocalDNSPod,
 		}
 	}
 	return signal
@@ -177,6 +225,8 @@ func (p *EnforcementProbe) probe(ctx context.Context) EnforcementSignal {
 	// whether cilium runs here is a fact the backstop flavor needs on its own.
 	var agents []string
 	ciliumAgent := false
+	nodeLocalDNSOnHost := ""
+	var nodeLocalDNSPod *NodeLocalDNSPod
 	var listErr error
 	if p.Reader == nil {
 		listErr = fmt.Errorf("no reader is configured")
@@ -184,6 +234,16 @@ func (p *EnforcementProbe) probe(ctx context.Context) EnforcementSignal {
 		var list appsv1.DaemonSetList
 		if listErr = p.Reader.List(ctx, &list); listErr == nil {
 			for i := range list.Items {
+				ds := &list.Items[i]
+				if nodeLocalDNSDaemonSets[ds.Name] {
+					if ds.Spec.Template.Spec.HostNetwork {
+						nodeLocalDNSOnHost = ds.Namespace + "/" + ds.Name
+					} else {
+						nodeLocalDNSPod = &NodeLocalDNSPod{
+							Namespace: ds.Namespace, Name: ds.Name, Labels: ds.Spec.Template.Labels,
+						}
+					}
+				}
 				name, ok := enforcerDaemonSets[list.Items[i].Name]
 				if !ok {
 					continue
@@ -203,7 +263,9 @@ func (p *EnforcementProbe) probe(ctx context.Context) EnforcementSignal {
 					Verdict: EnforcementObserved,
 					Source: fmt.Sprintf("%s: this API server serves %s",
 						api.Name, strings.ToLower(api.GroupKind.Kind)+"."+api.GroupKind.Group),
-					CiliumAgent: ciliumAgent,
+					CiliumAgent:        ciliumAgent,
+					NodeLocalDNSOnHost: nodeLocalDNSOnHost,
+					NodeLocalDNSPod:    nodeLocalDNSPod,
 				}
 			}
 		}
@@ -225,8 +287,10 @@ func (p *EnforcementProbe) probe(ctx context.Context) EnforcementSignal {
 		sort.Strings(agents)
 		return EnforcementSignal{
 			Verdict:     EnforcementObserved,
-			Source:      "agent running in this cluster: " + strings.Join(agents, ", "),
-			CiliumAgent: ciliumAgent,
+			Source:             "agent running in this cluster: " + strings.Join(agents, ", "),
+			CiliumAgent:        ciliumAgent,
+			NodeLocalDNSOnHost: nodeLocalDNSOnHost,
+			NodeLocalDNSPod:    nodeLocalDNSPod,
 		}
 	}
 	return EnforcementSignal{

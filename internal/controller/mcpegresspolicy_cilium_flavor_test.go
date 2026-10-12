@@ -204,3 +204,85 @@ func TestEgressPolicy_CiliumCRDLookupIsCached(t *testing.T) {
 	}
 	assert.Equal(t, 1, mapper.cilium, "the CiliumNetworkPolicy CRD was looked up on every reconcile")
 }
+
+func hostNetworkNodeLocalDNS() *appsv1.DaemonSet {
+	ds := agentDaemonSet("node-local-dns")
+	ds.Spec.Template.Spec.HostNetwork = true
+	return ds
+}
+
+func fqdnPolicy(name string) *mcpv1alpha2.MCPEgressPolicy {
+	p := cidrPolicy(name)
+	p.Spec.Upstreams = append(p.Spec.Upstreams,
+		mcpv1alpha2.UpstreamRule{Name: "api", Match: mcpv1alpha2.UpstreamMatch{Host: "api.example.com"}})
+	return p
+}
+
+// On Cilium with NodeLocal DNSCache on the host network, the proxy never sees
+// a lookup and every FQDN upstream is denied. That used to read as a clean
+// "FQDN + CIDR enforced" (#178); it is now Degraded, naming the cache and the
+// upstreams.
+func TestEgressPolicy_CiliumWithHostNetworkNodeLocalDNS_FQDNDegraded(t *testing.T) {
+	p := fqdnPolicy("pol")
+	r := newCiliumCRDReconciler(t, testServer("srv", "default"), p, agentDaemonSet("cilium"), hostNetworkNodeLocalDNS())
+
+	out := reconcilePolicy(t, r, p)
+
+	require.True(t, ciliumBackstopExists(t, r, "pol"), "the backstop is still written: it fails closed")
+	degraded := condStatus(out, EgressPolicyConditionDegraded)
+	assert.Equal(t, metav1.ConditionTrue, degraded.Status)
+	assert.Equal(t, "FQDNLookupsUnobserved", degraded.Reason)
+	assert.Contains(t, degraded.Message, "kube-system/node-local-dns")
+	assert.Contains(t, degraded.Message, "api.example.com")
+	assert.Contains(t, degraded.Message, "CiliumLocalRedirectPolicy")
+	applied := condStatus(out, EgressPolicyConditionBackstopApplied)
+	assert.NotContains(t, applied.Message, "FQDN + CIDR enforced")
+	assert.Equal(t, mcpv1alpha2.BackstopEnforcing, out.Status.BackstopEnforcement)
+}
+
+// A policy with no hostname upstreams loses nothing to the cache.
+func TestEgressPolicy_CiliumWithHostNetworkNodeLocalDNS_CIDROnlyNotDegraded(t *testing.T) {
+	p := cidrPolicy("pol")
+	r := newCiliumCRDReconciler(t, testServer("srv", "default"), p, agentDaemonSet("cilium"), hostNetworkNodeLocalDNS())
+
+	out := reconcilePolicy(t, r, p)
+
+	assert.Equal(t, metav1.ConditionFalse, condStatus(out, EgressPolicyConditionDegraded).Status)
+}
+
+func podNodeLocalDNS() *appsv1.DaemonSet {
+	ds := agentDaemonSet("node-local-dns")
+	ds.Spec.Template.Labels = map[string]string{"k8s-app": "node-local-dns"}
+	return ds
+}
+
+// The supported topology: the cache as a pod behind a redirect, with the DNS
+// rule told about its pods.
+func TestEgressPolicy_CiliumWithNodeLocalDNSAsAPod_NotDegraded(t *testing.T) {
+	require.NoError(t, networkpolicy.SetExtraDNSSelectors([]string{"kube-system/k8s-app=node-local-dns"}))
+	t.Cleanup(func() { networkpolicy.ExtraDNSSelectors = nil })
+	p := fqdnPolicy("pol")
+	r := newCiliumCRDReconciler(t, testServer("srv", "default"), p, agentDaemonSet("cilium"), podNodeLocalDNS())
+
+	out := reconcilePolicy(t, r, p)
+
+	assert.Equal(t, metav1.ConditionFalse, condStatus(out, EgressPolicyConditionDegraded).Status)
+	assert.Contains(t, condStatus(out, EgressPolicyConditionBackstopApplied).Message, "FQDN + CIDR enforced")
+}
+
+// The same topology without the selector: the redirected lookup lands on a
+// cache pod the DNS rule does not select, the proxy does not inspect it, and
+// the allow-listed name is denied -- what the reachability leg measured.
+func TestEgressPolicy_CiliumWithNodeLocalDNSAsAPodNoSelector_Degraded(t *testing.T) {
+	networkpolicy.ExtraDNSSelectors = nil
+	p := fqdnPolicy("pol")
+	r := newCiliumCRDReconciler(t, testServer("srv", "default"), p, agentDaemonSet("cilium"), podNodeLocalDNS())
+
+	out := reconcilePolicy(t, r, p)
+
+	degraded := condStatus(out, EgressPolicyConditionDegraded)
+	assert.Equal(t, metav1.ConditionTrue, degraded.Status)
+	assert.Equal(t, "FQDNLookupsUnobserved", degraded.Reason)
+	assert.Contains(t, degraded.Message, "--dns-egress-selectors=kube-system/k8s-app=node-local-dns")
+	assert.Contains(t, degraded.Message, "api.example.com")
+}
