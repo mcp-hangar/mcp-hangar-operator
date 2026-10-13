@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.17.24](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.23...v0.17.24) (2026-10-13)
+
+### Removed
+
+- **webhook:** remove the MCPServer webhook's copies of the wildcard egress
+  opt-in and the image digest policy; the ValidatingAdmissionPolicies in
+  `config/admissionpolicy/` are the only enforcement. `--webhook-annotation-rules`
+  and `--image-digest-policy` are accepted and ignored, with a log line when set,
+  and go in a later release ([#315](https://github.com/mcp-hangar/mcp-hangar-operator/pull/315))
+
 ## [0.17.23](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.22...v0.17.23) (2026-10-12)
 
 ### Fixed
