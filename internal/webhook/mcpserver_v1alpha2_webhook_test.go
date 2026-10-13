@@ -101,20 +101,16 @@ func TestV2_EgressValidCIDR(t *testing.T) {
 }
 
 func TestV2_ValidateUpdate(t *testing.T) {
-	// The update path runs the same annotation-gated rules as create.
+	// The update path judges the new object as create does.
 	v := &webhook.MCPServerV1alpha2Validator{}
 	old := newProviderV2("upd", mcpv1alpha2.MCPServerModeContainer)
 	old.Spec.Image = "test:v1"
 	updated := old.DeepCopy()
-	updated.Spec.Capabilities = &mcpv1alpha2.MCPServerCapabilities{
-		Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
-			Egress: []mcpv1alpha2.EgressRuleSpec{{Host: "*", CIDR: "0.0.0.0/0"}},
-		},
-	}
+	updated.Spec.Endpoint = "http://example.com"
 
-	_, err := v.ValidateUpdate(context.Background(), old, updated)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unrestricted egress")
+	warnings, err := v.ValidateUpdate(context.Background(), old, updated)
+	require.NoError(t, err)
+	assert.Contains(t, warnings, "spec.endpoint is ignored when mode is \"container\"")
 }
 
 func TestV2_ValidateDelete(t *testing.T) {

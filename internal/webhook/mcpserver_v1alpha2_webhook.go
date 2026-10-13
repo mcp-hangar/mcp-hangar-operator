@@ -3,7 +3,6 @@ package webhook
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -37,16 +36,17 @@ func (v *MCPServerV1alpha2Validator) ValidateDelete(_ context.Context, _ *mcpv1a
 	return nil, nil
 }
 
-// validateProviderV2 runs the rules on a v1alpha2 MCPServer that the CRD schema
-// cannot express.
+// validateProviderV2 returns the admission warnings for a v1alpha2 MCPServer.
+// It refuses nothing but a nil object.
 //
 // The structural rules -- image required in container mode, an http(s)
 // endpoint with a host in remote mode, non-negative durations, non-empty and
 // unique expectedTools, a well-formed cidr, mode immutable -- are CEL and
 // schema rules on the CRD (#196). The apiserver evaluates them before any
 // validating webhook is called, and with the webhook off as well, so a copy
-// here could never fire. What remains needs an annotation or a cluster fact:
-// the image digest policy, the wildcard egress opt-in, and the warnings.
+// here could never fire. The image digest policy and the wildcard egress
+// opt-in are ValidatingAdmissionPolicies (config/admissionpolicy, #219, #312).
+// What remains here are the warnings.
 func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 	// A typed-nil *MCPServer satisfies the generic handler signature, so guard
 	// here rather than dereferencing p.Spec and panicking the webhook.
@@ -54,19 +54,11 @@ func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 		return nil, fmt.Errorf("MCPServer object is nil")
 	}
 
-	var errs []string
 	var warnings admission.Warnings
 
-	// Mode-specific field requirements.
+	// Fields the mode ignores.
 	switch p.Spec.Mode {
 	case mcpv1alpha2.MCPServerModeContainer:
-		if annotationRules {
-			if e, w := checkImageDigest(p.Spec.Image, p.Annotations); e != "" {
-				errs = append(errs, e)
-			} else if w != "" {
-				warnings = append(warnings, w)
-			}
-		}
 		if p.Spec.Endpoint != "" {
 			warnings = append(warnings, "spec.endpoint is ignored when mode is \"container\"")
 		}
@@ -81,39 +73,7 @@ func validateProviderV2(p *mcpv1alpha2.MCPServer) (admission.Warnings, error) {
 		warnings = append(warnings, capabilityWarningsV2(p.Spec.Capabilities)...)
 	}
 
-	// Wildcard egress needs the explicit opt-in annotation. Ported from the
-	// v1alpha1 validator when that one was deleted (#125) -- this check lived
-	// only there, so without the port the guard would have died with the API
-	// version while looking covered.
-	if annotationRules && hasWildcardEgressV2(p) && p.Annotations[unrestrictedEgressAnnotation] != "true" {
-		errs = append(errs, fmt.Sprintf(
-			"spec.capabilities.network.egress with host \"*\" or cidr 0.0.0.0/0 or ::/0 (unrestricted egress) "+
-				"requires annotation %s: \"true\"",
-			unrestrictedEgressAnnotation))
-	}
-
-	if len(errs) > 0 {
-		return warnings, fmt.Errorf("MCPServer validation failed: %s", strings.Join(errs, "; "))
-	}
 	return warnings, nil
-}
-
-// unrestrictedEgressAnnotation opts a provider into wildcard egress (host "*",
-// cidr 0.0.0.0/0 or ::/0).
-const unrestrictedEgressAnnotation = "hangar.io/allow-unrestricted-egress"
-
-// annotationRules keeps the image digest policy and the wildcard egress opt-in
-// in this webhook. Both are ValidatingAdmissionPolicies now
-// (config/admissionpolicy, #219), which the apiserver enforces with the
-// webhooks off as well; the copies here stay for one release so a cluster that
-// upgrades the operator before it installs the policies is not left without
-// them, and are removed in the next. Set once at startup via SetAnnotationRules.
-var annotationRules = true
-
-// SetAnnotationRules turns the webhook copies of the two annotation-gated rules
-// on or off.
-func SetAnnotationRules(on bool) {
-	annotationRules = on
 }
 
 // ciliumDetected records whether this cluster runs Cilium (its CRD is
@@ -126,19 +86,6 @@ var ciliumDetected bool
 // SetCiliumDetected records whether the cluster runs Cilium.
 func SetCiliumDetected(detected bool) {
 	ciliumDetected = detected
-}
-
-// hasWildcardEgressV2 reports whether any egress rule opens every destination.
-func hasWildcardEgressV2(p *mcpv1alpha2.MCPServer) bool {
-	if p.Spec.Capabilities == nil || p.Spec.Capabilities.Network == nil {
-		return false
-	}
-	for _, rule := range p.Spec.Capabilities.Network.Egress {
-		if networkpolicy.IsUnrestrictedEgress(rule) {
-			return true
-		}
-	}
-	return false
 }
 
 // capabilityWarningsV2 returns the non-fatal admission warnings for the

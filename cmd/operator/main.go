@@ -61,8 +61,6 @@ func main() {
 		gracefulShutdownTimeout time.Duration
 		dnsEgressCIDRs          string
 		dnsEgressSelectors      string
-		imageDigestPolicy       string
-		webhookAnnotationRules  bool
 		npEnforcement           string
 		gatewaySelector         string
 		maxConcurrent           int
@@ -106,16 +104,7 @@ func main() {
 			"in-cluster kube-dns pods. Set to your NodeLocal DNSCache / custom resolver address "+
 			"(e.g. \"169.254.20.10/32\") on clusters where pods do not resolve via kube-dns pods, "+
 			"otherwise DNS is blocked for egress-scoped servers.")
-	flag.StringVar(&imageDigestPolicy, "image-digest-policy", "warn",
-		"How admission handles container images that are not digest-pinned "+
-			"(image@sha256:...): \"block\" rejects, \"warn\" emits an admission warning, "+
-			"\"off\" ignores. A single MCPServer can opt out with the annotation "+
-			"hangar.io/allow-mutable-image: \"true\". With --webhook-annotation-rules=false the "+
-			"image-digest ValidatingAdmissionPolicy enforces this instead, at the level its params ConfigMap names.")
-	flag.BoolVar(&webhookAnnotationRules, "webhook-annotation-rules", true,
-		"Also enforce the image digest policy and the wildcard egress opt-in in the MCPServer webhook. "+
-			"The ValidatingAdmissionPolicies in config/admissionpolicy enforce both in the apiserver; set false "+
-			"once they are installed. Deprecated: the flag and the webhook copies go in the next release.")
+	registerRetiredFlags(flag.CommandLine)
 
 	flag.StringVar(&gatewaySelector, "hangar-gateway-selector", controller.DefaultGatewayPodSelector,
 		"Label selector for the core gateway pods. When one becomes Ready, every MCPEgressPolicy is "+
@@ -159,11 +148,9 @@ func main() {
 		}
 	}
 
-	if err := webhook.SetImageDigestPolicy(imageDigestPolicy); err != nil {
-		setupLog.Error(err, "invalid --image-digest-policy")
-		os.Exit(1)
+	for _, note := range retiredFlagNotes(flag.CommandLine) {
+		setupLog.Error(nil, note)
 	}
-	webhook.SetAnnotationRules(webhookAnnotationRules)
 
 	if maxConcurrent < 1 {
 		setupLog.Error(fmt.Errorf("must be at least 1, got %d", maxConcurrent), "invalid --max-concurrent-reconciles")
@@ -434,6 +421,47 @@ var (
 // defaultGracefulShutdownTimeout is how long the manager drains on shutdown
 // by default; the pod's terminationGracePeriodSeconds must exceed it.
 const defaultGracefulShutdownTimeout = 10 * time.Second
+
+const (
+	retiredImageDigestPolicyFlag = "image-digest-policy"
+	retiredAnnotationRulesFlag   = "webhook-annotation-rules"
+)
+
+// registerRetiredFlags keeps the flags #312 retired, so a manifest that still
+// passes them starts instead of exiting on an unknown flag.
+func registerRetiredFlags(fs *flag.FlagSet) {
+	fs.String(retiredImageDigestPolicyFlag, "",
+		"No effect; ignored. The image-digest ValidatingAdmissionPolicy enforces the level its params "+
+			"ConfigMap names (config/admissionpolicy; the chart sets it from operator.imageDigestPolicy). "+
+			"Deprecated: the flag goes in a later release.")
+	fs.Bool(retiredAnnotationRulesFlag, false,
+		"No effect; ignored. The webhook no longer enforces the image digest policy or the wildcard "+
+			"egress opt-in; the ValidatingAdmissionPolicies in config/admissionpolicy do. "+
+			"Deprecated: the flag goes in a later release.")
+}
+
+// retiredFlagNotes returns one line for each retired flag the command line
+// set. Both are accepted and ignored. Asking for the webhook rules gets the
+// plainest line, since that operator believes the webhook still enforces them.
+func retiredFlagNotes(fs *flag.FlagSet) []string {
+	var notes []string
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case retiredImageDigestPolicyFlag:
+			notes = append(notes, fmt.Sprintf("--%s=%s has no effect and is ignored: the image-digest "+
+				"ValidatingAdmissionPolicy enforces the level its params ConfigMap names", f.Name, f.Value))
+		case retiredAnnotationRulesFlag:
+			if f.Value.String() == "true" {
+				notes = append(notes, fmt.Sprintf("--%s=true has no effect: the webhook no longer enforces "+
+					"the image digest policy or the wildcard egress opt-in; without the "+
+					"ValidatingAdmissionPolicies in config/admissionpolicy nothing does", f.Name))
+			} else {
+				notes = append(notes, fmt.Sprintf("--%s=%s has no effect and is ignored", f.Name, f.Value))
+			}
+		}
+	})
+	return notes
+}
 
 // parseEnforcementOverride maps the --networkpolicy-enforcement flag onto a
 // probe verdict. "auto" leaves the probe to look for itself.
