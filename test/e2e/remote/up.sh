@@ -11,7 +11,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 CLUSTER="${E2E_REMOTE_CLUSTER:-mcp-remote-e2e}"
-CORE_REF="${CORE_REF:-v2.27.0}"
+CORE_REF="${CORE_REF:-v2.27.1}"
 BACKEND_IMAGE="localhost/mcp-task-upstream:e2e"
 OPERATOR_IMAGE="localhost/mcp-hangar-operator:e2e"
 KCTL=(kubectl --context "kind-${CLUSTER}")

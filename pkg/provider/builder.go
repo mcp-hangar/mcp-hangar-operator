@@ -38,6 +38,9 @@ const (
 	AnnotationDiscoveryName    = "mcp-hangar.io/name"
 	AnnotationDiscoveryMode    = "mcp-hangar.io/mode"
 	AnnotationDiscoveryPort    = "mcp-hangar.io/port"
+	// AnnotationDiscoveryHealthPath is spec.healthPath, stamped only when set:
+	// core's own default applies otherwise (#306).
+	AnnotationDiscoveryHealthPath = "mcp-hangar.io/health-path"
 
 	// DiscoveryModeHTTP is what a container-mode MCPServer looks like from the
 	// gateway's side: a pod serving HTTP at its own address. Core maps this to
@@ -190,6 +193,9 @@ func buildAnnotations(provider *mcpv1alpha2.MCPServer) map[string]string {
 		annotations[AnnotationDiscoveryName] = provider.Name
 		annotations[AnnotationDiscoveryMode] = DiscoveryModeHTTP
 		annotations[AnnotationDiscoveryPort] = strconv.Itoa(DefaultDiscoveryPort)
+		if provider.Spec.HealthPath != "" {
+			annotations[AnnotationDiscoveryHealthPath] = provider.Spec.HealthPath
+		}
 	}
 
 	return annotations

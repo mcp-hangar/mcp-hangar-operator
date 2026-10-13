@@ -76,3 +76,17 @@ func TestTtlIsNotMappedFromIdleTtl(t *testing.T) {
 	_, present := pod.Annotations["mcp-hangar.io/ttl"]
 	assert.False(t, present, "idleTTL and the discovery TTL are different quantities")
 }
+
+// spec.healthPath reaches core as the annotation it reads (#306); unset, the
+// operator stamps nothing and core's own default applies.
+func TestHealthPathIsStampedOnlyWhenSet(t *testing.T) {
+	pod, err := BuildPodForMCPServer(containerServer("plain"))
+	require.NoError(t, err)
+	assert.NotContains(t, pod.Annotations, AnnotationDiscoveryHealthPath)
+
+	server := containerServer("with-health")
+	server.Spec.HealthPath = "/healthz"
+	pod, err = BuildPodForMCPServer(server)
+	require.NoError(t, err)
+	assert.Equal(t, "/healthz", pod.Annotations[AnnotationDiscoveryHealthPath])
+}

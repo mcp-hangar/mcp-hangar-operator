@@ -34,10 +34,10 @@ data:
           in_cluster: true
           namespaces: [hangar-e2e]
           allowed_namespaces: [hangar-e2e]
-      # task_upstream serves only /mcp, no /health, and core quarantines a
-      # discovered server whose health check fails (#306).
-      security:
-        require_health_check: false
+      # No require_health_check: false. task_upstream serves only /mcp, no
+      # /health, and since core 2.27.1 discovery accepts an MCP initialize when
+      # the health path answers 404 (#306) -- which the container-mode leg
+      # proves with the check on.
     # The kind Service range up.sh pins: the operator registers a remote
     # MCPServer that names an in-cluster Service, and core refuses a private
     # endpoint it does not trust (#164, core 2.27.0).
@@ -67,7 +67,7 @@ spec:
       serviceAccountName: mcp-hangar
       containers:
         - name: core
-          image: ghcr.io/mcp-hangar/mcp-hangar:2.27.0
+          image: ghcr.io/mcp-hangar/mcp-hangar:2.27.1
           # args, NOT command: the image's ENTRYPOINT is `mcp-hangar` and its
           # CMD is the serve arguments. Kubernetes `command` replaces the
           # ENTRYPOINT (compose's `command` replaces CMD, which is why the

@@ -104,6 +104,7 @@ deregister; `provider-admin` has neither, and the CR says so with reason
 | `spec.mode` | Execution mode: `container` or `remote` | Required |
 | `spec.image` | Container image (for container mode) | Required for container |
 | `spec.endpoint` | HTTP endpoint (for remote mode) | Required for remote |
+| `spec.healthPath` | Path core's discovery probes on a container-mode pod (`mcp-hangar.io/health-path`); core 2.27.1+ falls back to an MCP `initialize` on `/mcp` when it answers 404 | core's `/health` |
 | `spec.replicas` | On (`1`) or off (`0`, no pod); a server runs at most one pod, and there is no scale subresource | `1` |
 | `spec.startupTimeout` | Accepted and validated; the operator does not act on it | — |
 | `spec.shutdownGracePeriod` | Pod termination grace period | `30s` when unset (operator default) |

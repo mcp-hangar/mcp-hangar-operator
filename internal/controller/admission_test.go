@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -161,4 +162,34 @@ func TestReconcileEgressAudit_NilCapabilitiesNoEvent(t *testing.T) {
 	r.reconcileEgressAudit(context.Background(), provider)
 
 	assert.Empty(t, fakeRec.events, "no event should be emitted for nil capabilities")
+}
+
+// spec.healthPath is an absolute path with no query or fragment: it is
+// appended to the pod's address by core (#306).
+func TestAdmission_Envtest_HealthPathIsAPath(t *testing.T) {
+	for i, tc := range []struct {
+		path string
+		ok   bool
+	}{
+		{"/healthz", true},
+		{"/api/v1/health", true},
+		{"healthz", false},
+		{"/health?x=1", false},
+		{"/health#top", false},
+		{"/he alth", false},
+	} {
+		provider := &mcpv1alpha2.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("envtest-health-path-%d", i), Namespace: "default"},
+			Spec: mcpv1alpha2.MCPServerSpec{
+				Mode: mcpv1alpha2.MCPServerModeContainer, Image: "test:latest", HealthPath: tc.path,
+			},
+		}
+		err := k8sClient.Create(ctx, provider)
+		if tc.ok {
+			require.NoError(t, err, tc.path)
+			_ = k8sClient.Delete(ctx, provider)
+		} else {
+			require.Error(t, err, tc.path)
+		}
+	}
 }
