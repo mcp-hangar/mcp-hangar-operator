@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"flag"
 	"fmt"
 	"net"
 	"net/http"
@@ -75,4 +76,28 @@ func TestMetrics_InsecureOptOutKeepsPlainHTTP(t *testing.T) {
 	opts := metricsServerOptions(":8080", false)
 	assert.False(t, opts.SecureServing)
 	assert.Nil(t, opts.FilterProvider)
+}
+
+// Chart 0.12.38 and 0.12.39 pass both retired flags; #312 made them no-ops,
+// so the operator must still parse them, and say they do nothing.
+func TestRetiredFlags_ParseAndSayTheyDoNothing(t *testing.T) {
+	fs := flag.NewFlagSet("operator", flag.ContinueOnError)
+	registerRetiredFlags(fs)
+	require.NoError(t, fs.Parse([]string{"--image-digest-policy=block", "--webhook-annotation-rules=false"}))
+	notes := retiredFlagNotes(fs)
+	require.Len(t, notes, 2)
+	assert.Contains(t, notes[0], "--image-digest-policy=block has no effect")
+	assert.Contains(t, notes[1], "--webhook-annotation-rules=false has no effect")
+
+	fs = flag.NewFlagSet("operator", flag.ContinueOnError)
+	registerRetiredFlags(fs)
+	require.NoError(t, fs.Parse([]string{"--webhook-annotation-rules"}))
+	notes = retiredFlagNotes(fs)
+	require.Len(t, notes, 1)
+	assert.Contains(t, notes[0], "nothing does", "asking for the webhook rules must hear they are gone")
+
+	fs = flag.NewFlagSet("operator", flag.ContinueOnError)
+	registerRetiredFlags(fs)
+	require.NoError(t, fs.Parse(nil))
+	assert.Empty(t, retiredFlagNotes(fs), "a manifest without the flags hears nothing")
 }

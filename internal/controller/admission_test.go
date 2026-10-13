@@ -21,7 +21,7 @@ import (
 // (#54), and the earlier Go-mirror test here gave false confidence because it
 // re-implemented the CEL instead of exercising the real path. The rule is a
 // ValidatingAdmissionPolicy now (#219), tested against a real apiserver in
-// internal/admissionpolicy; the webhook copy is tested in internal/webhook.
+// internal/admissionpolicy, and the only copy since the webhook's went (#312).
 //
 // The envtest cases below still verify that the API server accepts providers
 // which do not trigger any CRD-schema rejection.
