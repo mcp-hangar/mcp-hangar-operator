@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.25](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.24...v0.17.25) (2026-10-13)
+
+### Removed
+
+- **cmd:** remove the `--webhook-annotation-rules` and `--image-digest-policy`
+  flags, ignored since 0.17.24; the operator now exits on either as an unknown
+  flag ([#318](https://github.com/mcp-hangar/mcp-hangar-operator/pull/318))
+
 ## [0.17.24](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.23...v0.17.24) (2026-10-13)
 
 ### Removed
