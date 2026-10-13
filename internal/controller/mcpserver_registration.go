@@ -326,5 +326,13 @@ func (r *MCPServerReconciler) deregisterOwned(ctx context.Context, mcpServer *mc
 		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonFailed, ActionReconcile,
 			"Could not remove %q from core; it stays there until removed by hand: %v", mcpServer.Name, err)
 	}
-	return r.Claims.release(ctx, claim)
+	if err := r.Claims.release(ctx, claim); err != nil {
+		// Same reasoning: a Lease left behind holds the name, which a later
+		// CR of it reports as NameTaken; a CR that cannot be deleted is worse.
+		logger.Error(err, "Failed to release the claim", "lease", claim.Name)
+		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonFailed, ActionReconcile,
+			"Could not release the claim %s/%s on %q; delete it by hand to reuse the name: %v",
+			claim.Namespace, claim.Name, mcpServer.Name, err)
+	}
+	return nil
 }
