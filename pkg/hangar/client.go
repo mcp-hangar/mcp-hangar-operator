@@ -464,9 +464,17 @@ func IsEndpointNotTrusted(err error) bool {
 	return errors.Is(err, ErrEndpointNotTrusted)
 }
 
+// ErrAlreadyRegistered is core refusing a registration because it holds a
+// server by that name.
+var ErrAlreadyRegistered = errors.New("core already holds a server by that name")
+
+// IsAlreadyRegistered reports whether err is core refusing a name it holds.
+func IsAlreadyRegistered(err error) bool {
+	return errors.Is(err, ErrAlreadyRegistered)
+}
+
 // RegisterRemoteMCPServer adds a remote server to core under name, with
-// POST /api/mcp_servers. A server core already holds under that name counts
-// as registered: a second reconcile racing the first must not fail on it.
+// POST /api/mcp_servers/.
 func (c *Client) RegisterRemoteMCPServer(ctx context.Context, name, endpoint string) (err error) {
 	defer c.observe("register")(&err)
 	ctx, cancel := c.bound(ctx)
@@ -492,9 +500,30 @@ func (c *Client) RegisterRemoteMCPServer(ctx context.Context, name, endpoint str
 	case resp.StatusCode == http.StatusBadRequest && strings.Contains(string(respBody), "ssrf_blocked"):
 		return fmt.Errorf("%w: %s", ErrEndpointNotTrusted, endpoint)
 	case resp.StatusCode == http.StatusUnprocessableEntity && strings.Contains(string(respBody), "already exists"):
-		return nil
+		return fmt.Errorf("%w: %s", ErrAlreadyRegistered, name)
 	}
 	return fmt.Errorf("registration failed: %w", &StatusError{StatusCode: resp.StatusCode, Body: string(respBody)})
+}
+
+// StartMCPServer has core start a server, which for a remote one means
+// connecting to it.
+func (c *Client) StartMCPServer(ctx context.Context, name string) (err error) {
+	defer c.observe("start")(&err)
+	ctx, cancel := c.bound(ctx)
+	defer cancel()
+	url := fmt.Sprintf("%s/api/mcp_servers/%s/start", c.baseURL, name)
+
+	resp, err := c.doWithRetry(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("start failed: %w", &StatusError{StatusCode: resp.StatusCode, Body: string(body)})
+	}
+	return nil
 }
 
 // DeregisterProvider removes a provider from Hangar core

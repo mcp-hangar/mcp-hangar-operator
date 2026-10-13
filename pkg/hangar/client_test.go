@@ -427,21 +427,22 @@ func TestClient_CallTimeout_BoundsTheWholeCall(t *testing.T) {
 }
 
 // Core's answers to a registration (#164): created, the SSRF refusal, a name
-// it already holds, and anything else.
+// it already holds -- not this caller's, so an error -- and anything else.
 func TestClient_RegisterRemoteMCPServer(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		status     int
 		body       string
 		notTrusted bool
+		taken      bool
 		fails      bool
 	}{
-		{"created", http.StatusCreated, `{"created":true}`, false, false},
-		{"ssrf refused", http.StatusBadRequest, `{"error":"ssrf_blocked"}`, true, true},
+		{"created", http.StatusCreated, `{"created":true}`, false, false, false},
+		{"ssrf refused", http.StatusBadRequest, `{"error":"ssrf_blocked"}`, true, false, true},
 		{"already held", http.StatusUnprocessableEntity,
-			`{"error":{"code":"ValidationError","message":"McpServer already exists: notes"}}`, false, false},
-		{"other 400", http.StatusBadRequest, `{"error":"missing_fields"}`, false, true},
-		{"other 422", http.StatusUnprocessableEntity, `{"error":{"message":"bad endpoint"}}`, false, true},
+			`{"error":{"code":"ValidationError","message":"McpServer already exists: notes"}}`, false, true, true},
+		{"other 400", http.StatusBadRequest, `{"error":"missing_fields"}`, false, false, true},
+		{"other 422", http.StatusUnprocessableEntity, `{"error":{"message":"bad endpoint"}}`, false, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var got map[string]string
@@ -460,6 +461,7 @@ func TestClient_RegisterRemoteMCPServer(t *testing.T) {
 			assert.Equal(t, map[string]string{"mcp_server_id": "notes", "mode": "remote", "endpoint": "http://notes:8080/mcp"}, got)
 			assert.Equal(t, tc.fails, err != nil, "%v", err)
 			assert.Equal(t, tc.notTrusted, IsEndpointNotTrusted(err))
+			assert.Equal(t, tc.taken, IsAlreadyRegistered(err))
 		})
 	}
 }

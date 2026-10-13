@@ -15,7 +15,8 @@
 //     operator, core reaches its in-cluster Service through the trusted
 //     network, and deleting the CR removes the server from core (#164);
 //   - an endpoint outside core's ssrf.trusted_networks yields a condition that
-//     names the setting, not a bare 400 (#164);
+//     names the setting, not a bare 400, and a mistyped Service is never
+//     Ready (#164);
 //   - an MCPEgressPolicy's L7 half is held by core, read back from core's own
 //     l7_policy route, not only reported on the CR (#208);
 //   - deleting a remote CR that mirrors a config-defined server leaves that
@@ -42,6 +43,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -170,6 +172,9 @@ func TestRemoteLifecycle(t *testing.T) {
 	t.Run("UntrustedEndpointSaysSo", func(t *testing.T) {
 		testUntrustedEndpoint(t, cl)
 	})
+	t.Run("MistypedEndpointIsNotReady", func(t *testing.T) {
+		testMistypedEndpoint(t, cl)
+	})
 	t.Run("EgressPolicyL7ReachesCore", func(t *testing.T) {
 		testL7Delivered(t, cl)
 	})
@@ -250,14 +255,17 @@ func testRegistersUnknownServer(t *testing.T, cl crclient.Client) {
 		t.Fatalf("MCPServer %q never reached Ready=True; status: %+v\ncore log:\n%s",
 			operatorRegisteredName, last.Status, coreLogLines("ssrf"))
 	}
-	if got := last.Annotations["mcp-hangar.io/registered-by"]; got != "operator" {
-		t.Errorf("registered-by annotation = %q, want operator", got)
+	claim := &coordinationv1.Lease{}
+	claimKey := types.NamespacedName{Name: "mcp-server-" + operatorRegisteredName, Namespace: operatorNamespace}
+	if err := cl.Get(context.Background(), claimKey, claim); err != nil {
+		t.Fatalf("the operator's claim on %q: %v", operatorRegisteredName, err)
 	}
-	if got := last.Annotations["mcp-hangar.io/registered-endpoint"]; got != backendEndpoint {
-		t.Errorf("registered-endpoint annotation = %q, want %q", got, backendEndpoint)
+	if h := claim.Spec.HolderIdentity; h == nil || !strings.HasPrefix(*h, stackNamespace+"/"+operatorRegisteredName+"/") {
+		t.Errorf("claim holder = %v, want %s/%s/<uid>", h, stackNamespace, operatorRegisteredName)
 	}
 
-	corePost(t, "/api/mcp_servers/"+operatorRegisteredName+"/start")
+	// The operator started it before reporting Ready, so core already lists
+	// the backend's tools.
 	if tools := coreGet(t, "/api/mcp_servers/"+operatorRegisteredName+"/tools"); !strings.Contains(tools, "long_job") {
 		t.Errorf("core did not list the backend's tools for %q (the connect-time guard refused it?): %s\ncore log:\n%s",
 			operatorRegisteredName, tools, coreLogLines("ssrf"))
@@ -272,6 +280,40 @@ func testRegistersUnknownServer(t *testing.T, cl crclient.Client) {
 	if body := coreGet(t, "/api/mcp_servers/"+operatorRegisteredName); !strings.HasPrefix(body, "HTTP 404") {
 		t.Errorf("core still holds %q after its CR was deleted: %s", operatorRegisteredName, strings.TrimSpace(body))
 	}
+	if err := cl.Get(context.Background(), claimKey, &coordinationv1.Lease{}); !apierrors.IsNotFound(err) {
+		t.Errorf("the claim on %q outlived its CR: %v", operatorRegisteredName, err)
+	}
+}
+
+// testMistypedEndpoint registers a Service that does not exist. Core takes the
+// registration -- a name that does not resolve is not an address to refuse --
+// and reports a server nobody has called as healthy; the CR must still not
+// claim Ready, because the operator's start of it fails.
+func testMistypedEndpoint(t *testing.T, cl crclient.Client) {
+	const name = "mistyped"
+	createRemoteCR(t, cl, name, "http://task-upstraem.hangar-e2e.svc.cluster.local:8080/mcp")
+
+	deadline := time.Now().Add(2 * time.Minute)
+	var srv *mcpv1alpha2.MCPServer
+	for time.Now().Before(deadline) {
+		srv = getServer(t, cl, name)
+		if c := apimeta.FindStatusCondition(srv.Status.Conditions, "Degraded"); c != nil && c.Reason == "StartFailed" {
+			break
+		}
+		time.Sleep(3 * time.Second)
+	}
+	if c := apimeta.FindStatusCondition(srv.Status.Conditions, "Degraded"); c == nil || c.Reason != "StartFailed" {
+		t.Errorf("MCPServer %q with a mistyped Service never reported StartFailed; status: %+v", name, srv.Status)
+	}
+	if c := apimeta.FindStatusCondition(srv.Status.Conditions, "Ready"); c != nil && c.Status == metav1.ConditionTrue {
+		t.Errorf("MCPServer %q reached Ready with an endpoint nothing answers", name)
+	}
+
+	if err := cl.Delete(context.Background(), &mcpv1alpha2.MCPServer{ObjectMeta: metav1.ObjectMeta{
+		Name: name, Namespace: stackNamespace}}); err != nil {
+		t.Fatalf("delete MCPServer %q: %v", name, err)
+	}
+	waitGone(t, cl, name)
 }
 
 // testUntrustedEndpoint registers an endpoint in the pod range, which core does
