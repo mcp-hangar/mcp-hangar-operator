@@ -11,8 +11,11 @@
 //   - a remote CR reaches Ready with the backend's real tool count -- an
 //     assertion a dead route or a renamed consecutive_failures could not
 //     satisfy, because Ready requires decoding core's actual health shape;
-//   - an unregistered server yields a condition an operator can act on
-//     ("not registered with core"), not a JSON decode error;
+//   - a remote CR naming a server core does not hold is registered by the
+//     operator, core reaches its in-cluster Service through the trusted
+//     network, and deleting the CR removes the server from core (#164);
+//   - an endpoint outside core's ssrf.trusted_networks yields a condition that
+//     names the setting, not a bare 400 (#164);
 //   - an MCPEgressPolicy's L7 half is held by core, read back from core's own
 //     l7_policy route, not only reported on the CR (#208);
 //   - deleting a remote CR that mirrors a config-defined server leaves that
@@ -161,8 +164,11 @@ func TestRemoteLifecycle(t *testing.T) {
 	t.Run("RegisteredServerReachesReady", func(t *testing.T) {
 		testReady(t, cl)
 	})
-	t.Run("UnregisteredServerSaysSo", func(t *testing.T) {
-		testNotRegistered(t, cl)
+	t.Run("UnknownServerIsRegistered", func(t *testing.T) {
+		testRegistersUnknownServer(t, cl)
+	})
+	t.Run("UntrustedEndpointSaysSo", func(t *testing.T) {
+		testUntrustedEndpoint(t, cl)
 	})
 	t.Run("EgressPolicyL7ReachesCore", func(t *testing.T) {
 		testL7Delivered(t, cl)
@@ -220,33 +226,96 @@ func testReady(t *testing.T, cl crclient.Client) {
 	}
 }
 
-// testNotRegistered pins the 404 path: the condition must carry the message an
-// operator can act on, not the JSON decode error #103 shipped.
-func testNotRegistered(t *testing.T, cl crclient.Client) {
-	createRemoteCR(t, cl, "ghost", "http://ghost.hangar-e2e.svc.cluster.local:9999/mcp")
+// operatorRegisteredName is a remote CR core's config does not declare.
+const operatorRegisteredName = "crd-declared"
+
+// testRegistersUnknownServer is #164: the CR alone puts the server in core.
+// The endpoint is the backend's Service, a ClusterIP in the kind service range
+// core trusts (manifests/core.yaml, ssrf.trusted_networks); core then starts it
+// and lists its tools, which proves the connect-time SSRF guard let it through,
+// not only the registration check.
+func testRegistersUnknownServer(t *testing.T, cl crclient.Client) {
+	createRemoteCR(t, cl, operatorRegisteredName, backendEndpoint)
+
+	deadline := time.Now().Add(readyTimeout)
+	var last *mcpv1alpha2.MCPServer
+	for time.Now().Before(deadline) {
+		last = getServer(t, cl, operatorRegisteredName)
+		if c := apimeta.FindStatusCondition(last.Status.Conditions, "Ready"); c != nil && c.Status == metav1.ConditionTrue {
+			break
+		}
+		time.Sleep(3 * time.Second)
+	}
+	if c := apimeta.FindStatusCondition(last.Status.Conditions, "Ready"); c == nil || c.Status != metav1.ConditionTrue {
+		t.Fatalf("MCPServer %q never reached Ready=True; status: %+v\ncore log:\n%s",
+			operatorRegisteredName, last.Status, coreLogLines("ssrf"))
+	}
+	if got := last.Annotations["mcp-hangar.io/registered-by"]; got != "operator" {
+		t.Errorf("registered-by annotation = %q, want operator", got)
+	}
+	if got := last.Annotations["mcp-hangar.io/registered-endpoint"]; got != backendEndpoint {
+		t.Errorf("registered-endpoint annotation = %q, want %q", got, backendEndpoint)
+	}
+
+	corePost(t, "/api/mcp_servers/"+operatorRegisteredName+"/start")
+	if tools := coreGet(t, "/api/mcp_servers/"+operatorRegisteredName+"/tools"); !strings.Contains(tools, "long_job") {
+		t.Errorf("core did not list the backend's tools for %q (the connect-time guard refused it?): %s\ncore log:\n%s",
+			operatorRegisteredName, tools, coreLogLines("ssrf"))
+	}
+
+	ctx := context.Background()
+	if err := cl.Delete(ctx, &mcpv1alpha2.MCPServer{ObjectMeta: metav1.ObjectMeta{
+		Name: operatorRegisteredName, Namespace: stackNamespace}}); err != nil {
+		t.Fatalf("delete MCPServer %q: %v", operatorRegisteredName, err)
+	}
+	waitGone(t, cl, operatorRegisteredName)
+	if body := coreGet(t, "/api/mcp_servers/"+operatorRegisteredName); !strings.HasPrefix(body, "HTTP 404") {
+		t.Errorf("core still holds %q after its CR was deleted: %s", operatorRegisteredName, strings.TrimSpace(body))
+	}
+}
+
+// testUntrustedEndpoint registers an endpoint in the pod range, which core does
+// not trust: the CR must say which core setting to change.
+func testUntrustedEndpoint(t *testing.T, cl crclient.Client) {
+	const name = "untrusted"
+	createRemoteCR(t, cl, name, "http://10.244.0.250:9999/mcp")
 
 	deadline := time.Now().Add(2 * time.Minute)
 	var degraded *metav1.Condition
 	for time.Now().Before(deadline) {
-		srv := getServer(t, cl, "ghost")
-		degraded = apimeta.FindStatusCondition(srv.Status.Conditions, "Degraded")
+		degraded = apimeta.FindStatusCondition(getServer(t, cl, name).Status.Conditions, "Degraded")
 		if degraded != nil && degraded.Status == metav1.ConditionTrue {
 			break
 		}
 		time.Sleep(3 * time.Second)
 	}
-
 	if degraded == nil || degraded.Status != metav1.ConditionTrue {
-		t.Fatal("MCPServer \"ghost\" never went Degraded; core accepted a server nobody registered")
+		t.Fatalf("MCPServer %q never went Degraded; core accepted an endpoint outside its trusted networks", name)
 	}
-	if !strings.Contains(degraded.Message, "not registered with core") {
-		t.Errorf("Degraded message = %q, want it to say \"not registered with core\"", degraded.Message)
+	if degraded.Reason != "EndpointNotTrusted" || !strings.Contains(degraded.Message, "ssrf.trusted_networks") {
+		t.Errorf("Degraded = %s: %q, want EndpointNotTrusted naming ssrf.trusted_networks", degraded.Reason, degraded.Message)
 	}
-	// The #103 regression shape: a 404 body fed to the JSON decoder.
-	for _, fragment := range []string{"failed to decode", "invalid character"} {
-		if strings.Contains(degraded.Message, fragment) {
-			t.Errorf("Degraded message leaks a decode error (%q): %q", fragment, degraded.Message)
+
+	if err := cl.Delete(context.Background(), &mcpv1alpha2.MCPServer{ObjectMeta: metav1.ObjectMeta{
+		Name: name, Namespace: stackNamespace}}); err != nil {
+		t.Fatalf("delete MCPServer %q: %v", name, err)
+	}
+	waitGone(t, cl, name)
+}
+
+// waitGone waits for a deleted CR's finalizer to be released.
+func waitGone(t *testing.T, cl crclient.Client, name string) {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		err := cl.Get(context.Background(), types.NamespacedName{Name: name, Namespace: stackNamespace}, &mcpv1alpha2.MCPServer{})
+		if apierrors.IsNotFound(err) {
+			return
 		}
+		if time.Now().After(deadline) {
+			t.Fatalf("MCPServer %q still present 60s after delete; the finalizer was not released", name)
+		}
+		time.Sleep(2 * time.Second)
 	}
 }
 
@@ -254,10 +323,11 @@ func testNotRegistered(t *testing.T, cl crclient.Client) {
 // operator's log: each attempt logs healthUnreachableLog exactly once, so the
 // operator log IS the probe counter.
 //
-// The count is driven by "ghost", which is already on the 10s
-// errorRequeueAfter cadence; "backend" is Ready and therefore on the 5-minute
-// readyRequeueAfter, so it contributes at most one attempt inside the window
-// before dropping to the error cadence too.
+// The count is driven by "cadence", a CR created once core is gone: its first
+// reconcile cannot ask core, which puts it on the 10s errorRequeueAfter
+// cadence. "backend" is Ready and therefore on the 5-minute readyRequeueAfter,
+// so it contributes at most one attempt inside the window before dropping to
+// the error cadence too.
 //
 // Bounds, not equality, and deliberately loose at the bottom: a probe cycle is
 // the 10s requeue plus the client's in-call retries (~3.5s), so a 2-minute
@@ -265,6 +335,9 @@ func testNotRegistered(t *testing.T, cl crclient.Client) {
 // "stalled" even if connections to the endpointless Service hang rather than
 // being refused; the ceiling of 60 catches the #105 shape, which was ~168/s --
 // twenty thousand per window, not sixty. Measured on the first green run: 18.
+// cadenceName is the CR the cadence test creates with core down.
+const cadenceName = "cadence"
+
 func testProbeCadence(t *testing.T, cl crclient.Client, cs *kubernetes.Clientset) {
 	ctx := context.Background()
 
@@ -291,6 +364,8 @@ func testProbeCadence(t *testing.T, cl crclient.Client, cs *kubernetes.Clientset
 		time.Sleep(3 * time.Second)
 	}
 
+	createRemoteCR(t, cl, cadenceName, "http://cadence.hangar-e2e.svc.cluster.local:9999/mcp")
+
 	operatorPod := operatorPodName(t, cs)
 	windowStart := metav1.Now()
 	time.Sleep(cadenceWindow)
@@ -315,7 +390,7 @@ func testProbeCadence(t *testing.T, cl crclient.Client, cs *kubernetes.Clientset
 	// The counter itself must not explode either: with core unreachable there
 	// is nothing to mirror, so consecutiveFailures stays put instead of
 	// counting probe attempts (the #105 counter hit 1.8 million).
-	for _, name := range []string{registeredName, "ghost"} {
+	for _, name := range []string{registeredName, cadenceName} {
 		srv := getServer(t, cl, name)
 		if srv.Status.ConsecutiveFailures > 10 {
 			t.Errorf("MCPServer %q consecutiveFailures = %d with core unreachable; the counter is counting probes again",

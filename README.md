@@ -84,6 +84,17 @@ list what the operator actually reads.
 
 ### MCPServer
 
+A `mode: remote` MCPServer whose name core does not hold is registered with core
+by the operator (operator 0.17.26, core 2.27.0), and deleting the CR removes it.
+A CR naming a server core already holds, such as one in core's `config.yaml`,
+stays a mirror: the operator neither changes nor deletes it. Core refuses a
+private endpoint, an in-cluster Service included, unless its network is listed
+in core's `ssrf.trusted_networks`; until then the CR is Degraded with reason
+`EndpointNotTrusted`. With auth on, the operator's API key needs
+`mcp_servers:write` to register and `mcp_servers:lifecycle` to deregister;
+`provider-admin` has neither, and the CR says so with reason
+`RegistrationForbidden`. A changed `spec.endpoint` re-registers the server.
+
 | Field | Description | Default |
 |-------|-------------|---------|
 | `spec.mode` | Execution mode: `container` or `remote` | Required |

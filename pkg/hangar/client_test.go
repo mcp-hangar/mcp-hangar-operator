@@ -425,3 +425,53 @@ func TestClient_CallTimeout_BoundsTheWholeCall(t *testing.T) {
 	assert.Less(t, elapsed, 800*time.Millisecond, "the call must give up at CallTimeout, not after every retry")
 	assert.LessOrEqual(t, requests.Load(), int32(2), "no attempt may start once the budget is spent")
 }
+
+// Core's answers to a registration (#164): created, the SSRF refusal, a name
+// it already holds, and anything else.
+func TestClient_RegisterRemoteMCPServer(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		status     int
+		body       string
+		notTrusted bool
+		fails      bool
+	}{
+		{"created", http.StatusCreated, `{"created":true}`, false, false},
+		{"ssrf refused", http.StatusBadRequest, `{"error":"ssrf_blocked"}`, true, true},
+		{"already held", http.StatusUnprocessableEntity,
+			`{"error":{"code":"ValidationError","message":"McpServer already exists: notes"}}`, false, false},
+		{"other 400", http.StatusBadRequest, `{"error":"missing_fields"}`, false, true},
+		{"other 422", http.StatusUnprocessableEntity, `{"error":{"message":"bad endpoint"}}`, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got map[string]string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, http.MethodPost, r.Method)
+				assert.Equal(t, "/api/mcp_servers/", r.URL.Path)
+				_ = json.NewDecoder(r.Body).Decode(&got)
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			err := NewClient(&Config{URL: server.URL, MaxRetries: 1}).
+				RegisterRemoteMCPServer(context.Background(), "notes", "http://notes:8080/mcp")
+
+			assert.Equal(t, map[string]string{"mcp_server_id": "notes", "mode": "remote", "endpoint": "http://notes:8080/mcp"}, got)
+			assert.Equal(t, tc.fails, err != nil, "%v", err)
+			assert.Equal(t, tc.notTrusted, IsEndpointNotTrusted(err))
+		})
+	}
+}
+
+func TestClient_GetMCPServerHealth_NotRegisteredIsTyped(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	_, err := NewClient(&Config{URL: server.URL, MaxRetries: 1}).GetMCPServerHealth(context.Background(), "notes", "default")
+	require.Error(t, err)
+	assert.True(t, IsNotRegistered(err))
+	assert.Contains(t, err.Error(), "not registered with core: default/notes")
+}

@@ -49,6 +49,10 @@ const (
 	AnnotationRegisteredBy = "mcp-hangar.io/registered-by"
 	// RegisteredByOperator is the AnnotationRegisteredBy value this operator writes.
 	RegisteredByOperator = "operator"
+	// AnnotationRegisteredEndpoint is the endpoint this operator registered a
+	// remote server with. Core cannot change a server's endpoint and does not
+	// report it back, so this is how a changed spec.endpoint is noticed (#164).
+	AnnotationRegisteredEndpoint = "mcp-hangar.io/registered-endpoint"
 
 	// Condition types
 	ConditionReady                = "Ready"
@@ -94,6 +98,17 @@ const (
 	ReasonUnrestrictedEgressAllowed = "UnrestrictedEgressAllowed"
 	ReasonCoreAuthRejected          = "CoreAuthRejected"
 	ReasonDeregistrationSkipped     = "DeregistrationSkipped"
+	// ReasonRegistered: the operator added the remote server to core (#164).
+	ReasonRegistered = "Registered"
+	// ReasonEndpointNotTrusted: core refused the endpoint as a private address
+	// outside its ssrf.trusted_networks.
+	ReasonEndpointNotTrusted = "EndpointNotTrusted"
+	// ReasonRegistrationForbidden: core accepted the operator's API key and
+	// refused it the registration (403): its role cannot create servers.
+	ReasonRegistrationForbidden = "RegistrationForbidden"
+	// ReasonRegistrationFailed: core did not take the registration, for a
+	// reason other than the SSRF refusal.
+	ReasonRegistrationFailed = "RegistrationFailed"
 )
 
 // MCPServerReconciler reconciles a MCPServer object
@@ -394,7 +409,13 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 		// Two distinct failures, kept distinct: we could not ask core, or core
 		// says the upstream is failing. The first is our problem, the second is
 		// the upstream's, and conflating them made both unreadable.
+		if err := r.retireStaleRegistration(ctx, mcpServer); err != nil {
+			return ctrl.Result{}, err
+		}
 		health, err := r.HangarClient.GetMCPServerHealth(ctx, mcpServer.Name, mcpServer.Namespace)
+		if hangar.IsNotRegistered(err) {
+			return r.registerRemote(ctx, mcpServer)
+		}
 		if hangar.IsAuthRejected(err) {
 			// Core refused the operator's credentials. That is a deployment
 			// fault, not an outage: re-asking every 10 s changes nothing, and
@@ -491,6 +512,110 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 	}
 
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
+}
+
+// registerRemote adds a remote server core does not hold to core (#164), under
+// the CR's name. Core's answer of 404 is the only way in here: a CR naming a
+// server core already holds -- one its config declares, say -- stays a mirror,
+// and is never marked as the operator's.
+//
+// The CR is marked before core is asked. Marked and not registered is safe:
+// the next reconcile registers it, and a delete in between gets 404 from core.
+// Registered and not marked would leave a server in core that deleting the CR
+// never removes.
+func (r *MCPServerReconciler) registerRemote(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) (ctrl.Result, error) {
+	endpoint := mcpServer.Spec.Endpoint
+	if mcpServer.Annotations[AnnotationRegisteredBy] != RegisteredByOperator ||
+		mcpServer.Annotations[AnnotationRegisteredEndpoint] != endpoint {
+		if err := r.markRegistration(ctx, mcpServer, endpoint); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	err := r.HangarClient.RegisterRemoteMCPServer(ctx, mcpServer.Name, endpoint)
+	mcpServer.Status.Endpoint = endpoint
+	requeueAfter := errorRequeueAfter
+	switch {
+	case err == nil:
+		mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
+		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonRegistered, ActionReconcile,
+			"Registered %q with core at %s", mcpServer.Name, endpoint)
+		setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, ReasonRegistered,
+			"Registered with core; waiting for its first health check")
+	case hangar.IsEndpointNotTrusted(err):
+		// A setting in core, not an outage: re-asking every 10 s changes
+		// nothing until someone edits core's config. One Warning on the
+		// transition, then the steady cadence.
+		mcpServer.Status.State = mcpv1alpha2.MCPServerStateDegraded
+		msg := fmt.Sprintf("core refused %s as a private address it does not trust; add its network to "+
+			"ssrf.trusted_networks in core's config (core 2.27.0 or newer)", endpoint)
+		if conditionChanges(mcpServer.Status.Conditions, ConditionDegraded, metav1.ConditionTrue, ReasonEndpointNotTrusted) {
+			r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonEndpointNotTrusted, ActionReconcile, "%s", msg)
+		}
+		setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, ReasonEndpointNotTrusted, msg)
+		requeueAfter = readyRequeueAfter
+	case hangar.IsForbidden(err):
+		// The key is valid -- the health read just succeeded with it -- and
+		// its role cannot create servers. provider-admin, the role the docs
+		// give an operator key, is one such role.
+		mcpServer.Status.State = mcpv1alpha2.MCPServerStateDegraded
+		msg := "core refused the registration to the operator's API key: its role needs mcp_servers:write " +
+			"to register and mcp_servers:lifecycle to deregister, which provider-admin does not have"
+		if conditionChanges(mcpServer.Status.Conditions, ConditionDegraded, metav1.ConditionTrue, ReasonRegistrationForbidden) {
+			r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonRegistrationForbidden, ActionReconcile, "%s", msg)
+		}
+		setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, ReasonRegistrationForbidden, msg)
+		requeueAfter = readyRequeueAfter
+	case hangar.IsAuthRejected(err):
+		mcpServer.Status.State = mcpv1alpha2.MCPServerStateDegraded
+		setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, ReasonCoreAuthRejected,
+			"core rejected the operator's credentials (check the API key): "+err.Error())
+		requeueAfter = readyRequeueAfter
+	default:
+		mcpServer.Status.State = mcpv1alpha2.MCPServerStateDegraded
+		if conditionChanges(mcpServer.Status.Conditions, ConditionDegraded, metav1.ConditionTrue, ReasonRegistrationFailed) {
+			r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonRegistrationFailed, ActionReconcile,
+				"Could not register %q with core: %v", mcpServer.Name, err)
+		}
+		setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, ReasonRegistrationFailed, err.Error())
+	}
+	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, string(mcpServer.Status.State))
+	if err := writeStatus(ctx, r.Client, mcpServer); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: requeueAfter}, nil
+}
+
+// retireStaleRegistration deregisters a server this operator registered at an
+// endpoint the spec no longer names. Core has no way to change an endpoint, so
+// the server is removed and registered again. Deregistered first and the mark
+// moved second: a crash between the two leaves the old endpoint in the mark,
+// and the next reconcile repeats the delete, which core answers 404.
+func (r *MCPServerReconciler) retireStaleRegistration(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) error {
+	registered, marked := mcpServer.Annotations[AnnotationRegisteredEndpoint]
+	if mcpServer.Annotations[AnnotationRegisteredBy] != RegisteredByOperator || !marked ||
+		registered == mcpServer.Spec.Endpoint {
+		return nil
+	}
+	if err := r.HangarClient.DeregisterMCPServer(ctx, mcpServer.Name, mcpServer.Namespace); err != nil {
+		return err
+	}
+	r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonUpdated, ActionReconcile,
+		"Removed %q from core to register it again: its endpoint changed from %s to %s",
+		mcpServer.Name, registered, mcpServer.Spec.Endpoint)
+	return r.markRegistration(ctx, mcpServer, mcpServer.Spec.Endpoint)
+}
+
+// markRegistration records on the CR that this operator registers its server
+// in core, and at which endpoint.
+func (r *MCPServerReconciler) markRegistration(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer, endpoint string) error {
+	before := mcpServer.DeepCopy()
+	if mcpServer.Annotations == nil {
+		mcpServer.Annotations = map[string]string{}
+	}
+	mcpServer.Annotations[AnnotationRegisteredBy] = RegisteredByOperator
+	mcpServer.Annotations[AnnotationRegisteredEndpoint] = endpoint
+	return r.Patch(ctx, mcpServer, client.MergeFrom(before))
 }
 
 // reconcileNetworkPolicy ensures the NetworkPolicy for a provider matches its capabilities.
