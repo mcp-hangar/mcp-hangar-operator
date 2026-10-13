@@ -98,6 +98,8 @@ func exercise(ctx context.Context, c *Client) {
 	_, _ = c.SetL7Policy(ctx, "srv", &L7PolicyPayload{})
 	_ = c.ClearL7Policy(ctx, "srv")
 	_ = c.DeregisterMCPServer(ctx, "srv", "ns")
+	_ = c.RegisterRemoteMCPServer(ctx, "srv", "http://srv:8080/mcp")
+	_ = c.StartMCPServer(ctx, "srv")
 	_ = c.Ping(ctx)
 }
 
@@ -198,6 +200,8 @@ func TestTheInventoryStillDescribesTheRoutesWeDependOn(t *testing.T) {
 		"/api/mcp_servers/{mcp_server_id}/health",
 		"/api/mcp_servers/{mcp_server_id}/tools",
 		"/api/mcp_servers/{mcp_server_id}/l7_policy",
+		"/api/mcp_servers/",
+		"/api/mcp_servers/{mcp_server_id}/start",
 	}
 
 	paths := map[string]bool{}

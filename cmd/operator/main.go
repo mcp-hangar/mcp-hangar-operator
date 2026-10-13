@@ -246,11 +246,21 @@ func main() {
 	}
 
 	// Register MCPServer controller.
+	// Claims on core's server names, kept in this operator's own namespace
+	// (#164). Without one the operator registers nothing and only mirrors.
+	var claims *controller.RegistrationClaims
+	if ns := controller.RegistrationNamespace(); ns != "" {
+		claims = &controller.RegistrationClaims{Client: mgr.GetClient(), Reader: mgr.GetAPIReader(), Namespace: ns}
+	} else if hangarClient != nil {
+		setupLog.Info("no POD_NAMESPACE or service account namespace; remote MCPServers will not be registered with core")
+	}
+
 	if err := (&controller.MCPServerReconciler{
 		Client:                  mgr.GetClient(),
 		Scheme:                  mgr.GetScheme(),
 		Recorder:                mgr.GetEventRecorder("mcpserver-controller"),
 		HangarClient:            hangarClient,
+		Claims:                  claims,
 		EnforcementProbe:        enforcementProbe,
 		MaxConcurrentReconciles: maxConcurrent,
 	}).SetupWithManager(mgr); err != nil {

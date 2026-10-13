@@ -79,20 +79,21 @@ func TestMCPServer_Delete_RemoteMirrorLeavesCoreAlone(t *testing.T) {
 	assert.Contains(t, strings.Join(reasons, "\n"), ReasonDeregistrationSkipped)
 }
 
-// A remote CR the operator registered itself is still removed from core.
-func TestMCPServer_Delete_RemoteRegisteredByOperatorIsDeregistered(t *testing.T) {
+// The annotation #202 read is no longer what makes a server the CR's: a CR
+// anyone can edit could claim another namespace's server with it (#164).
+func TestMCPServer_Delete_TheOldAnnotationIsNotAClaim(t *testing.T) {
 	fc := &fakeCore{}
 	core := fc.server(t)
 	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "owned", Namespace: "default", UID: "uid-202b",
 			Finalizers:  []string{finalizerName},
-			Annotations: map[string]string{AnnotationRegisteredBy: RegisteredByOperator}},
+			Annotations: map[string]string{"mcp-hangar.io/registered-by": "operator"}},
 		Spec: mcpv1alpha2.MCPServerSpec{Mode: mcpv1alpha2.MCPServerModeRemote, Endpoint: "http://owned:8080"},
 	}
 
 	deleteMCPServerAgainst(t, core, p)
 
-	assert.Equal(t, []string{"/api/mcp_servers/owned"}, fc.deleted())
+	assert.Empty(t, fc.deleted())
 }
 
 // A container-mode server is in core because of the pod this operator ran, so

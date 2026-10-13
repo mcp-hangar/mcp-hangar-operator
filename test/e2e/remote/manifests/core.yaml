@@ -38,6 +38,11 @@ data:
       # discovered server whose health check fails (#306).
       security:
         require_health_check: false
+    # The kind Service range up.sh pins: the operator registers a remote
+    # MCPServer that names an in-cluster Service, and core refuses a private
+    # endpoint it does not trust (#164, core 2.27.0).
+    ssrf:
+      trusted_networks: ["10.96.0.0/16"]
     mcp_servers:
       backend:
         mode: remote
@@ -62,7 +67,7 @@ spec:
       serviceAccountName: mcp-hangar
       containers:
         - name: core
-          image: ghcr.io/mcp-hangar/mcp-hangar:2.25.0
+          image: ghcr.io/mcp-hangar/mcp-hangar:2.27.0
           # args, NOT command: the image's ENTRYPOINT is `mcp-hangar` and its
           # CMD is the serve arguments. Kubernetes `command` replaces the
           # ENTRYPOINT (compose's `command` replaces CMD, which is why the

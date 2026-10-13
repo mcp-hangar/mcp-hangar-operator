@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mcp-hangar/operator/pkg/metrics"
@@ -100,6 +101,13 @@ func TLSConfigFromCAFile(caFile, serverName string) (*tls.Config, error) {
 func IsAuthRejected(err error) bool {
 	var se *StatusError
 	return errors.As(err, &se) && (se.StatusCode == http.StatusUnauthorized || se.StatusCode == http.StatusForbidden)
+}
+
+// IsForbidden reports whether core authenticated the caller and refused the
+// call to its role (403), as against refusing its credentials (401).
+func IsForbidden(err error) bool {
+	var se *StatusError
+	return errors.As(err, &se) && se.StatusCode == http.StatusForbidden
 }
 
 // DefaultConfig returns default client configuration
@@ -313,7 +321,7 @@ func (c *Client) GetMCPServerHealth(ctx context.Context, name, namespace string)
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("mcp server not registered with core: %s/%s", namespace, name)
+		return nil, fmt.Errorf("%w: %s/%s", ErrNotRegistered, namespace, name)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -433,6 +441,87 @@ func (c *Client) ClearL7Policy(ctx context.Context, mcpServerID string) (err err
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("clear L7 policy failed with status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// ErrNotRegistered is core answering 404 for a server name: it holds no server
+// by that name.
+var ErrNotRegistered = errors.New("mcp server not registered with core")
+
+// IsNotRegistered reports whether err is core saying it holds no such server.
+func IsNotRegistered(err error) bool {
+	return errors.Is(err, ErrNotRegistered)
+}
+
+// ErrEndpointNotTrusted is core refusing a remote endpoint under its SSRF
+// policy: the endpoint resolves to a private address outside core's
+// ssrf.trusted_networks (core 2.27.0 and newer can trust one).
+var ErrEndpointNotTrusted = errors.New("core refused the endpoint as a private address it does not trust")
+
+// IsEndpointNotTrusted reports whether err is core's SSRF refusal.
+func IsEndpointNotTrusted(err error) bool {
+	return errors.Is(err, ErrEndpointNotTrusted)
+}
+
+// ErrAlreadyRegistered is core refusing a registration because it holds a
+// server by that name.
+var ErrAlreadyRegistered = errors.New("core already holds a server by that name")
+
+// IsAlreadyRegistered reports whether err is core refusing a name it holds.
+func IsAlreadyRegistered(err error) bool {
+	return errors.Is(err, ErrAlreadyRegistered)
+}
+
+// RegisterRemoteMCPServer adds a remote server to core under name, with
+// POST /api/mcp_servers/.
+func (c *Client) RegisterRemoteMCPServer(ctx context.Context, name, endpoint string) (err error) {
+	defer c.observe("register")(&err)
+	ctx, cancel := c.bound(ctx)
+	defer cancel()
+	// The path as core's route inventory publishes it, slash included.
+	url := fmt.Sprintf("%s/api/mcp_servers/", c.baseURL)
+
+	body, err := json.Marshal(map[string]string{"mcp_server_id": name, "mode": "remote", "endpoint": endpoint})
+	if err != nil {
+		return fmt.Errorf("failed to marshal registration: %w", err)
+	}
+
+	resp, err := c.doWithRetry(ctx, http.MethodPost, url, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	switch {
+	case resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK:
+		return nil
+	case resp.StatusCode == http.StatusBadRequest && strings.Contains(string(respBody), "ssrf_blocked"):
+		return fmt.Errorf("%w: %s", ErrEndpointNotTrusted, endpoint)
+	case resp.StatusCode == http.StatusUnprocessableEntity && strings.Contains(string(respBody), "already exists"):
+		return fmt.Errorf("%w: %s", ErrAlreadyRegistered, name)
+	}
+	return fmt.Errorf("registration failed: %w", &StatusError{StatusCode: resp.StatusCode, Body: string(respBody)})
+}
+
+// StartMCPServer has core start a server, which for a remote one means
+// connecting to it.
+func (c *Client) StartMCPServer(ctx context.Context, name string) (err error) {
+	defer c.observe("start")(&err)
+	ctx, cancel := c.bound(ctx)
+	defer cancel()
+	url := fmt.Sprintf("%s/api/mcp_servers/%s/start", c.baseURL, name)
+
+	resp, err := c.doWithRetry(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("start failed: %w", &StatusError{StatusCode: resp.StatusCode, Body: string(body)})
 	}
 	return nil
 }

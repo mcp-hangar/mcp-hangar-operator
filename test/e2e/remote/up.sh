@@ -11,7 +11,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 CLUSTER="${E2E_REMOTE_CLUSTER:-mcp-remote-e2e}"
-CORE_REF="${CORE_REF:-v2.25.0}"
+CORE_REF="${CORE_REF:-v2.27.0}"
 BACKEND_IMAGE="localhost/mcp-task-upstream:e2e"
 OPERATOR_IMAGE="localhost/mcp-hangar-operator:e2e"
 KCTL=(kubectl --context "kind-${CLUSTER}")
@@ -29,7 +29,9 @@ if ! kind get clusters 2>/dev/null | grep -qx "${CLUSTER}"; then
   # Plain kind, default CNI: unlike the reachability e2e, nothing here needs
   # NetworkPolicy enforcement. KIND_NODE_IMAGE is optional and lets CI pin the
   # same node image the crd-install job pins.
-  printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\ncontainerdConfigPatches:\n- |-\n  [plugins."io.containerd.grpc.v1.cri".registry]\n    config_path = "/etc/containerd/certs.d"\n' \
+  # The Service range is pinned, not left to kind's default, because core's
+  # ssrf.trusted_networks in manifests/core.yaml names it (#164).
+  printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  serviceSubnet: 10.96.0.0/16\ncontainerdConfigPatches:\n- |-\n  [plugins."io.containerd.grpc.v1.cri".registry]\n    config_path = "/etc/containerd/certs.d"\n' \
     | kind create cluster --name "${CLUSTER}" ${KIND_NODE_IMAGE:+--image "${KIND_NODE_IMAGE}"} --config -
 fi
 for node in $(kind get nodes --name "${CLUSTER}"); do
