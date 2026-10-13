@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.17.27](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.26...v0.17.27) (2026-10-13)
+
+### Added
+
+- **api:** `spec.healthPath` on MCPServer, the path core's discovery probes on a
+  container-mode server's pod, stamped as `mcp-hangar.io/health-path`. Unset,
+  core's default `/health` applies; since core 2.27.1 a 404 there falls back to an
+  MCP `initialize` on `/mcp`, so a server without a health endpoint is no longer
+  quarantined. The remote e2e now runs core's discovery with its health check on ([#322](https://github.com/mcp-hangar/mcp-hangar-operator/pull/322))
+
 ## [0.17.26](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.25...v0.17.26) (2026-10-13)
 
 ### Added
