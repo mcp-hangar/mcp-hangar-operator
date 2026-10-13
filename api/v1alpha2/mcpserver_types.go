@@ -62,6 +62,16 @@ type MCPServerSpec struct {
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
 
+	// HealthPath is the HTTP path core's discovery probes on a container-mode
+	// server's pod before it registers the server, stamped on the pod as
+	// mcp-hangar.io/health-path. Unset, core probes /health, and since core
+	// 2.27.1 accepts an MCP initialize on /mcp when /health answers 404. Set it
+	// when the server's health endpoint lives elsewhere.
+	// +kubebuilder:validation:MaxLength=256
+	// +kubebuilder:validation:Pattern=`^/[^\s?#]*$`
+	// +optional
+	HealthPath string `json:"healthPath,omitempty"`
+
 	// Replicas switches the server on (1) or off (0). A server runs at most one
 	// pod; values above 1 were accepted before and silently ran one (#192).
 	// +kubebuilder:default=1

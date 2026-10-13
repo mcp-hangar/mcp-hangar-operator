@@ -1622,6 +1622,16 @@ spec:
                           - name
                           type: object
                         type: array
+                      healthPath:
+                        description: |-
+                          HealthPath is the HTTP path core's discovery probes on a container-mode
+                          server's pod before it registers the server, stamped on the pod as
+                          mcp-hangar.io/health-path. Unset, core probes /health, and since core
+                          2.27.1 accepts an MCP initialize on /mcp when /health answers 404. Set it
+                          when the server's health endpoint lives elsewhere.
+                        maxLength: 256
+                        pattern: ^/[^\s?#]*$
+                        type: string
                       image:
                         description: Image is the container image for the provider
                           (required for container mode)
