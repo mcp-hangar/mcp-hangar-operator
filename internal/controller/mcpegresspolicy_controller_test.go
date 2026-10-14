@@ -49,6 +49,7 @@ func testPolicy(name, ns string) *mcpv1alpha2.MCPEgressPolicy {
 	return &mcpv1alpha2.MCPEgressPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: mcpv1alpha2.MCPEgressPolicySpec{
+			Mode:      mcpv1alpha2.EgressPolicyModeEnforce,
 			TargetRef: mcpv1alpha2.EgressTargetRef{Kind: "MCPServer", Name: "srv"},
 		},
 	}

@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -189,4 +190,74 @@ func conditionTrue(conds []metav1.Condition, condType string) bool {
 		}
 	}
 	return false
+}
+
+// The same policy must observe, block, and observe again as mode changes.
+// This namespace has no independent default-deny/capability policy.
+func TestOperator_AuditEnforceAudit_Reachability(t *testing.T) {
+	cs, cl := clientset(t), crClient(t)
+	ns := namespace(t, cs, nil)
+	destination := runningPod(t, cs, ns, "destination", nil, []string{"nc -lk -p 8080 -e /bin/true"})
+	createCR(t, cl, coldServer("target", ns, nil))
+	policy := &mcpv1alpha2.MCPEgressPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "transition", Namespace: ns},
+		Spec: mcpv1alpha2.MCPEgressPolicySpec{
+			Mode:      mcpv1alpha2.EgressPolicyModeAudit,
+			TargetRef: mcpv1alpha2.EgressTargetRef{Kind: "MCPServer", Name: "target"},
+		},
+	}
+	createCR(t, cl, policy)
+	stages := []struct {
+		mode      mcpv1alpha2.EgressPolicyMode
+		action    mcpv1alpha2.EgressPolicyAction
+		reachable bool
+	}{
+		{mcpv1alpha2.EgressPolicyModeAudit, mcpv1alpha2.EgressActionDeny, true},
+		{mcpv1alpha2.EgressPolicyModeEnforce, mcpv1alpha2.EgressActionDeny, false},
+		{mcpv1alpha2.EgressPolicyModeAudit, mcpv1alpha2.EgressActionDeny, true},
+		{mcpv1alpha2.EgressPolicyModeEnforce, mcpv1alpha2.EgressActionAllow, true},
+		{mcpv1alpha2.EgressPolicyModeEnforce, mcpv1alpha2.EgressActionAllow, false},
+	}
+	for i, stage := range stages {
+		if i == 4 {
+			// Default Allow must not widen an independently-owned deny policy.
+			applyPolicy(t, cs, &networkingv1.NetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "independent", Namespace: ns},
+				Spec: networkingv1.NetworkPolicySpec{
+					PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{networkpolicy.LabelProvider: "target"}},
+					PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+				},
+			})
+		}
+		key := types.NamespacedName{Name: policy.Name, Namespace: ns}
+		if err := cl.Get(context.Background(), key, policy); err != nil {
+			t.Fatal(err)
+		}
+		policy.Spec.Mode, policy.Spec.DefaultAction = stage.mode, stage.action
+		if err := cl.Update(context.Background(), policy); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(operatorSettle)
+		for {
+			if err := cl.Get(context.Background(), key, policy); err != nil {
+				t.Fatal(err)
+			}
+			wantApplied := stage.mode == mcpv1alpha2.EgressPolicyModeEnforce && stage.action != mcpv1alpha2.EgressActionAllow
+			if policy.Status.ObservedGeneration == policy.Generation && conditionTrue(policy.Status.Conditions, "BackstopApplied") == wantApplied {
+				if wantApplied || policy.Status.BackstopEnforcement == mcpv1alpha2.BackstopDisabled {
+					break
+				}
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("stage %d did not converge: %+v", i, policy.Status)
+			}
+			time.Sleep(2 * time.Second)
+		}
+		time.Sleep(policySettle)
+		// Every probe uses a new pod/connection, so conntrack cannot mask a deny.
+		got := canReach(t, cs, ns, fmt.Sprintf("stage-%d", i), map[string]string{networkpolicy.LabelProvider: "target"}, destination.Status.PodIP, 8080)
+		if got != stage.reachable {
+			t.Errorf("stage %d (%s/%s): reachable=%v, want %v", i, stage.mode, stage.action, got, stage.reachable)
+		}
+	}
 }
