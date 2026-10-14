@@ -467,6 +467,10 @@ func testL7Delivered(t *testing.T, cl crclient.Client) {
 		Spec: mcpv1alpha2.MCPEgressPolicySpec{
 			TargetRef:     mcpv1alpha2.EgressTargetRef{Kind: "MCPServer", Name: registeredName},
 			DefaultAction: mcpv1alpha2.EgressActionAllow,
+			// Enforce, not the default: an unset mode compiles to Audit, which
+			// core records without refusing, so the refusal asserted below
+			// would never come (#331).
+			Mode: mcpv1alpha2.EgressPolicyModeEnforce,
 			Upstreams: []mcpv1alpha2.UpstreamRule{{
 				Name:  "task-upstream",
 				Match: mcpv1alpha2.UpstreamMatch{Host: "task-upstream.hangar-e2e.svc.cluster.local"},
