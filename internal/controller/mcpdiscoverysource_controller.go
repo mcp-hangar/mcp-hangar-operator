@@ -340,6 +340,14 @@ func (r *MCPDiscoverySourceReconciler) discoverNamespace(ctx context.Context, so
 		return discovered, nil, nil
 	}
 
+	// Every server this type yields is remote, and a namespace names no Service
+	// to dial, so the endpoint can only come from the template. The CRD refuses
+	// a source without one (#329); this covers a source stored before that rule,
+	// which would otherwise create MCPServers the apiserver then refuses.
+	if tpl := source.Spec.MCPServerTemplate; tpl == nil || tpl.Spec == nil || tpl.Spec.Endpoint == "" {
+		return discovered, []string{"type Namespace needs spec.providerTemplate.spec.endpoint: a namespace names no Service to dial"}, nil
+	}
+
 	// Build list options from MatchLabels
 	listOpts := []client.ListOption{}
 	if len(source.Spec.NamespaceSelector.MatchLabels) > 0 {

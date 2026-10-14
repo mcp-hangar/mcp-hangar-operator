@@ -9,3 +9,12 @@ spec:
   type: Namespace
   mode: Additive
   paused: false
+  # A namespace names no Service, so the endpoint every discovered server dials
+  # comes from the template (#329).
+  namespaceSelector:
+    matchLabels:
+      mcp-hangar.io/discover: "true"
+  providerTemplate:
+    spec:
+      mode: remote
+      endpoint: http://mcp-gateway.mcp-system.svc.cluster.local:8080/mcp

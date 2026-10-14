@@ -131,6 +131,7 @@ Traffic is not routed through it.
 | `spec.type` | Discovery type: Namespace, ConfigMap, Annotations, ServiceDiscovery | Required |
 | `spec.mode` | Discovery mode: Additive, Authoritative | `Additive` |
 | `spec.refreshInterval` | Rescan interval | `1m` when unset (operator default) |
+| `spec.providerTemplate.spec.endpoint` | Required when `type` is `Namespace`: a namespace names no Service, so every remote server it yields dials this endpoint | — |
 
 ## Enforcement
 

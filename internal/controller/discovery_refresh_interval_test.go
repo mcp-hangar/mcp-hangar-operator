@@ -11,6 +11,8 @@ import (
 func discoverySourceWithInterval(name string, interval any) *unstructured.Unstructured {
 	u := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{
 		"type": "Namespace", "refreshInterval": interval,
+		// The endpoint a Namespace source needs (#329); the interval is what these tests are about.
+		"providerTemplate": map[string]any{"spec": map[string]any{"mode": "remote", "endpoint": "http://gateway:8080/mcp"}},
 	}}}
 	u.SetGroupVersionKind(schema.GroupVersionKind{Group: "mcp-hangar.io", Version: "v1alpha2", Kind: "MCPDiscoverySource"})
 	u.SetName(name)
