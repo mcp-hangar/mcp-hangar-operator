@@ -366,6 +366,7 @@ spec:
                 - Unverified
                 - Disabled
                 - Pending
+                - NotApplicable
                 type: string
               conditions:
                 description: |-
