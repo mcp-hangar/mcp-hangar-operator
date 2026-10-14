@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.17.28](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.27...v0.17.28) (2026-10-14)
+
+### Fixed
+
+- **controller:** an MCPEgressPolicy whose target is a `mode: remote` MCPServer, or a
+  group of only remote servers, no longer reports `BackstopApplied=True` and
+  `backstopEnforcement: Enforcing`. A remote server has no pods, so the
+  NetworkPolicy built from its selector selected nothing. No backstop is written (and
+  one left behind is removed); the policy reports `BackstopApplied=False` with
+  reason `RemoteTargetHasNoPods` and `backstopEnforcement: NotApplicable`, and the L7
+  rules are still delivered to core ([#338](https://github.com/mcp-hangar/mcp-hangar-operator/pull/338))
+
 ## [0.17.27](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.26...v0.17.27) (2026-10-13)
 
 ### Added
