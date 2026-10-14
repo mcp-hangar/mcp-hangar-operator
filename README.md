@@ -95,9 +95,10 @@ stays a mirror: the operator neither changes nor deletes it. Core refuses a
 private endpoint, an in-cluster Service included, unless its network is listed
 in core's `ssrf.trusted_networks`; until then the CR is Degraded with reason
 `EndpointNotTrusted`. With auth on, the operator's API key needs
-`mcp_servers:write` to register and `mcp_servers:lifecycle` to start and
-deregister; `provider-admin` has neither, and the CR says so with reason
-`RegistrationForbidden`. A changed `spec.endpoint` re-registers the server.
+`mcp_servers:write` to register, `mcp_servers:lifecycle` to start and
+deregister, and `policy:write` to deliver egress policy. Only core's `admin`
+role holds all three today: `provider-admin` lacks the first two and the CR
+says so with reason `RegistrationForbidden`; `developer` lacks `policy:write`. A changed `spec.endpoint` re-registers the server.
 
 | Field | Description | Default |
 |-------|-------------|---------|
