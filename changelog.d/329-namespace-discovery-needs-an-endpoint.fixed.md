@@ -1,1 +1,0 @@
-An `MCPDiscoverySource` of `type: Namespace` without `spec.providerTemplate.spec.endpoint` is now refused at admission, with a message naming the field. It used to yield `mode: remote` MCPServers with no endpoint, which the MCPServer CEL rules refused on every scan (#329). The sample and the README show the field.
