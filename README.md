@@ -223,6 +223,13 @@ backstop it just wrote has no reader. The policy is also `Degraded` with reason
 looked for. `Unverified` means the operator could not tell (it may not list
 DaemonSets, say) -- doubt, recorded but not degraded.
 
+`NotApplicable` (with `BackstopApplied=False`, reason `RemoteTargetHasNoPods`)
+means the target runs no pods: a `mode: remote` server is an address core dials,
+and its traffic leaves from the gateway pod, so there is nothing a network policy
+could select and none is written. For a remote target the L7 rules in core are
+the only enforcement; control of the network path is the gateway pod's own egress
+policy. A group is `NotApplicable` only when every member is remote.
+
 The look is evidence, not proof: an agent can be installed and broken. For a
 CNI this operator does not recognize, or the reverse, override it:
 
