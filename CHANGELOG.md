@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.29](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.28...v0.17.29) (2026-10-14)
+
+### Fixed
+
+- An `MCPDiscoverySource` of `type: Namespace` without `spec.providerTemplate.spec.endpoint` is now refused at admission, with a message naming the field. It used to yield `mode: remote` MCPServers with no endpoint, which the MCPServer CEL rules refused on every scan (#329). The sample and the README show the field. ([#341](https://github.com/mcp-hangar/mcp-hangar-operator/pull/341))
+
 ## [0.17.28](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.27...v0.17.28) (2026-10-14)
 
 ### Fixed
