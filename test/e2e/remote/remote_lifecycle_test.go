@@ -18,7 +18,9 @@
 //     names the setting, not a bare 400, and a mistyped Service is never
 //     Ready (#164);
 //   - an MCPEgressPolicy's L7 half is held by core, read back from core's own
-//     l7_policy route, not only reported on the CR (#208);
+//     l7_policy route, not only reported on the CR (#208), and ENFORCED: an MCP
+//     client calling the denied tool through the gateway is refused, and the
+//     same client calling an allowed tool succeeds (#331);
 //   - deleting a remote CR that mirrors a config-defined server leaves that
 //     server in core (#202);
 //   - a container-mode CR runs a pod the operator stamps with the discovery
@@ -36,6 +38,7 @@ package remote
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"strings"
@@ -506,6 +509,68 @@ func testL7Delivered(t *testing.T, cl crclient.Client) {
 		t.Fatalf("core's l7_policy for %q does not deny %q, so the operator's claim is not what core holds: %s",
 			registeredName, l7DeniedTool, body)
 	}
+
+	// Holding the policy is not enforcing it: the outcome the product exists
+	// for is a refused tools/call. Both directions are asserted, so a gateway
+	// that refuses everything (or nothing) fails one of them (#331).
+	allowed := gatewayCall(t, l7AllowedTool)
+	if !allowed.Success {
+		t.Errorf("tool %q is not denied by the policy, but the gateway refused it: %+v", l7AllowedTool, allowed)
+	}
+	denied := gatewayCall(t, l7DeniedTool)
+	if denied.Success || denied.ErrorType != "EgressPolicyDeniedError" {
+		t.Errorf("tool %q is denied by the policy; the gateway answered %+v, want an EgressPolicyDeniedError refusal",
+			l7DeniedTool, denied)
+	}
+}
+
+// l7AllowedTool is a tool of the backend the test's policy does not mention.
+const l7AllowedTool = "echo"
+
+// gatewayResult is the one entry of hangar_call's `results` the test reads.
+type gatewayResult struct {
+	Success   bool   `json:"success"`
+	Error     string `json:"error"`
+	ErrorType string `json:"error_type"`
+}
+
+// gatewayCall calls tool on the backend the way an MCP client does: over the
+// gateway's streamable-HTTP endpoint, through hangar_call. It runs inside the
+// core pod because the port is not published and core rejects a Host it does
+// not trust; the image ships the MCP SDK it serves with, so the client is the
+// SDK's own.
+func gatewayCall(t *testing.T, tool string) gatewayResult {
+	t.Helper()
+	pod, err := exec.Command("kubectl", "-n", stackNamespace, "get", "pod", "-l", "app=mcp-hangar",
+		"-o", "jsonpath={.items[0].metadata.name}").Output()
+	if err != nil {
+		t.Fatalf("find core pod: %v", err)
+	}
+	script := `import asyncio, json, sys
+from mcp.client.session import ClientSession
+from mcp.client.streamable_http import streamable_http_client
+
+async def main(server, tool):
+    async with streamable_http_client("http://localhost:8080/mcp") as (read, write, *_):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            res = await session.call_tool("hangar_call", {"calls": [{"mcp_server": server, "tool": tool, "arguments": {"text": "hi"}}]})
+            print(json.dumps(json.loads(res.content[0].text)["results"][0]))
+
+asyncio.run(main(sys.argv[1], sys.argv[2]))
+`
+	out, err := exec.Command("kubectl", "-n", stackNamespace, "exec", string(pod), "--",
+		"python3", "-c", script, registeredName, tool).CombinedOutput()
+	if err != nil {
+		t.Fatalf("hangar_call %s in core: %v: %s", tool, err, out)
+	}
+	t.Logf("hangar_call %s: %s", tool, strings.TrimSpace(string(out)))
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var res gatewayResult
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &res); err != nil {
+		t.Fatalf("hangar_call %s: unreadable answer %q: %v", tool, out, err)
+	}
+	return res
 }
 
 // testDeleteMirror deletes the "backend" CR, which mirrors a server core has
