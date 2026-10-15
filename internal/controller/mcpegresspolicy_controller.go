@@ -183,7 +183,26 @@ func (r *MCPEgressPolicyReconciler) reconcile(ctx context.Context, policy *mcpv1
 		return *done, nil
 	}
 
-	if policy.Spec.NetworkBackstop != nil && !policy.Spec.NetworkBackstop.Generate {
+	if policy.Spec.Mode == "" || policy.Spec.Mode == mcpv1alpha2.EgressPolicyModeAudit || policy.Spec.DefaultAction == mcpv1alpha2.EgressActionAllow {
+		reason, message := "AuditMode", "Audit observes without generating a network backstop"
+		if policy.Spec.Mode == mcpv1alpha2.EgressPolicyModeEnforce {
+			reason, message = "DefaultAllow", "defaultAction=Allow does not generate a restricting network backstop"
+		}
+		// Neither Audit nor default Allow narrows outbound destinations.
+		// An allow-all policy would widen independent NetworkPolicies (union).
+		// Remove both flavors so Enforce -> Audit also restores that contract.
+		if err := r.deleteBackstopIfExists(ctx, policy); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.deleteCiliumBackstopIfExists(ctx, policy, r.ciliumAvailable()); err != nil {
+			return ctrl.Result{}, err
+		}
+		r.setCondition(policy, EgressPolicyConditionCompiled, metav1.ConditionTrue, "Compiled", "Policy compiled")
+		r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionFalse,
+			reason, message)
+		r.setNoBackstop(policy, mcpv1alpha2.BackstopDisabled, reason, message)
+		r.clearDegraded(policy)
+	} else if policy.Spec.NetworkBackstop != nil && !policy.Spec.NetworkBackstop.Generate {
 		// Backstop generation opted out: remove any backstop, report
 		// not-applied. The L7 rules are a separate layer and are still
 		// delivered; returning here used to drop them with the backstop (#228).
