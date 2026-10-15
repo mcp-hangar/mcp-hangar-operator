@@ -1,5 +1,31 @@
 # Upgrade notes
 
+## Upgrade to 0.17.30
+
+### Audit policies stop generating a blocking network backstop
+
+After upgrading the operator, an MCPEgressPolicy in Audit (including an omitted mode) removes its policy-owned NetworkPolicy or CiliumNetworkPolicy. Status reports BackstopApplied=False with reason AuditMode and backstopEnforcement=Disabled. L7 policy delivery continues in Audit.
+
+Use mode: Enforce with defaultAction: Deny when the policy must restrict outbound destinations. Enforce with defaultAction: Allow now omits the policy-owned backstop (reason DefaultAllow, backstopEnforcement=Disabled); the previous allow-list backstop silently contradicted that setting. No allow-all NetworkPolicy is installed, because Kubernetes unions allow rules and it could widen other policies. Core still evaluates the configured MCP rules. Other namespace/provider policies remain independent and can still block traffic.
+
+The new behavior does not add an ingress fence, revoke existing connections or prove that traffic cannot bypass core. Verify actual reachability on the deployment's CNI before treating a status condition as acceptance evidence.
+
+### Provider ingress isolation is opt-in
+
+Existing installs are unchanged. Configure --provider-ingress-gateway-namespace with the actual gateway namespace and --hangar-gateway-selector with its pod labels. Then set --provider-ingress-enabled=true for container MCPServers globally, or annotate selected MCPServers with mcp-hangar.io/provider-ingress: "true". An explicit "false" opts out even under the global setting and removes the owned ingress policy.
+
+The peer combines namespace and pod selectors; matching labels in another namespace do not grant access. Only TCP/8080 (the provider discovery port) is opened. Remote targets report NotApplicable. Empty peer configuration is refused when isolation is requested. Do not widen the peer to the whole namespace to accommodate health probes; verify actual probe behavior on the CNI.
+
+ProviderIngressApplied=True records a written policy and observed enforcement engine, not an exclusive end-to-end guarantee. Other Kubernetes NetworkPolicies may widen ingress through their additive allow rules. Verify gateway allow, non-gateway deny and actual probe behavior before adoption. Existing connections and node/host-network traffic follow CNI-specific semantics; this does not revoke established sessions or isolate a compromised node.
+
+This release deliberately does not distinguish new objects from existing objects or enable isolation by default. A default-on migration requires a separate decision. Changing the operator image/configuration requires reconciling existing MCPServers before treating the new status as acceptance evidence.
+
+### The operator's core key needs `admin` to register servers and deliver policy
+
+This corrects the 0.17.26 note, which said `developer` and `admin` hold what the operator needs. With auth on, the operator's API key needs `mcp_servers:write`, `mcp_servers:lifecycle` and `policy:write`. In core's built-in roles only `admin` holds all three: `developer` has the first two and the L7 policy push gets `403`, and `provider-admin` has the last and registration gets `403` (`RegistrationForbidden`).
+
+Until core ships a narrower role, use an `admin` key if the operator registers remote servers. An operator that only delivers policy still works with `provider-admin`.
+
 ## Upgrade to 0.17.29
 
 ### `type: Namespace` discovery sources need a template endpoint
