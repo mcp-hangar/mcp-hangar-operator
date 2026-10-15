@@ -48,25 +48,27 @@ func init() {
 
 func main() {
 	var (
-		metricsAddr             string
-		healthProbeAddr         string
-		enableLeaderElection    bool
-		enableWebhooks          bool
-		hangarURL               string
-		hangarAPIKey            string
-		leaseDuration           time.Duration
-		renewDeadline           time.Duration
-		retryPeriod             time.Duration
-		leaderElectionNamespace string
-		gracefulShutdownTimeout time.Duration
-		dnsEgressCIDRs          string
-		dnsEgressSelectors      string
-		npEnforcement           string
-		gatewaySelector         string
-		maxConcurrent           int
-		hangarCAFile            string
-		hangarTLSServerName     string
-		metricsSecure           bool
+		metricsAddr                     string
+		healthProbeAddr                 string
+		enableLeaderElection            bool
+		enableWebhooks                  bool
+		hangarURL                       string
+		hangarAPIKey                    string
+		leaseDuration                   time.Duration
+		renewDeadline                   time.Duration
+		retryPeriod                     time.Duration
+		leaderElectionNamespace         string
+		gracefulShutdownTimeout         time.Duration
+		dnsEgressCIDRs                  string
+		dnsEgressSelectors              string
+		npEnforcement                   string
+		gatewaySelector                 string
+		providerIngressEnabled          bool
+		providerIngressGatewayNamespace string
+		maxConcurrent                   int
+		hangarCAFile                    string
+		hangarTLSServerName             string
+		metricsSecure                   bool
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
@@ -104,6 +106,8 @@ func main() {
 			"in-cluster kube-dns pods. Set to your NodeLocal DNSCache / custom resolver address "+
 			"(e.g. \"169.254.20.10/32\") on clusters where pods do not resolve via kube-dns pods, "+
 			"otherwise DNS is blocked for egress-scoped servers.")
+	flag.BoolVar(&providerIngressEnabled, "provider-ingress-enabled", false, "Opt in to gateway-only ingress for container providers; per-MCPServer annotation may override.")
+	flag.StringVar(&providerIngressGatewayNamespace, "provider-ingress-gateway-namespace", "", "Gateway namespace for provider ingress; required when the fence is enabled (including per-server opt-in).")
 	flag.StringVar(&gatewaySelector, "hangar-gateway-selector", controller.DefaultGatewayPodSelector,
 		"Label selector for the core gateway pods. When one becomes Ready, every MCPEgressPolicy is "+
 			"reconciled so its L7 policy is re-delivered to a gateway that restarted without it. Empty disables.")
@@ -160,6 +164,12 @@ func main() {
 	gatewayPodSelector, err := parseGatewaySelector(gatewaySelector)
 	if err != nil {
 		setupLog.Error(err, "invalid --hangar-gateway-selector")
+		os.Exit(1)
+	}
+
+	providerIngress, err := networkpolicy.ParseProviderIngressConfig(providerIngressEnabled, providerIngressGatewayNamespace, gatewaySelector)
+	if err != nil {
+		setupLog.Error(err, "invalid provider ingress configuration")
 		os.Exit(1)
 	}
 
@@ -261,6 +271,7 @@ func main() {
 		Recorder:                mgr.GetEventRecorder("mcpserver-controller"),
 		HangarClient:            hangarClient,
 		Claims:                  claims,
+		ProviderIngress:         providerIngress,
 		EnforcementProbe:        enforcementProbe,
 		MaxConcurrentReconciles: maxConcurrent,
 	}).SetupWithManager(mgr); err != nil {

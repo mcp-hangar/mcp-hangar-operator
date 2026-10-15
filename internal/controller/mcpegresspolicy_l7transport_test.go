@@ -66,7 +66,8 @@ func TestCompileL7Policy_DefaultsToDeny(t *testing.T) {
 }
 
 func TestCompileL7Policy_ModeDefaultsToAudit(t *testing.T) {
-	p := testPolicy("pol", "default") // no Mode set
+	p := testPolicy("pol", "default")
+	p.Spec.Mode = "" // omitted mode defaults to Audit
 	out := compileL7Policy(p)
 	assert.Equal(t, "Audit", out.Mode)
 }
@@ -432,4 +433,38 @@ func TestEgressPolicy_GenerateFalse_StillDeliversL7(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, count(http.MethodDelete, "m1"), "L7 policy for m1 not cleared on delete")
 	assert.Equal(t, 1, count(http.MethodDelete, "m2"), "L7 policy for m2 not cleared on delete")
+}
+
+func TestEgressPolicy_NoBackstop_StillDeliversL7(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mode   mcpv1alpha2.EgressPolicyMode
+		action mcpv1alpha2.EgressPolicyAction
+		reason string
+	}{
+		{"audit", mcpv1alpha2.EgressPolicyModeAudit, mcpv1alpha2.EgressActionDeny, "AuditMode"},
+		{"allow", mcpv1alpha2.EgressPolicyModeEnforce, mcpv1alpha2.EgressActionAllow, "DefaultAllow"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var payload hangar.L7PolicyPayload
+			core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+					t.Error(err)
+				}
+				_, _ = w.Write([]byte(`{"l7_policy_set":true,"persisted":true}`))
+			}))
+			t.Cleanup(core.Close)
+			p := testPolicy("pol", "default")
+			p.Spec.Mode, p.Spec.DefaultAction = tc.mode, tc.action
+			p.Spec.Upstreams = []mcpv1alpha2.UpstreamRule{{Name: "u", Match: mcpv1alpha2.UpstreamMatch{Host: "10.0.0.0/8"}, Tools: &mcpv1alpha2.ToolRules{Deny: []string{"delete_*"}}}}
+			r := newEgressReconciler(testServer("srv", "default"), p)
+			r.HangarClient = hangar.NewClient(&hangar.Config{URL: core.URL, MaxRetries: 0})
+			out := reconcilePolicy(t, r, p)
+			assert.Equal(t, string(tc.mode), payload.Mode)
+			assert.Equal(t, string(tc.action), payload.DefaultAction)
+			assert.Equal(t, []string{"delete_*"}, payload.Tools.Deny)
+			assert.Equal(t, metav1.ConditionTrue, condStatus(out, EgressPolicyConditionL7Delivered).Status)
+			assert.Equal(t, tc.reason, condStatus(out, EgressPolicyConditionBackstopApplied).Reason)
+		})
+	}
 }

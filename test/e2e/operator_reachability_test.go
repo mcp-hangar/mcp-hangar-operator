@@ -4,15 +4,18 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/retry"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
@@ -189,4 +192,134 @@ func conditionTrue(conds []metav1.Condition, condType string) bool {
 		}
 	}
 	return false
+}
+
+// The operator is configured with a gateway namespace but global ingress is
+// off. This CR opts in, then out; unrelated labels must not authorize a peer.
+func TestOperator_ProviderIngress_GatewayOnly(t *testing.T) {
+	cs, cl := clientset(t), crClient(t)
+	ns := namespace(t, cs, nil)
+	target := runningPod(t, cs, ns, "provider", map[string]string{networkpolicy.LabelProvider: "fenced"}, []string{"nc -lk -p 8080 -e /bin/true"})
+	server := coldServer("fenced", ns, nil)
+	server.Annotations = map[string]string{networkpolicy.AnnotationProviderIngress: "true"}
+	createCR(t, cl, server)
+	waitForOperatorPolicy(t, cl, ns, networkpolicy.ProviderIngressPolicyName(server.Name), server.Name)
+	gateway := map[string]string{"app.kubernetes.io/name": "mcp-hangar"}
+	if !canReach(t, cs, "mcp-hangar", "ingress-gateway", gateway, target.Status.PodIP, 8080) {
+		t.Error("gateway could not reach fenced provider")
+	}
+	if canReach(t, cs, ns, "ingress-client", nil, target.Status.PodIP, 8080) {
+		t.Error("non-gateway client bypassed ingress fence")
+	}
+	if canReach(t, cs, ns, "ingress-label-spoof", gateway, target.Status.PodIP, 8080) {
+		t.Error("gateway label in wrong namespace bypassed fence")
+	}
+	if canReach(t, cs, "mcp-hangar", "ingress-wrong-label", nil, target.Status.PodIP, 8080) {
+		t.Error("unmatched pod in gateway namespace bypassed fence")
+	}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: server.Name, Namespace: ns}, server); err != nil {
+		t.Fatal(err)
+	}
+	var applied bool
+	for _, c := range server.Status.Conditions {
+		if c.Type == "ProviderIngressApplied" && c.Status == metav1.ConditionTrue {
+			applied = true
+		}
+	}
+	if !applied {
+		t.Fatalf("ingress status did not report observed enforcer: %+v", server.Status.Conditions)
+	}
+	server.Annotations[networkpolicy.AnnotationProviderIngress] = "false"
+	if err := cl.Update(context.Background(), server); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(operatorSettle)
+	for {
+		err := cl.Get(context.Background(), types.NamespacedName{Name: networkpolicy.ProviderIngressPolicyName(server.Name), Namespace: ns}, &networkingv1.NetworkPolicy{})
+		if apierrors.IsNotFound(err) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("opt-out did not remove ingress policy: %v", err)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	time.Sleep(policySettle)
+	if !canReach(t, cs, ns, "ingress-opt-out", nil, target.Status.PodIP, 8080) {
+		t.Error("opt-out left provider ingress blocked")
+	}
+}
+
+// The same policy must observe, block, and observe again as mode changes.
+// This namespace has no independent default-deny/capability policy.
+func TestOperator_AuditEnforceAudit_Reachability(t *testing.T) {
+	cs, cl := clientset(t), crClient(t)
+	ns := namespace(t, cs, nil)
+	destination := runningPod(t, cs, ns, "destination", nil, []string{"nc -lk -p 8080 -e /bin/true"})
+	createCR(t, cl, coldServer("target", ns, nil))
+	policy := &mcpv1alpha2.MCPEgressPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "transition", Namespace: ns},
+		Spec: mcpv1alpha2.MCPEgressPolicySpec{
+			Mode:      mcpv1alpha2.EgressPolicyModeAudit,
+			TargetRef: mcpv1alpha2.EgressTargetRef{Kind: "MCPServer", Name: "target"},
+		},
+	}
+	createCR(t, cl, policy)
+	stages := []struct {
+		mode      mcpv1alpha2.EgressPolicyMode
+		action    mcpv1alpha2.EgressPolicyAction
+		reachable bool
+	}{
+		{mcpv1alpha2.EgressPolicyModeAudit, mcpv1alpha2.EgressActionDeny, true},
+		{mcpv1alpha2.EgressPolicyModeEnforce, mcpv1alpha2.EgressActionDeny, false},
+		{mcpv1alpha2.EgressPolicyModeAudit, mcpv1alpha2.EgressActionDeny, true},
+		{mcpv1alpha2.EgressPolicyModeEnforce, mcpv1alpha2.EgressActionAllow, true},
+		{mcpv1alpha2.EgressPolicyModeEnforce, mcpv1alpha2.EgressActionAllow, false},
+	}
+	for i, stage := range stages {
+		if i == 4 {
+			// Default Allow must not widen an independently-owned deny policy.
+			applyPolicy(t, cs, &networkingv1.NetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "independent", Namespace: ns},
+				Spec: networkingv1.NetworkPolicySpec{
+					PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{networkpolicy.LabelProvider: "target"}},
+					PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+				},
+			})
+		}
+		key := types.NamespacedName{Name: policy.Name, Namespace: ns}
+		// Status/finalizer writes can advance resourceVersion between GET and
+		// UPDATE. Refetch on conflict; retry only this spec mutation, not probes.
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if err := cl.Get(context.Background(), key, policy); err != nil {
+				return err
+			}
+			policy.Spec.Mode, policy.Spec.DefaultAction = stage.mode, stage.action
+			return cl.Update(context.Background(), policy)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(operatorSettle)
+		for {
+			if err := cl.Get(context.Background(), key, policy); err != nil {
+				t.Fatal(err)
+			}
+			wantApplied := stage.mode == mcpv1alpha2.EgressPolicyModeEnforce && stage.action != mcpv1alpha2.EgressActionAllow
+			if policy.Status.ObservedGeneration == policy.Generation && conditionTrue(policy.Status.Conditions, "BackstopApplied") == wantApplied {
+				if wantApplied || policy.Status.BackstopEnforcement == mcpv1alpha2.BackstopDisabled {
+					break
+				}
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("stage %d did not converge: %+v", i, policy.Status)
+			}
+			time.Sleep(2 * time.Second)
+		}
+		time.Sleep(policySettle)
+		// Every probe uses a new pod/connection, so conntrack cannot mask a deny.
+		got := canReach(t, cs, ns, fmt.Sprintf("stage-%d", i), map[string]string{networkpolicy.LabelProvider: "target"}, destination.Status.PodIP, 8080)
+		if got != stage.reachable {
+			t.Errorf("stage %d (%s/%s): reachable=%v, want %v", i, stage.mode, stage.action, got, stage.reachable)
+		}
+	}
 }

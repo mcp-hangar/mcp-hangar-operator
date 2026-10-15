@@ -28,3 +28,13 @@ images:
   - name: ghcr.io/mcp-hangar/mcp-hangar-operator
     newName: localhost/mcp-hangar-operator
     newTag: e2e
+
+# Prepare the peer identity; the fence stays opt-in per test MCPServer.
+patches:
+  - target:
+      kind: Deployment
+      name: controller-manager
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --provider-ingress-gateway-namespace=mcp-hangar

@@ -71,12 +71,17 @@ const (
 	// BackstopUnverified means the backstop is applied and enforcement could
 	// not be established either way.
 	BackstopUnverified BackstopEnforcement = "Unverified"
-	// BackstopDisabled means spec.networkBackstop.generate is false, so no
+	// BackstopDisabled means Audit, default Allow, or generation is disabled, so no
 	// backstop is meant to exist.
 	BackstopDisabled BackstopEnforcement = "Disabled"
 	// BackstopPending means no backstop is applied yet, because the target
 	// could not be resolved.
 	BackstopPending BackstopEnforcement = "Pending"
+	// BackstopNotApplicable means the target runs no pods this operator owns, so
+	// there is nothing for a network policy to select: a `mode: remote` server
+	// is an address core dials, and its traffic leaves from the gateway pod. Not
+	// "Enforcing" over a selector that selects nothing (#326).
+	BackstopNotApplicable BackstopEnforcement = "NotApplicable"
 )
 
 // EgressTargetRef attaches a policy to a server or a group of servers, never to
@@ -294,7 +299,7 @@ type MCPEgressPolicyStatus struct {
 	// policy asking for Enforce in a cluster whose CNI never sees this API
 	// server reads Unenforced here, instead of looking exactly like one that
 	// works.
-	// +kubebuilder:validation:Enum=Enforcing;Unenforced;Unverified;Disabled;Pending
+	// +kubebuilder:validation:Enum=Enforcing;Unenforced;Unverified;Disabled;Pending;NotApplicable
 	// +optional
 	BackstopEnforcement BackstopEnforcement `json:"backstopEnforcement,omitempty"`
 

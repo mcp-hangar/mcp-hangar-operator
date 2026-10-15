@@ -95,9 +95,10 @@ stays a mirror: the operator neither changes nor deletes it. Core refuses a
 private endpoint, an in-cluster Service included, unless its network is listed
 in core's `ssrf.trusted_networks`; until then the CR is Degraded with reason
 `EndpointNotTrusted`. With auth on, the operator's API key needs
-`mcp_servers:write` to register and `mcp_servers:lifecycle` to start and
-deregister; `provider-admin` has neither, and the CR says so with reason
-`RegistrationForbidden`. A changed `spec.endpoint` re-registers the server.
+`mcp_servers:write` to register, `mcp_servers:lifecycle` to start and
+deregister, and `policy:write` to deliver egress policy. Only core's `admin`
+role holds all three today: `provider-admin` lacks the first two and the CR
+says so with reason `RegistrationForbidden`; `developer` lacks `policy:write`. A changed `spec.endpoint` re-registers the server.
 
 | Field | Description | Default |
 |-------|-------------|---------|
@@ -131,6 +132,7 @@ Traffic is not routed through it.
 | `spec.type` | Discovery type: Namespace, ConfigMap, Annotations, ServiceDiscovery | Required |
 | `spec.mode` | Discovery mode: Additive, Authoritative | `Additive` |
 | `spec.refreshInterval` | Rescan interval | `1m` when unset (operator default) |
+| `spec.providerTemplate.spec.endpoint` | Required when `type` is `Namespace`: a namespace names no Service, so every remote server it yields dials this endpoint | — |
 
 ## Enforcement
 
@@ -222,6 +224,13 @@ backstop it just wrote has no reader. The policy is also `Degraded` with reason
 `EnforcementNotObserved`, and the `BackstopEnforceable` condition names what was
 looked for. `Unverified` means the operator could not tell (it may not list
 DaemonSets, say) -- doubt, recorded but not degraded.
+
+`NotApplicable` (with `BackstopApplied=False`, reason `RemoteTargetHasNoPods`)
+means the target runs no pods: a `mode: remote` server is an address core dials,
+and its traffic leaves from the gateway pod, so there is nothing a network policy
+could select and none is written. For a remote target the L7 rules in core are
+the only enforcement; control of the network path is the gateway pod's own egress
+policy. A group is `NotApplicable` only when every member is remote.
 
 The look is evidence, not proof: an agent can be installed and broken. For a
 CNI this operator does not recognize, or the reverse, override it:
