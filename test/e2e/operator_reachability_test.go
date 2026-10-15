@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/retry"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
@@ -230,11 +231,15 @@ func TestOperator_AuditEnforceAudit_Reachability(t *testing.T) {
 			})
 		}
 		key := types.NamespacedName{Name: policy.Name, Namespace: ns}
-		if err := cl.Get(context.Background(), key, policy); err != nil {
-			t.Fatal(err)
-		}
-		policy.Spec.Mode, policy.Spec.DefaultAction = stage.mode, stage.action
-		if err := cl.Update(context.Background(), policy); err != nil {
+		// Status/finalizer writes can advance resourceVersion between GET and
+		// UPDATE. Refetch on conflict; retry only this spec mutation, not probes.
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if err := cl.Get(context.Background(), key, policy); err != nil {
+				return err
+			}
+			policy.Spec.Mode, policy.Spec.DefaultAction = stage.mode, stage.action
+			return cl.Update(context.Background(), policy)
+		}); err != nil {
 			t.Fatal(err)
 		}
 		deadline := time.Now().Add(operatorSettle)
