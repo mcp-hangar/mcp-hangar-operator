@@ -71,7 +71,7 @@ const (
 	// BackstopUnverified means the backstop is applied and enforcement could
 	// not be established either way.
 	BackstopUnverified BackstopEnforcement = "Unverified"
-	// BackstopDisabled means spec.networkBackstop.generate is false, so no
+	// BackstopDisabled means Audit, default Allow, or generation is disabled, so no
 	// backstop is meant to exist.
 	BackstopDisabled BackstopEnforcement = "Disabled"
 	// BackstopPending means no backstop is applied yet, because the target

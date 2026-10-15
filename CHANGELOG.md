@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.17.30](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.29...v0.17.30) (2026-10-15)
+
+### Added
+
+- Optional provider ingress isolation allows TCP/8080 only from the configured gateway namespace and pod selector. ProviderIngressApplied reports observed enforcement separately from egress; per-MCPServer opt-in/opt-out and owned-policy cleanup are supported. ([#348](https://github.com/mcp-hangar/mcp-hangar-operator/pull/348))
+
+### Fixed
+
+- MCPEgressPolicy Audit mode no longer installs a blocking network backstop and removes either existing flavor when returning from Enforce. DefaultAction Allow omits the policy-owned backstop without widening independent NetworkPolicies; core continues evaluating L7 rules. ([#343](https://github.com/mcp-hangar/mcp-hangar-operator/pull/343))
+
+### Security
+
+- Bump `google.golang.org/grpc` to v1.83.2, which fixes CVE-2026-84445 (denial of service through malformed RPC requests) that Trivy reports on the 0.17.29 image. v1.83.1 fixed the other gRPC finding but not this one. ([#347](https://github.com/mcp-hangar/mcp-hangar-operator/pull/347))
+- Bump `golang.org/x/net` (v0.60.0), `google.golang.org/grpc` (v1.83.1) and the OpenTelemetry trace exporters and SDK (v1.45.0) past the vulnerabilities `govulncheck` reports as reachable from the operator (GO-2026-6617, -6612, -6611, -6610, -6603, -6505 and -6348). The operator links these only as indirect dependencies of controller-runtime. ([#345](https://github.com/mcp-hangar/mcp-hangar-operator/pull/345))
+
 ## [0.17.29](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.28...v0.17.29) (2026-10-14)
 
 ### Fixed

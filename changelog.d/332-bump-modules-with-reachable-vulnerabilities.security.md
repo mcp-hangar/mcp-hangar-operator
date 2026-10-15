@@ -1,1 +1,0 @@
-Bump `golang.org/x/net` (v0.60.0), `google.golang.org/grpc` (v1.83.1) and the OpenTelemetry trace exporters and SDK (v1.45.0) past the vulnerabilities `govulncheck` reports as reachable from the operator (GO-2026-6617, -6612, -6611, -6610, -6603, -6505 and -6348). The operator links these only as indirect dependencies of controller-runtime.
