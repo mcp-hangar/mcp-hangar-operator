@@ -1,1 +1,0 @@
-Optional provider ingress isolation allows TCP/8080 only from the configured gateway namespace and pod selector. ProviderIngressApplied reports observed enforcement separately from egress; per-MCPServer opt-in/opt-out and owned-policy cleanup are supported.

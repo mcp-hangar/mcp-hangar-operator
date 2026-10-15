@@ -1,1 +1,0 @@
-MCPEgressPolicy Audit mode no longer installs a blocking network backstop and removes either existing flavor when returning from Enforce. DefaultAction Allow omits the policy-owned backstop without widening independent NetworkPolicies; core continues evaluating L7 rules.
