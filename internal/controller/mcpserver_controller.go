@@ -116,6 +116,7 @@ type MCPServerReconciler struct {
 	// is True only when it does; nil reports Unknown, which surfaces as
 	// Unknown rather than as a claim either way.
 	EnforcementProbe *networkpolicy.EnforcementProbe
+	ProviderIngress  networkpolicy.ProviderIngressConfig
 	// Claims records which MCPServer registered each server name in core
 	// (#164). Nil: the operator registers nothing and only mirrors.
 	Claims *RegistrationClaims
@@ -185,6 +186,14 @@ func (r *MCPServerReconciler) reconcileNormal(ctx context.Context, mcpServer *mc
 	if mcpServer.Status.ObservedGeneration != mcpServer.Generation {
 		mcpServer.Status.ObservedGeneration = mcpServer.Generation
 		setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "Reconciling", "Processing spec changes")
+	}
+
+	if err := r.reconcileProviderIngress(ctx, mcpServer); err != nil {
+		setServerCondition(mcpServer, ConditionProviderIngressApplied, metav1.ConditionFalse, "ApplyFailed", err.Error())
+		if statusErr := writeStatus(ctx, r.Client, mcpServer); statusErr != nil {
+			return ctrl.Result{}, statusErr
+		}
+		return ctrl.Result{}, err
 	}
 
 	// Route based on mode
