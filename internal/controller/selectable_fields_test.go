@@ -75,9 +75,11 @@ func TestSelectableFields_MCPEgressPolicy(t *testing.T) {
 	ns := createNamespace(t, "test-selectable-pol").Name
 
 	audit := testPolicy("audit", ns)
+	audit.Spec.Mode = mcpv1alpha2.EgressPolicyModeAudit
 	enforce := testPolicy("enforce", ns)
 	enforce.Spec.Mode = mcpv1alpha2.EgressPolicyModeEnforce
 	group := testPolicy("group", ns)
+	group.Spec.Mode = mcpv1alpha2.EgressPolicyModeAudit
 	group.Spec.TargetRef = mcpv1alpha2.EgressTargetRef{Kind: "MCPServerGroup", Name: "g"}
 	for _, p := range []*mcpv1alpha2.MCPEgressPolicy{audit, enforce, group} {
 		require.NoError(t, createAndCleanup(t, p))
