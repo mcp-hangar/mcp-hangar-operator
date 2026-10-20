@@ -52,8 +52,16 @@ func (c *pinningCore) serve(t *testing.T) *httptest.Server {
 		case r.URL.Path == "/api/system/":
 			_ = json.NewEncoder(w).Encode(map[string]any{"system": map[string]any{"capabilities": c.capabilities}})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/mcp_servers/":
+			if c.servers[body["mcp_server_id"].(string)] != nil {
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				_, _ = w.Write([]byte(`{"error":{"code":"ValidationError","message":"McpServer already exists: x"}}`))
+				return
+			}
 			c.servers[body["mcp_server_id"].(string)] = body
 			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodDelete:
+			delete(c.servers, name)
+			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodPut:
 			if c.updateStatus != 0 {
 				w.WriteHeader(c.updateStatus)
