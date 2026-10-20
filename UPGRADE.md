@@ -1,5 +1,24 @@
 # Upgrade notes
 
+## Upgrade to 0.17.32
+
+### Key-pinned container servers are reached over https on the pod's address
+
+A container-mode `MCPServer` with `spec.tls.peerIdentity` is no longer found by core's discovery. The operator registers it, and core reaches it at `https://<pod IP>:8080`. Three things follow:
+
+- **TLS on port 8080:** the server must serve TLS on port 8080, with a key whose SPKI digest is listed in `spkiSha256`.
+- **SSRF policy:** core must allow the pod network under its SSRF policy, through `ssrf.trusted_networks`.
+- **Moving an existing server:** a server core already discovered from such a pod is moved to the key-pinned registration the first time the operator reconciles the CR after the key is declared. Until the moved server's pod has an address, its endpoint is empty and calls to it are refused.
+
+### Key-pinned remote servers need an https `hangar.url` and a core that checks keys
+
+A remote `MCPServer` with `spec.tls.peerIdentity` is registered only when:
+
+- the operator reaches core over `https://`, with the core's certificate verified against `hangar.tls.ca`;
+- core advertises the `peer_identity` capability: a core release newer than 2.31.0, the first whose `GET /api/system/` lists `capabilities`.
+
+Otherwise it reports `Degraded` with reason `PeerIdentityNotCarried` and is not registered. Core must also allow the endpoint under its SSRF policy, so put the network it lives on in `ssrf.trusted_networks`. The operator's core API key needs the `kubernetes-operator` role, which holds `mcp_servers:peer_identity`.
+
 ## Upgrade to 0.17.30
 
 ### Audit policies stop generating a blocking network backstop
