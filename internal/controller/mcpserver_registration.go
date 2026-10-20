@@ -92,8 +92,9 @@ func (c *RegistrationClaims) take(ctx context.Context, mcpServer *mcpv1alpha2.MC
 	key := c.key(mcpServer.Name)
 	lease := &coordinationv1.Lease{
 		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace,
-			Labels:      map[string]string{"app.kubernetes.io/managed-by": "mcp-hangar-operator"},
-			Annotations: map[string]string{claimEndpointAnnotation: mcpServer.Spec.Endpoint}},
+			Labels: map[string]string{"app.kubernetes.io/managed-by": "mcp-hangar-operator"},
+			Annotations: map[string]string{
+				claimEndpointAnnotation: mcpServer.Spec.Endpoint, claimTLSAnnotation: tlsDigest(coreTLS(mcpServer))}},
 		Spec: coordinationv1.LeaseSpec{HolderIdentity: &holder},
 	}
 	err := c.Client.Create(ctx, lease)
@@ -161,10 +162,37 @@ func (r *MCPServerReconciler) registration(ctx context.Context, mcpServer *mcpv1
 				"the cluster, so rename this one", mcpServer.Name, holderName(claim)))
 	}
 
+	if keyPinned(mcpServer) {
+		reason, msg, err := r.peerIdentityRefusal(ctx, mcpServer)
+		if err != nil {
+			return true, ctrl.Result{}, err
+		}
+		if reason != "" {
+			return true, ctrl.Result{}, r.writeRegistrationStatus(ctx, mcpServer, reason, msg)
+		}
+	}
+
+	// A key-pinned server, or one that was, changes in place: removed and
+	// registered again, it would have to be forgotten in core's peer-key name
+	// record first, and its identity would change. Core changes the endpoint
+	// and the key list under the same name, and resets its start backoff.
+	tls := coreTLS(mcpServer)
+	if claim != nil && (tls != nil || claim.Annotations[claimTLSAnnotation] != "") &&
+		(claim.Annotations[claimEndpointAnnotation] != mcpServer.Spec.Endpoint ||
+			claim.Annotations[claimTLSAnnotation] != tlsDigest(tls)) {
+		if tls == nil {
+			tls = map[string]any{}
+		}
+		if done, result, err := r.deliverConnection(ctx, mcpServer, claim, tls); done || err != nil {
+			return done, result, err
+		}
+	}
+
 	// Core cannot change an endpoint: a changed spec.endpoint is removed and
 	// registered again. Deregistered first and the claim moved second, so a
 	// crash between the two repeats the delete, which core answers 404.
-	if claim != nil && claim.Annotations[claimEndpointAnnotation] != mcpServer.Spec.Endpoint {
+	if claim != nil && claim.Annotations[claimTLSAnnotation] == "" && tls == nil &&
+		claim.Annotations[claimEndpointAnnotation] != mcpServer.Spec.Endpoint {
 		if err := r.HangarClient.DeregisterMCPServer(ctx, mcpServer.Name, mcpServer.Namespace); err != nil {
 			return true, ctrl.Result{}, err
 		}
@@ -221,7 +249,12 @@ func (r *MCPServerReconciler) register(ctx context.Context, mcpServer *mcpv1alph
 	}
 
 	endpoint := mcpServer.Spec.Endpoint
-	err := r.HangarClient.RegisterRemoteMCPServer(ctx, mcpServer.Name, endpoint)
+	var err error
+	if tls := coreTLS(mcpServer); tls != nil {
+		err = r.HangarClient.RegisterKeyPinnedMCPServer(ctx, mcpServer.Name, endpoint, tls)
+	} else {
+		err = r.HangarClient.RegisterRemoteMCPServer(ctx, mcpServer.Name, endpoint)
+	}
 	switch {
 	case err == nil:
 		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonRegistered, ActionReconcile,
@@ -244,6 +277,39 @@ func (r *MCPServerReconciler) register(ctx context.Context, mcpServer *mcpv1alph
 			forbiddenMessage)
 	}
 	return true, ctrl.Result{}, r.writeRegistrationStatus(ctx, mcpServer, ReasonRegistrationFailed, err.Error())
+}
+
+// deliverConnection sends core a changed endpoint or tls block of a server
+// this operator registered, and records it on the claim once core took it.
+// Not done means the caller goes on; a refusal is reported like a registration.
+func (r *MCPServerReconciler) deliverConnection(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer,
+	claim *coordinationv1.Lease, tls map[string]any) (bool, ctrl.Result, error) {
+	endpoint := mcpServer.Spec.Endpoint
+	err := r.HangarClient.UpdateMCPServerConnection(ctx, mcpServer.Name, endpoint, tls)
+	switch {
+	case err == nil, hangar.IsNotRegistered(err):
+		// Not in core: the registration below sends the current block.
+		if annErr := r.Claims.annotate(ctx, claim, map[string]string{
+			claimEndpointAnnotation: endpoint, claimTLSAnnotation: tlsDigest(coreTLS(mcpServer))}); annErr != nil {
+			return true, ctrl.Result{}, annErr
+		}
+		if err == nil {
+			r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonUpdated, ActionReconcile,
+				"Delivered %q's endpoint and key list to core", mcpServer.Name)
+		}
+		return false, ctrl.Result{}, nil
+	case hangar.IsEndpointNotTrusted(err):
+		return true, ctrl.Result{}, r.writeRegistrationStatus(ctx, mcpServer, ReasonEndpointNotTrusted,
+			fmt.Sprintf("core refused %s as a private address it does not trust; add its network to "+
+				"ssrf.trusted_networks in core's config", endpoint))
+	case hangar.IsForbidden(err):
+		return true, ctrl.Result{}, r.writeRegistrationStatus(ctx, mcpServer, ReasonRegistrationForbidden,
+			"core refused the operator's API key: changing a key-pinned server needs mcp_servers:peer_identity")
+	}
+	// A conflicting write on another replica is refused, not lost; the next
+	// reconcile delivers again.
+	return true, ctrl.Result{RequeueAfter: errorRequeueAfter}, r.writeRegistrationStatus(ctx, mcpServer,
+		ReasonRegistrationFailed, err.Error())
 }
 
 // forbiddenMessage: core took the operator's key and refused its role.

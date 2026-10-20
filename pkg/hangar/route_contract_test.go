@@ -99,6 +99,9 @@ func exercise(ctx context.Context, c *Client) {
 	_ = c.ClearL7Policy(ctx, "srv")
 	_ = c.DeregisterMCPServer(ctx, "srv", "ns")
 	_ = c.RegisterRemoteMCPServer(ctx, "srv", "http://srv:8080/mcp")
+	_ = c.RegisterKeyPinnedMCPServer(ctx, "srv", "https://srv:8443/mcp", map[string]any{})
+	_ = c.UpdateMCPServerConnection(ctx, "srv", "https://srv:8443/mcp", map[string]any{})
+	_, _ = c.Capabilities(ctx)
 	_ = c.StartMCPServer(ctx, "srv")
 	_ = c.Ping(ctx)
 }
