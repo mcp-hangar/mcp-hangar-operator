@@ -254,3 +254,15 @@ func TestCRDRules_GroupNeedsASelector(t *testing.T) {
 	drop := client.RawPatch(types.MergePatchType, []byte(`{"spec":{"selector":null}}`))
 	requireRejected(t, k8sClient.Patch(ctx, g, drop), "spec.selector")
 }
+
+func TestCRDRules_RuntimeClassNameIsADNSSubdomain(t *testing.T) {
+	bad := celServerUnstructured("cel-runtime-bad", map[string]any{
+		"mode": "container", "image": "ghcr.io/example/provider:1.0", "runtimeClassName": "Kata QEMU",
+	})
+	requireRejected(t, createAndCleanup(t, bad), "runtimeClassName")
+
+	s := celServer("cel-runtime-ok", mcpv1alpha2.MCPServerModeContainer)
+	class := "kata-qemu-snp"
+	s.Spec.RuntimeClassName = &class
+	require.NoError(t, createAndCleanup(t, s))
+}
