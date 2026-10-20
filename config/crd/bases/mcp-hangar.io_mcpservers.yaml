@@ -4010,6 +4010,13 @@ spec:
             - message: 'spec.mode is immutable: delete and recreate the MCPServer
                 to change it'
               rule: self.mode == oldSelf.mode
+            - message: 'spec.runtimeClassName is required for a container with issuance
+                kbs-attested: an attested key is released only to a guest in a confidential
+                runtime'
+              rule: self.mode != 'container' || !has(self.tls) || !has(self.tls.peerIdentity)
+                || !has(self.tls.peerIdentity.issuance) || self.tls.peerIdentity.issuance
+                != 'kbs-attested' || (has(self.runtimeClassName) && size(self.runtimeClassName)
+                > 0)
             - message: 'spec.endpoint must be https when spec.tls.peerIdentity is
                 set: a key is checked in a TLS handshake'
               rule: self.mode != 'remote' || !has(self.tls) || !has(self.tls.peerIdentity)
