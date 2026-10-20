@@ -336,6 +336,37 @@ func (c *Client) GetMCPServerHealth(ctx context.Context, name, namespace string)
 	return &health, nil
 }
 
+// GetMCPServerProvenance reads how core says a server reached its fleet,
+// `human` or `discovery`, from GET /api/mcp_servers/{name}. A core that
+// predates the field (before 2.32.0) reports "".
+func (c *Client) GetMCPServerProvenance(ctx context.Context, name string) (provenance string, err error) {
+	defer c.observe("get_provenance")(&err)
+	ctx, cancel := c.bound(ctx)
+	defer cancel()
+	url := fmt.Sprintf("%s/api/mcp_servers/%s", c.baseURL, name)
+
+	resp, err := c.doWithRetry(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return "", fmt.Errorf("%w: %s", ErrNotRegistered, name)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("unexpected status: %w", &StatusError{StatusCode: resp.StatusCode, Body: string(body)})
+	}
+	var details struct {
+		Provenance string `json:"provenance"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&details); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+	return details.Provenance, nil
+}
+
 type L7ToolRules struct {
 	Allow           []string `json:"allow,omitempty"`
 	Deny            []string `json:"deny,omitempty"`

@@ -102,6 +102,7 @@ func exercise(ctx context.Context, c *Client) {
 	_ = c.RegisterKeyPinnedMCPServer(ctx, "srv", "https://srv:8443/mcp", map[string]any{})
 	_ = c.UpdateMCPServerConnection(ctx, "srv", "https://srv:8443/mcp", map[string]any{})
 	_, _ = c.Capabilities(ctx)
+	_, _ = c.GetMCPServerProvenance(ctx, "srv")
 	_ = c.StartMCPServer(ctx, "srv")
 	_ = c.Ping(ctx)
 }
