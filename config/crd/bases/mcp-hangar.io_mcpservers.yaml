@@ -1792,6 +1792,14 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              runtimeClassName:
+                description: |-
+                  RuntimeClassName selects the pod's RuntimeClass, for a sandboxed runtime
+                  such as gVisor or Kata, or a confidential VM. The class must exist in the
+                  cluster: the kubelet refuses a pod naming one that does not.
+                maxLength: 253
+                pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                type: string
               serviceAccountName:
                 description: ServiceAccountName is the ServiceAccount for the provider
                   pod

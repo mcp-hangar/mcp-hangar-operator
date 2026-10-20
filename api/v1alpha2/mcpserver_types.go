@@ -206,6 +206,14 @@ type MCPServerSpec struct {
 	// +optional
 	PriorityClassName string `json:"priorityClassName,omitempty"`
 
+	// RuntimeClassName selects the pod's RuntimeClass, for a sandboxed runtime
+	// such as gVisor or Kata, or a confidential VM. The class must exist in the
+	// cluster: the kubelet refuses a pod naming one that does not.
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`
+	// +optional
+	RuntimeClassName *string `json:"runtimeClassName,omitempty"`
+
 	// Capabilities declares what resources the MCP server needs.
 	// Used by the operator for NetworkPolicy generation and enforcement.
 	// +optional

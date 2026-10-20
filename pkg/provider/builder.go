@@ -89,6 +89,7 @@ func BuildPodForMCPServer(provider *mcpv1alpha2.MCPServer) (*corev1.Pod, error) 
 			NodeSelector:                  provider.Spec.NodeSelector,
 			ImagePullSecrets:              provider.Spec.ImagePullSecrets,
 			PriorityClassName:             provider.Spec.PriorityClassName,
+			RuntimeClassName:              provider.Spec.RuntimeClassName,
 			TerminationGracePeriodSeconds: getTerminationGracePeriod(provider),
 		},
 	}
