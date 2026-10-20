@@ -5,10 +5,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net"
 	"slices"
+	"strconv"
+
+	appsv1 "k8s.io/api/apps/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/hangar"
+	"github.com/mcp-hangar/operator/pkg/provider"
 )
 
 // claimTLSAnnotation is a digest of the tls block the server was registered
@@ -65,4 +72,34 @@ func (r *MCPServerReconciler) peerIdentityRefusal(ctx context.Context, mcpServer
 			"ignore the key list and serve the server unchecked; upgrade core", nil
 	}
 	return "", "", nil
+}
+
+// podEndpoint is where core reaches a key-pinned container: its pod's address,
+// over https, on the port core's discovery would have used. Empty while the
+// server is off or its pod has no address yet; the endpoint is then cleared in
+// core, so calls are refused rather than sent to an address another pod may
+// inherit (ADR-030 §4a).
+func (r *MCPServerReconciler) podEndpoint(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) (string, error) {
+	if mcpServer.IsCold() {
+		return "", nil
+	}
+	pod, err := r.currentPod(ctx, mcpServer)
+	if err != nil || pod == nil || pod.Status.PodIP == "" {
+		return "", err
+	}
+	return "https://" + net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(provider.DefaultDiscoveryPort)), nil
+}
+
+// discoveredFromItsOwnPod reports whether core's server under this CR's name
+// came from this CR's own pod, by core's discovery: the Deployment this CR
+// controls still stamps its pods with mcp-hangar.io/name. The operator wrote
+// that itself, so it is evidence a pod created by anyone else is not. Core
+// does not report a server's provenance (mcp-hangar#1977).
+func (r *MCPServerReconciler) discoveredFromItsOwnPod(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) bool {
+	deployment := &appsv1.Deployment{}
+	key := client.ObjectKey{Namespace: mcpServer.Namespace, Name: provider.DeploymentName(mcpServer)}
+	if err := r.Get(ctx, key, deployment); err != nil || !metav1.IsControlledBy(deployment, mcpServer) {
+		return false
+	}
+	return deployment.Spec.Template.Annotations[provider.AnnotationDiscoveryName] == mcpServer.Name
 }

@@ -87,14 +87,15 @@ func (c *RegistrationClaims) get(ctx context.Context, name string) (*coordinatio
 
 // take claims the CR's server name. It returns the claim when this CR holds
 // it, and nil when another does.
-func (c *RegistrationClaims) take(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) (*coordinationv1.Lease, error) {
+func (c *RegistrationClaims) take(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer, endpoint string) (*coordinationv1.Lease, error) {
 	holder := claimHolder(mcpServer)
 	key := c.key(mcpServer.Name)
 	lease := &coordinationv1.Lease{
 		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace,
 			Labels: map[string]string{"app.kubernetes.io/managed-by": "mcp-hangar-operator"},
-			Annotations: map[string]string{
-				claimEndpointAnnotation: mcpServer.Spec.Endpoint, claimTLSAnnotation: tlsDigest(coreTLS(mcpServer))}},
+			// The tls digest is recorded once core took the block: a server
+			// moved from discovery (section 4f) is plain until then.
+			Annotations: map[string]string{claimEndpointAnnotation: endpoint}},
 		Spec: coordinationv1.LeaseSpec{HolderIdentity: &holder},
 	}
 	err := c.Client.Create(ctx, lease)
@@ -141,14 +142,17 @@ func (c *RegistrationClaims) release(ctx context.Context, lease *coordinationv1.
 // declares, say -- stays a mirror: nothing registers it, and deleting the CR
 // leaves it alone (#202).
 func (r *MCPServerReconciler) reconcileRegistration(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) (done bool, result ctrl.Result, err error) {
-	done, result, err = r.registration(ctx, mcpServer)
+	done, result, err = r.registration(ctx, mcpServer, mcpServer.Spec.Endpoint)
 	if done && err == nil && result.IsZero() {
 		result = registrationRequeue(mcpServer)
 	}
 	return done, result, err
 }
 
-func (r *MCPServerReconciler) registration(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) (bool, ctrl.Result, error) {
+// registration registers the CR's server with core at endpoint: spec.endpoint
+// for a remote server, the pod's address for a key-pinned container ("" while
+// it has none).
+func (r *MCPServerReconciler) registration(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer, endpoint string) (bool, ctrl.Result, error) {
 	if r.Claims == nil {
 		return false, ctrl.Result{}, nil
 	}
@@ -168,6 +172,16 @@ func (r *MCPServerReconciler) registration(ctx context.Context, mcpServer *mcpv1
 			return true, ctrl.Result{}, err
 		}
 		if reason != "" {
+			// Whatever this CR registered before is not left serving the name
+			// plain, or under a key list core no longer checks.
+			if claim != nil {
+				if err := r.HangarClient.DeregisterMCPServer(ctx, mcpServer.Name, mcpServer.Namespace); err != nil {
+					return true, ctrl.Result{}, err
+				}
+				if err := r.Claims.release(ctx, claim); err != nil {
+					return true, ctrl.Result{}, err
+				}
+			}
 			return true, ctrl.Result{}, r.writeRegistrationStatus(ctx, mcpServer, reason, msg)
 		}
 	}
@@ -178,12 +192,12 @@ func (r *MCPServerReconciler) registration(ctx context.Context, mcpServer *mcpv1
 	// and the key list under the same name, and resets its start backoff.
 	tls := coreTLS(mcpServer)
 	if claim != nil && (tls != nil || claim.Annotations[claimTLSAnnotation] != "") &&
-		(claim.Annotations[claimEndpointAnnotation] != mcpServer.Spec.Endpoint ||
+		(claim.Annotations[claimEndpointAnnotation] != endpoint ||
 			claim.Annotations[claimTLSAnnotation] != tlsDigest(tls)) {
 		if tls == nil {
 			tls = map[string]any{}
 		}
-		if done, result, err := r.deliverConnection(ctx, mcpServer, claim, tls); done || err != nil {
+		if done, result, err := r.deliverConnection(ctx, mcpServer, claim, tls, endpoint); done || err != nil {
 			return done, result, err
 		}
 	}
@@ -192,15 +206,15 @@ func (r *MCPServerReconciler) registration(ctx context.Context, mcpServer *mcpv1
 	// registered again. Deregistered first and the claim moved second, so a
 	// crash between the two repeats the delete, which core answers 404.
 	if claim != nil && claim.Annotations[claimTLSAnnotation] == "" && tls == nil &&
-		claim.Annotations[claimEndpointAnnotation] != mcpServer.Spec.Endpoint {
+		claim.Annotations[claimEndpointAnnotation] != endpoint {
 		if err := r.HangarClient.DeregisterMCPServer(ctx, mcpServer.Name, mcpServer.Namespace); err != nil {
 			return true, ctrl.Result{}, err
 		}
 		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonUpdated, ActionReconcile,
 			"Removed %q from core to register it again: its endpoint changed from %s to %s",
-			mcpServer.Name, claim.Annotations[claimEndpointAnnotation], mcpServer.Spec.Endpoint)
+			mcpServer.Name, claim.Annotations[claimEndpointAnnotation], endpoint)
 		if err := r.Claims.annotate(ctx, claim, map[string]string{
-			claimEndpointAnnotation: mcpServer.Spec.Endpoint, claimStartedAnnotation: "false"}); err != nil {
+			claimEndpointAnnotation: endpoint, claimStartedAnnotation: "false"}); err != nil {
 			return true, ctrl.Result{}, err
 		}
 	}
@@ -208,12 +222,20 @@ func (r *MCPServerReconciler) registration(ctx context.Context, mcpServer *mcpv1
 	_, healthErr := r.HangarClient.GetMCPServerHealth(ctx, mcpServer.Name, mcpServer.Namespace)
 	switch {
 	case hangar.IsNotRegistered(healthErr):
-		return r.register(ctx, mcpServer, claim)
+		return r.register(ctx, mcpServer, claim, endpoint)
+	case healthErr == nil && claim == nil && keyPinned(mcpServer) && r.discoveredFromItsOwnPod(ctx, mcpServer):
+		return r.moveDiscovered(ctx, mcpServer, endpoint)
+	case healthErr == nil && claim == nil && keyPinned(mcpServer):
+		// Not a mirror: the CR declares a key list the server core holds does
+		// not have, so reading it as this CR's server would be a false claim.
+		return true, ctrl.Result{}, r.writeRegistrationStatus(ctx, mcpServer, ReasonNameTaken,
+			fmt.Sprintf("core already holds a server named %q that this operator did not register; "+
+				"its key list is not this MCPServer's", mcpServer.Name))
 	case healthErr != nil || claim == nil:
 		// Core could not be asked, or holds a server nobody claimed: the
 		// health read that follows reports either.
 		return false, ctrl.Result{}, nil //nolint:nilerr // the caller's own health read reports it
-	case claim.Annotations[claimStartedAnnotation] != "true":
+	case claim.Annotations[claimStartedAnnotation] != "true" && endpoint != "":
 		return r.start(ctx, mcpServer, claim)
 	}
 	return false, ctrl.Result{}, nil
@@ -235,10 +257,11 @@ func holderName(lease *coordinationv1.Lease) string {
 // safe: the next reconcile registers it, and a delete in between gets 404 from
 // core. Registered and not claimed would leave a server in core that deleting
 // the CR never removes.
-func (r *MCPServerReconciler) register(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer, claim *coordinationv1.Lease) (bool, ctrl.Result, error) {
+func (r *MCPServerReconciler) register(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer,
+	claim *coordinationv1.Lease, endpoint string) (bool, ctrl.Result, error) {
 	if claim == nil {
 		var err error
-		if claim, err = r.Claims.take(ctx, mcpServer); err != nil {
+		if claim, err = r.Claims.take(ctx, mcpServer, endpoint); err != nil {
 			return true, ctrl.Result{}, err
 		}
 		if claim == nil {
@@ -248,7 +271,6 @@ func (r *MCPServerReconciler) register(ctx context.Context, mcpServer *mcpv1alph
 		}
 	}
 
-	endpoint := mcpServer.Spec.Endpoint
 	var err error
 	if tls := coreTLS(mcpServer); tls != nil {
 		err = r.HangarClient.RegisterKeyPinnedMCPServer(ctx, mcpServer.Name, endpoint, tls)
@@ -259,6 +281,14 @@ func (r *MCPServerReconciler) register(ctx context.Context, mcpServer *mcpv1alph
 	case err == nil:
 		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonRegistered, ActionReconcile,
 			"Registered %q with core at %s", mcpServer.Name, endpoint)
+		if err := r.Claims.annotate(ctx, claim, map[string]string{
+			claimTLSAnnotation: tlsDigest(coreTLS(mcpServer))}); err != nil {
+			return true, ctrl.Result{}, err
+		}
+		if endpoint == "" {
+			// Registered before its pod has an address; started once it has one.
+			return false, ctrl.Result{}, nil
+		}
 		return r.start(ctx, mcpServer, claim)
 	case hangar.IsAlreadyRegistered(err):
 		// Core gained the name between its 404 and this POST, from its config
@@ -279,12 +309,25 @@ func (r *MCPServerReconciler) register(ctx context.Context, mcpServer *mcpv1alph
 	return true, ctrl.Result{}, r.writeRegistrationStatus(ctx, mcpServer, ReasonRegistrationFailed, err.Error())
 }
 
+// moveDiscovered takes over a server core discovered from this CR's own pod
+// before the CR declared a key (ADR-030 §4f). It is updated, not created
+// again: core gives it the key list and makes it a human's, and its name
+// enters the peer-key name record.
+func (r *MCPServerReconciler) moveDiscovered(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer, endpoint string) (bool, ctrl.Result, error) {
+	claim, err := r.Claims.take(ctx, mcpServer, endpoint)
+	if err != nil || claim == nil {
+		return true, ctrl.Result{RequeueAfter: errorRequeueAfter}, err
+	}
+	r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonRegistered, ActionReconcile,
+		"Moving %q, which core discovered from this MCPServer's pod, to a key-pinned registration", mcpServer.Name)
+	return r.deliverConnection(ctx, mcpServer, claim, coreTLS(mcpServer), endpoint)
+}
+
 // deliverConnection sends core a changed endpoint or tls block of a server
 // this operator registered, and records it on the claim once core took it.
 // Not done means the caller goes on; a refusal is reported like a registration.
 func (r *MCPServerReconciler) deliverConnection(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer,
-	claim *coordinationv1.Lease, tls map[string]any) (bool, ctrl.Result, error) {
-	endpoint := mcpServer.Spec.Endpoint
+	claim *coordinationv1.Lease, tls map[string]any, endpoint string) (bool, ctrl.Result, error) {
 	err := r.HangarClient.UpdateMCPServerConnection(ctx, mcpServer.Name, endpoint, tls)
 	switch {
 	case err == nil, hangar.IsNotRegistered(err):
