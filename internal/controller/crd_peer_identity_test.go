@@ -99,3 +99,23 @@ func TestCRDRules_ADiscoveryTemplateCannotCarryAPeerIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestCRDRules_AnAttestedContainerNeedsARuntimeClass(t *testing.T) {
+	attested := func(name string) *mcpv1alpha2.MCPServer {
+		s := celServer(name, mcpv1alpha2.MCPServerModeContainer)
+		s.Spec.TLS = &mcpv1alpha2.MCPServerTLS{PeerIdentity: &mcpv1alpha2.PeerIdentity{
+			KeyRef: "kbs:///default/payments/tls-key", SPKISHA256: []string{pinA}, Issuance: mcpv1alpha2.PeerKeyIssuanceKBSAttested,
+		}}
+		return s
+	}
+	requireRejected(t, createAndCleanup(t, attested("cel-attested-no-class")), "spec.runtimeClassName is required")
+
+	withClass := attested("cel-attested-class")
+	class := "kata-qemu-snp"
+	withClass.Spec.RuntimeClassName = &class
+	require.NoError(t, createAndCleanup(t, withClass))
+
+	operatorManaged := attested("cel-container-managed-keys")
+	operatorManaged.Spec.TLS.PeerIdentity.Issuance = ""
+	require.NoError(t, createAndCleanup(t, operatorManaged), "keys the operator manages need no runtime class")
+}

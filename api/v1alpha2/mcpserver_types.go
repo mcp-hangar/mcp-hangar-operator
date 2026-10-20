@@ -423,6 +423,7 @@ type MCPServer struct {
 	// +kubebuilder:validation:XValidation:rule="self.mode != 'remote' || (has(self.endpoint) && size(self.endpoint) > 0)",message="spec.endpoint is required when mode is remote"
 	// +kubebuilder:validation:XValidation:rule="self.mode != 'remote' || !has(self.endpoint) || size(self.endpoint) == 0 || (isURL(self.endpoint) && url(self.endpoint).getScheme() in ['http', 'https'] && size(url(self.endpoint).getHostname()) > 0)",message="spec.endpoint must be an absolute http or https URL with a host"
 	// +kubebuilder:validation:XValidation:rule="self.mode == oldSelf.mode",message="spec.mode is immutable: delete and recreate the MCPServer to change it"
+	// +kubebuilder:validation:XValidation:rule="self.mode != 'container' || !has(self.tls) || !has(self.tls.peerIdentity) || !has(self.tls.peerIdentity.issuance) || self.tls.peerIdentity.issuance != 'kbs-attested' || (has(self.runtimeClassName) && size(self.runtimeClassName) > 0)",message="spec.runtimeClassName is required for a container with issuance kbs-attested: an attested key is released only to a guest in a confidential runtime"
 	// +kubebuilder:validation:XValidation:rule="self.mode != 'remote' || !has(self.tls) || !has(self.tls.peerIdentity) || !has(self.endpoint) || (isURL(self.endpoint) && url(self.endpoint).getScheme() == 'https')",message="spec.endpoint must be https when spec.tls.peerIdentity is set: a key is checked in a TLS handshake"
 	Spec   MCPServerSpec   `json:"spec,omitempty"`
 	Status MCPServerStatus `json:"status,omitempty"`
