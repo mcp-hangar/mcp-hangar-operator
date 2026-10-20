@@ -476,13 +476,31 @@ func IsAlreadyRegistered(err error) bool {
 // RegisterRemoteMCPServer adds a remote server to core under name, with
 // POST /api/mcp_servers/.
 func (c *Client) RegisterRemoteMCPServer(ctx context.Context, name, endpoint string) (err error) {
+	return c.registerRemote(ctx, name, endpoint, nil)
+}
+
+// RegisterKeyPinnedMCPServer adds a remote server whose upstream core checks by
+// its key: tls carries core's peer_identity block (ADR-030). An empty endpoint
+// registers the server before its pod has an address.
+func (c *Client) RegisterKeyPinnedMCPServer(ctx context.Context, name, endpoint string, tls map[string]any) error {
+	return c.registerRemote(ctx, name, endpoint, tls)
+}
+
+func (c *Client) registerRemote(ctx context.Context, name, endpoint string, tls map[string]any) (err error) {
 	defer c.observe("register")(&err)
 	ctx, cancel := c.bound(ctx)
 	defer cancel()
 	// The path as core's route inventory publishes it, slash included.
 	url := fmt.Sprintf("%s/api/mcp_servers/", c.baseURL)
 
-	body, err := json.Marshal(map[string]string{"mcp_server_id": name, "mode": "remote", "endpoint": endpoint})
+	registration := map[string]any{"mcp_server_id": name, "mode": "remote"}
+	if endpoint != "" {
+		registration["endpoint"] = endpoint
+	}
+	if tls != nil {
+		registration["tls"] = tls
+	}
+	body, err := json.Marshal(registration)
 	if err != nil {
 		return fmt.Errorf("failed to marshal registration: %w", err)
 	}
@@ -503,6 +521,81 @@ func (c *Client) RegisterRemoteMCPServer(ctx context.Context, name, endpoint str
 		return fmt.Errorf("%w: %s", ErrAlreadyRegistered, name)
 	}
 	return fmt.Errorf("registration failed: %w", &StatusError{StatusCode: resp.StatusCode, Body: string(respBody)})
+}
+
+// UpdateMCPServerConnection changes a registered server's endpoint and tls
+// block with PUT /api/mcp_servers/{name}. Core changes both in place, keeping
+// the server's identity, and resets its start backoff on a new endpoint.
+func (c *Client) UpdateMCPServerConnection(ctx context.Context, name, endpoint string, tls map[string]any) (err error) {
+	defer c.observe("update")(&err)
+	ctx, cancel := c.bound(ctx)
+	defer cancel()
+	url := fmt.Sprintf("%s/api/mcp_servers/%s", c.baseURL, name)
+
+	update := map[string]any{"endpoint": nil}
+	if endpoint != "" {
+		update["endpoint"] = endpoint
+	}
+	if tls != nil {
+		update["tls"] = tls
+	}
+	body, err := json.Marshal(update)
+	if err != nil {
+		return fmt.Errorf("failed to marshal update: %w", err)
+	}
+	resp, err := c.doWithRetry(ctx, http.MethodPut, url, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		return nil
+	case resp.StatusCode == http.StatusBadRequest && strings.Contains(string(respBody), "ssrf_blocked"):
+		return fmt.Errorf("%w: %s", ErrEndpointNotTrusted, endpoint)
+	case resp.StatusCode == http.StatusNotFound:
+		return fmt.Errorf("%w: %s", ErrNotRegistered, name)
+	}
+	return fmt.Errorf("update failed: %w", &StatusError{StatusCode: resp.StatusCode, Body: string(respBody)})
+}
+
+// PeerIdentityCapability is what core lists in GET /api/system/ when it checks
+// an upstream's key; an older core would ignore the tls block (ADR-030 §4e).
+const PeerIdentityCapability = "peer_identity"
+
+// Capabilities is what this core says it enforces, from GET /api/system/. A core
+// that predates the list reports none.
+func (c *Client) Capabilities(ctx context.Context) (capabilities []string, err error) {
+	defer c.observe("capabilities")(&err)
+	ctx, cancel := c.bound(ctx)
+	defer cancel()
+	resp, err := c.doWithRetry(ctx, http.MethodGet, fmt.Sprintf("%s/api/system/", c.baseURL), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("system info failed: %w", &StatusError{StatusCode: resp.StatusCode, Body: string(body)})
+	}
+	var info struct {
+		System struct {
+			Capabilities []string `json:"capabilities"`
+		} `json:"system"`
+	}
+	if err := json.Unmarshal(body, &info); err != nil {
+		return nil, fmt.Errorf("failed to parse system info: %w", err)
+	}
+	return info.System.Capabilities, nil
+}
+
+// OverHTTPS reports whether this client reaches core over https. A key list is
+// public, and its integrity is only as good as this channel (ADR-030 §4).
+func (c *Client) OverHTTPS() bool {
+	return strings.HasPrefix(strings.ToLower(c.baseURL), "https://")
 }
 
 // StartMCPServer has core start a server, which for a remote one means
