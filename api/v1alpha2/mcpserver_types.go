@@ -33,6 +33,55 @@ const (
 // Prevents CRD status size explosion (etcd ~1.5MB limit).
 const MaxViolationRecords = 100
 
+// PeerKeyIssuance names how the keys in a peer identity were issued. The set is
+// closed: a value core does not know is refused rather than ignored.
+// +kubebuilder:validation:Enum=kbs-attested
+type PeerKeyIssuance string
+
+const (
+	// PeerKeyIssuanceKBSAttested declares that a Key Broker Service released
+	// each key only to an attested guest. A declaration, recorded as such:
+	// core verifies none of it.
+	PeerKeyIssuanceKBSAttested PeerKeyIssuance = "kbs-attested"
+)
+
+// PeerIdentity is a key lineage and the keys it may present.
+type PeerIdentity struct {
+	// KeyRef is the stable name of the key lineage. It survives rotation, and
+	// it is the server's identity in core: digest pins are bound to it.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=512
+	KeyRef string `json:"keyRef"`
+
+	// SPKISHA256 lists the keys the upstream may present, each the SHA-256 of
+	// its DER-encoded SubjectPublicKeyInfo as sha256: and 64 lowercase hex
+	// characters. List the next key beside the current one to rotate.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Pattern=`^sha256:[0-9a-f]{64}$`
+	// +listType=set
+	SPKISHA256 []string `json:"spkiSha256"`
+
+	// Issuance declares where the keys came from. Absent, the operator manages
+	// them.
+	// +optional
+	Issuance PeerKeyIssuance `json:"issuance,omitempty"`
+}
+
+// MCPServerTLS is a server's TLS block in core.
+// +kubebuilder:validation:XValidation:rule="!has(self.maxConnectionAge) || has(self.peerIdentity)",message="spec.tls.maxConnectionAge applies only with spec.tls.peerIdentity"
+type MCPServerTLS struct {
+	// PeerIdentity pins the upstream by its key.
+	// +optional
+	PeerIdentity *PeerIdentity `json:"peerIdentity,omitempty"`
+
+	// MaxConnectionAge caps how long one connection serves before a fresh
+	// handshake checks the key again. Core defaults it to 1h.
+	// +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="must be a positive duration such as 30m"
+	// +optional
+	MaxConnectionAge *metav1.Duration `json:"maxConnectionAge,omitempty"`
+}
+
 // MCPServerSpec defines the desired state of MCPServer
 type MCPServerSpec struct {
 	// Mode is the provider execution mode (container or remote)
@@ -71,6 +120,12 @@ type MCPServerSpec struct {
 	// +kubebuilder:validation:Pattern=`^/[^\s?#]*$`
 	// +optional
 	HealthPath string `json:"healthPath,omitempty"`
+
+	// TLS pins the server's upstream by its key: core accepts a connection
+	// only when the peer presents one of the listed keys, whatever certificate
+	// it shows (ADR-030). Setting it needs mcp_servers:peer_identity in core.
+	// +optional
+	TLS *MCPServerTLS `json:"tls,omitempty"`
 
 	// Replicas switches the server on (1) or off (0). A server runs at most one
 	// pod; values above 1 were accepted before and silently ran one (#192).
@@ -360,6 +415,7 @@ type MCPServer struct {
 	// +kubebuilder:validation:XValidation:rule="self.mode != 'remote' || (has(self.endpoint) && size(self.endpoint) > 0)",message="spec.endpoint is required when mode is remote"
 	// +kubebuilder:validation:XValidation:rule="self.mode != 'remote' || !has(self.endpoint) || size(self.endpoint) == 0 || (isURL(self.endpoint) && url(self.endpoint).getScheme() in ['http', 'https'] && size(url(self.endpoint).getHostname()) > 0)",message="spec.endpoint must be an absolute http or https URL with a host"
 	// +kubebuilder:validation:XValidation:rule="self.mode == oldSelf.mode",message="spec.mode is immutable: delete and recreate the MCPServer to change it"
+	// +kubebuilder:validation:XValidation:rule="self.mode != 'remote' || !has(self.tls) || !has(self.tls.peerIdentity) || !has(self.endpoint) || (isURL(self.endpoint) && url(self.endpoint).getScheme() == 'https')",message="spec.endpoint must be https when spec.tls.peerIdentity is set: a key is checked in a TLS handshake"
 	Spec   MCPServerSpec   `json:"spec,omitempty"`
 	Status MCPServerStatus `json:"status,omitempty"`
 }

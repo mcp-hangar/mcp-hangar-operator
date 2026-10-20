@@ -90,6 +90,9 @@ const (
 	// ReasonEndpointNotTrusted: core refused the endpoint as a private address
 	// outside its ssrf.trusted_networks.
 	ReasonEndpointNotTrusted = "EndpointNotTrusted"
+	// ReasonPeerIdentityNotCarried: the CR declares spec.tls.peerIdentity, and
+	// this operator does not yet register a key-pinned server with its key list.
+	ReasonPeerIdentityNotCarried = "PeerIdentityNotCarried"
 	// ReasonRegistrationForbidden: core accepted the operator's API key and
 	// refused it the registration (403): its role cannot create servers.
 	ReasonRegistrationForbidden = "RegistrationForbidden"
@@ -194,6 +197,13 @@ func (r *MCPServerReconciler) reconcileNormal(ctx context.Context, mcpServer *mc
 			return ctrl.Result{}, statusErr
 		}
 		return ctrl.Result{}, err
+	}
+
+	// Declared, not yet carried: running or registering a key-pinned server
+	// before the operator sends core its key list (#357) would serve it as a
+	// plain server whose key nothing checks. It is held, and says so.
+	if mcpServer.Spec.TLS != nil && mcpServer.Spec.TLS.PeerIdentity != nil {
+		return ctrl.Result{}, r.holdPeerIdentity(ctx, mcpServer)
 	}
 
 	// Route based on mode
@@ -388,6 +398,20 @@ func (r *MCPServerReconciler) reportPodStuck(mcpServer *mcpv1alpha2.MCPServer, r
 	setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, reason, msg)
 	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Dead")
 	return defaultRequeueAfter
+}
+
+// holdPeerIdentity reports a key-pinned CR this operator does not yet run or
+// register, and does neither.
+func (r *MCPServerReconciler) holdPeerIdentity(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) error {
+	msg := "spec.tls.peerIdentity is declared, and this operator does not yet register a key-pinned server " +
+		"with its key list; the server is neither run nor registered, rather than served without its key checked"
+	if conditionChanges(mcpServer.Status.Conditions, ConditionReady, metav1.ConditionFalse, ReasonPeerIdentityNotCarried) {
+		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonPeerIdentityNotCarried, ActionReconcile, "%s", msg)
+	}
+	mcpServer.Status.State = mcpv1alpha2.MCPServerStateCold
+	setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, ReasonPeerIdentityNotCarried, msg)
+	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, string(mcpServer.Status.State))
+	return writeStatus(ctx, r.Client, mcpServer)
 }
 
 // reconcileRemoteProvider handles remote-mode providers
