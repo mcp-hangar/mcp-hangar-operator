@@ -4236,6 +4236,22 @@ spec:
               endpoint:
                 description: Endpoint is the internal endpoint URL
                 type: string
+              initDataDigests:
+                description: |-
+                  InitDataDigests are the digests of the spec.initData bytes the operator
+                  rendered into the pod (ADR-031 §3).
+                properties:
+                  sha256:
+                    type: string
+                  sha384:
+                    type: string
+                  sha512:
+                    type: string
+                required:
+                - sha256
+                - sha384
+                - sha512
+                type: object
               lastHealthCheck:
                 description: LastHealthCheck is the last successful health check
                 format: date-time

@@ -34,7 +34,11 @@ func coreTLS(mcpServer *mcpv1alpha2.MCPServer) map[string]any {
 		return nil
 	}
 	identity := mcpServer.Spec.TLS.PeerIdentity
-	tls := map[string]any{"peer_identity": map[string]any{"key_ref": identity.KeyRef, "spki_sha256": identity.SPKISHA256}}
+	peer := map[string]any{"key_ref": identity.KeyRef, "spki_sha256": identity.SPKISHA256}
+	if identity.Issuance != "" {
+		peer["issuance"] = string(identity.Issuance)
+	}
+	tls := map[string]any{"peer_identity": peer}
 	if age := mcpServer.Spec.TLS.MaxConnectionAge; age != nil {
 		tls["max_connection_age"] = age.Seconds()
 	}
@@ -55,10 +59,6 @@ func tlsDigest(tls map[string]any) string {
 // core, or "" when it may (ADR-030 §4e). Each would have core serve the server
 // without its key checked, or have the key list cross an unprotected channel.
 func (r *MCPServerReconciler) peerIdentityRefusal(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) (string, string, error) {
-	if mcpServer.Spec.TLS.PeerIdentity.Issuance != "" {
-		return ReasonPeerIdentityNotCarried, "spec.tls.peerIdentity.issuance is declared, and core does not yet record " +
-			"a key issuance; remove it to register the server with its key list", nil
-	}
 	if !r.HangarClient.OverHTTPS() {
 		return ReasonPeerIdentityNotCarried, "a key list is delivered to core only over https; set hangar.url to an " +
 			"https:// address with hangar.tls.ca", nil
@@ -70,6 +70,10 @@ func (r *MCPServerReconciler) peerIdentityRefusal(ctx context.Context, mcpServer
 	if !slices.Contains(capabilities, hangar.PeerIdentityCapability) {
 		return ReasonPeerIdentityNotCarried, "core does not advertise the peer_identity capability, so it would " +
 			"ignore the key list and serve the server unchecked; upgrade core", nil
+	}
+	if mcpServer.Spec.TLS.PeerIdentity.Issuance != "" && !slices.Contains(capabilities, hangar.DeclaredKeyIssuanceCapability) {
+		return ReasonPeerIdentityNotCarried, "spec.tls.peerIdentity.issuance is declared, and core does not advertise " +
+			"the declared_key_issuance capability, so it would refuse the key list; upgrade core or remove issuance", nil
 	}
 	return "", "", nil
 }

@@ -372,10 +372,24 @@ type MCPServerStatus struct {
 	// +optional
 	Capabilities *MCPServerCapabilities `json:"capabilities,omitempty"`
 
+	// InitDataDigests are the digests of the spec.initData bytes the operator
+	// rendered into the pod (ADR-031 §3).
+	// +optional
+	InitDataDigests *InitDataDigests `json:"initDataDigests,omitempty"`
+
 	// Violations records detected capability violations (most recent MaxViolationRecords entries)
 	// +kubebuilder:validation:MaxItems=100
 	// +optional
 	Violations []ViolationRecord `json:"violations,omitempty"`
+}
+
+// InitDataDigests are lowercase hex digests of a server's init-data bytes:
+// SHA-256 is what SNP measures as HOSTDATA, SHA-384 what TDX measures as
+// MRCONFIGID.
+type InitDataDigests struct {
+	SHA256 string `json:"sha256"`
+	SHA384 string `json:"sha384"`
+	SHA512 string `json:"sha512"`
 }
 
 // ViolationRecord represents a detected capability violation.

@@ -203,6 +203,12 @@ func buildAnnotations(provider *mcpv1alpha2.MCPServer) map[string]string {
 		}
 	}
 
+	// The guest's init-data, byte for byte (ADR-031 §3). CEL admits it only on
+	// a kbs-attested container server.
+	if provider.Spec.InitData != "" {
+		annotations[AnnotationKataInitData] = EncodeInitData(provider.Spec.InitData)
+	}
+
 	return annotations
 }
 
