@@ -415,8 +415,13 @@ func keyPinned(name string, issuance mcpv1alpha2.PeerKeyIssuance, annotations ma
 		Issuance:   issuance,
 	}}
 	if issuance == mcpv1alpha2.PeerKeyIssuanceKBSAttested {
+		// Everything ADR-031 §3 requires of such a server, so only the
+		// annotation decides.
 		runtimeClass := "kata-qemu-snp"
 		s.Spec.RuntimeClassName = &runtimeClass
+		automount := false
+		s.Spec.AutomountServiceAccountToken = &automount
+		s.Spec.InitData = "[data]\n\"key_ref\" = \"payments-tls\"\n"
 	}
 	return s
 }

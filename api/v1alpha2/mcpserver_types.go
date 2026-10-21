@@ -214,6 +214,15 @@ type MCPServerSpec struct {
 	// +optional
 	RuntimeClassName *string `json:"runtimeClassName,omitempty"`
 
+	// InitData is the init-data document (TOML) a confidential guest is
+	// launched with, for a container-mode server declaring
+	// spec.tls.peerIdentity.issuance kbs-attested (ADR-031). The operator copies
+	// it byte for byte into the pod and never parses it: its hash is what the
+	// Key Broker Service binds the key to, so put no secret in it.
+	// +kubebuilder:validation:MaxLength=98304
+	// +optional
+	InitData string `json:"initData,omitempty"`
+
 	// Capabilities declares what resources the MCP server needs.
 	// Used by the operator for NetworkPolicy generation and enforcement.
 	// +optional
@@ -425,6 +434,12 @@ type MCPServer struct {
 	// +kubebuilder:validation:XValidation:rule="self.mode == oldSelf.mode",message="spec.mode is immutable: delete and recreate the MCPServer to change it"
 	// +kubebuilder:validation:XValidation:rule="self.mode != 'container' || !has(self.tls) || !has(self.tls.peerIdentity) || !has(self.tls.peerIdentity.issuance) || self.tls.peerIdentity.issuance != 'kbs-attested' || (has(self.runtimeClassName) && size(self.runtimeClassName) > 0)",message="spec.runtimeClassName is required for a container with issuance kbs-attested: an attested key is released only to a guest in a confidential runtime"
 	// +kubebuilder:validation:XValidation:rule="self.mode != 'remote' || !has(self.tls) || !has(self.tls.peerIdentity) || !has(self.endpoint) || (isURL(self.endpoint) && url(self.endpoint).getScheme() == 'https')",message="spec.endpoint must be https when spec.tls.peerIdentity is set: a key is checked in a TLS handshake"
+	// +kubebuilder:validation:XValidation:rule="!(self.mode == 'container' && has(self.tls) && has(self.tls.peerIdentity) && has(self.tls.peerIdentity.issuance) && self.tls.peerIdentity.issuance == 'kbs-attested') || (has(self.initData) && self.initData.contains(self.tls.peerIdentity.keyRef))",message="spec.initData is required on a kbs-attested container server, and it must name spec.tls.peerIdentity.keyRef (ADR-031)"
+	// +kubebuilder:validation:XValidation:rule="!has(self.initData) || size(self.initData) == 0 || (self.mode == 'container' && has(self.tls) && has(self.tls.peerIdentity) && has(self.tls.peerIdentity.issuance) && self.tls.peerIdentity.issuance == 'kbs-attested')",message="spec.initData applies only to a container-mode server whose spec.tls.peerIdentity.issuance is kbs-attested"
+	// +kubebuilder:validation:XValidation:rule="!(self.mode == 'container' && has(self.tls) && has(self.tls.peerIdentity) && has(self.tls.peerIdentity.issuance) && self.tls.peerIdentity.issuance == 'kbs-attested') || self.image.contains('@sha256:')",message="a kbs-attested server needs a digest-pinned spec.image (image@sha256:...): a tag resolves to whatever the host serves"
+	// +kubebuilder:validation:XValidation:rule="!(self.mode == 'container' && has(self.tls) && has(self.tls.peerIdentity) && has(self.tls.peerIdentity.issuance) && self.tls.peerIdentity.issuance == 'kbs-attested') || !has(self.env) || self.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.secretKeyRef))",message="a kbs-attested server cannot take spec.env from a Secret: the agent policy would carry its value in the public init-data"
+	// +kubebuilder:validation:XValidation:rule="!(self.mode == 'container' && has(self.tls) && has(self.tls.peerIdentity) && has(self.tls.peerIdentity.issuance) && self.tls.peerIdentity.issuance == 'kbs-attested') || !has(self.volumes) || self.volumes.all(v, has(v.emptyDir))",message="a kbs-attested server takes only emptyDir volumes: other volume contents reach the guest unchecked"
+	// +kubebuilder:validation:XValidation:rule="!(self.mode == 'container' && has(self.tls) && has(self.tls.peerIdentity) && has(self.tls.peerIdentity.issuance) && self.tls.peerIdentity.issuance == 'kbs-attested') || (has(self.automountServiceAccountToken) && !self.automountServiceAccountToken)",message="a kbs-attested server needs spec.automountServiceAccountToken: false"
 	Spec   MCPServerSpec   `json:"spec,omitempty"`
 	Status MCPServerStatus `json:"status,omitempty"`
 }

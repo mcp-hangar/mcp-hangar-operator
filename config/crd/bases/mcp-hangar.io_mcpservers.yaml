@@ -1478,6 +1478,15 @@ spec:
                   type: object
                   x-kubernetes-map-type: atomic
                 type: array
+              initData:
+                description: |-
+                  InitData is the init-data document (TOML) a confidential guest is
+                  launched with, for a container-mode server declaring
+                  spec.tls.peerIdentity.issuance kbs-attested (ADR-031). The operator copies
+                  it byte for byte into the pod and never parses it: its hash is what the
+                  Key Broker Service binds the key to, so put no secret in it.
+                maxLength: 98304
+                type: string
               mode:
                 description: Mode is the provider execution mode (container or remote)
                 enum:
@@ -4022,6 +4031,40 @@ spec:
               rule: self.mode != 'remote' || !has(self.tls) || !has(self.tls.peerIdentity)
                 || !has(self.endpoint) || (isURL(self.endpoint) && url(self.endpoint).getScheme()
                 == 'https')
+            - message: spec.initData is required on a kbs-attested container server,
+                and it must name spec.tls.peerIdentity.keyRef (ADR-031)
+              rule: '!(self.mode == ''container'' && has(self.tls) && has(self.tls.peerIdentity)
+                && has(self.tls.peerIdentity.issuance) && self.tls.peerIdentity.issuance
+                == ''kbs-attested'') || (has(self.initData) && self.initData.contains(self.tls.peerIdentity.keyRef))'
+            - message: spec.initData applies only to a container-mode server whose
+                spec.tls.peerIdentity.issuance is kbs-attested
+              rule: '!has(self.initData) || size(self.initData) == 0 || (self.mode
+                == ''container'' && has(self.tls) && has(self.tls.peerIdentity) &&
+                has(self.tls.peerIdentity.issuance) && self.tls.peerIdentity.issuance
+                == ''kbs-attested'')'
+            - message: 'a kbs-attested server needs a digest-pinned spec.image (image@sha256:...):
+                a tag resolves to whatever the host serves'
+              rule: '!(self.mode == ''container'' && has(self.tls) && has(self.tls.peerIdentity)
+                && has(self.tls.peerIdentity.issuance) && self.tls.peerIdentity.issuance
+                == ''kbs-attested'') || self.image.contains(''@sha256:'')'
+            - message: 'a kbs-attested server cannot take spec.env from a Secret:
+                the agent policy would carry its value in the public init-data'
+              rule: '!(self.mode == ''container'' && has(self.tls) && has(self.tls.peerIdentity)
+                && has(self.tls.peerIdentity.issuance) && self.tls.peerIdentity.issuance
+                == ''kbs-attested'') || !has(self.env) || self.env.all(e, !has(e.valueFrom)
+                || !has(e.valueFrom.secretKeyRef))'
+            - message: 'a kbs-attested server takes only emptyDir volumes: other volume
+                contents reach the guest unchecked'
+              rule: '!(self.mode == ''container'' && has(self.tls) && has(self.tls.peerIdentity)
+                && has(self.tls.peerIdentity.issuance) && self.tls.peerIdentity.issuance
+                == ''kbs-attested'') || !has(self.volumes) || self.volumes.all(v,
+                has(v.emptyDir))'
+            - message: 'a kbs-attested server needs spec.automountServiceAccountToken:
+                false'
+              rule: '!(self.mode == ''container'' && has(self.tls) && has(self.tls.peerIdentity)
+                && has(self.tls.peerIdentity.issuance) && self.tls.peerIdentity.issuance
+                == ''kbs-attested'') || (has(self.automountServiceAccountToken) &&
+                !self.automountServiceAccountToken)'
           status:
             description: MCPServerStatus defines the observed state of MCPServer
             properties:

@@ -1656,6 +1656,15 @@ spec:
                           type: object
                           x-kubernetes-map-type: atomic
                         type: array
+                      initData:
+                        description: |-
+                          InitData is the init-data document (TOML) a confidential guest is
+                          launched with, for a container-mode server declaring
+                          spec.tls.peerIdentity.issuance kbs-attested (ADR-031). The operator copies
+                          it byte for byte into the pod and never parses it: its hash is what the
+                          Key Broker Service binds the key to, so put no secret in it.
+                        maxLength: 98304
+                        type: string
                       mode:
                         description: Mode is the provider execution mode (container
                           or remote)
@@ -4251,6 +4260,10 @@ spec:
                 list'
               rule: '!has(self.providerTemplate) || !has(self.providerTemplate.spec)
                 || !has(self.providerTemplate.spec.tls) || !has(self.providerTemplate.spec.tls.peerIdentity)'
+            - message: 'spec.providerTemplate.spec.initData is not allowed: a discovered
+                server is never kbs-attested'
+              rule: '!has(self.providerTemplate) || !has(self.providerTemplate.spec)
+                || !has(self.providerTemplate.spec.initData)'
           status:
             description: MCPDiscoverySourceStatus defines the observed state of MCPDiscoverySource
             properties:
