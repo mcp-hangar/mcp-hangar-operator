@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.17.34](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.33...v0.17.34) (2026-10-21)
+
+### Added
+
+- **controller:** `manager render < mcpserver.yaml` prints the Deployment the operator would apply for a container-mode MCPServer (ADR-031). For a `kbs-attested` server, that output is the input Kata's `genpolicy` needs. Run it from the operator image of the release you deploy, against the stored object (`kubectl get mcpserver NAME -o yaml`), whose generation the pod template carries. A golden-file test pins the rendering of a `kbs-attested` server. Any change to it comes with an upgrade note. ([#377](https://github.com/mcp-hangar/mcp-hangar-operator/pull/377))
+- **controller:** the operator writes `spec.initData` byte for byte into the pod's `io.katacontainers.config.hypervisor.cc_init_data` annotation (gzip-compressed, then base64-encoded, as Kata reads it). It publishes the SHA-256, SHA-384 and SHA-512 of those bytes as `status.initDataDigests` (ADR-031). It now registers a key-pinned server that declares `issuance: kbs-attested` with a core that advertises `declared_key_issuance`, carrying the declaration in the key list. An older core still gets no such server. ([#376](https://github.com/mcp-hangar/mcp-hangar-operator/pull/376))
+- **api:** `MCPServerSpec` gains `initData`, the init-data document a confidential guest is launched with (ADR-031). On a container-mode server whose `spec.tls.peerIdentity.issuance` is `kbs-attested`, the CRD now requires `initData` naming `spec.tls.peerIdentity.keyRef`, a digest-pinned `spec.image`, no `env` taken from a Secret, only `emptyDir` volumes and `automountServiceAccountToken: false`. It refuses `initData` on any other server and on a discovery template. The operator does not yet carry the field into the pod. ([#373](https://github.com/mcp-hangar/mcp-hangar-operator/pull/373))
+- **config:** a ValidatingAdmissionPolicy, `kbs-attested-image`, refuses the `hangar.io/allow-mutable-image` annotation on any MCPServer whose `spec.tls.peerIdentity.issuance` is `kbs-attested` (ADR-030 §4). It has no parameters and a `Deny` binding, so it holds whatever `imageDigestPolicy` says and with the params ConfigMap missing. A key-pinned server without the declaration keeps the opt-out. ([#369](https://github.com/mcp-hangar/mcp-hangar-operator/pull/369))
+
+### Security
+
+- **deps:** the operator image is built with Go 1.27.3, which fixes CVE-2026-111943 in `crypto/x509` (HIGH). The image built with 1.27.2 carried it in its standard library. ([#375](https://github.com/mcp-hangar/mcp-hangar-operator/pull/375))
+
 ## [0.17.33](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.32...v0.17.33) (2026-10-21)
 
 ### Changed
