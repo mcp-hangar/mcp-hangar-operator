@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    mcp-hangar.io/generation: "0"
+  labels:
+    app.kubernetes.io/component: provider
+    app.kubernetes.io/instance: payments
+    app.kubernetes.io/managed-by: mcp-hangar-operator
+    app.kubernetes.io/name: payments
+    app.kubernetes.io/part-of: mcp-hangar
+    mcp-hangar.io/provider: payments
+  name: mcp-provider-payments
+  namespace: payments
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/managed-by: mcp-hangar-operator
+      mcp-hangar.io/provider: payments
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        io.katacontainers.config.hypervisor.cc_init_data: H4sIAAAAAAAA/wFcAKP/dmVyc2lvbiA9ICIwLjEuMCIKYWxnb3JpdGhtID0gInNoYTI1NiIKW2RhdGFdCiJrZXlfcmVmIiA9ICJrYnM6Ly8vZGVmYXVsdC9wYXltZW50cy90bHMta2V5Igoa2NcPXAAAAA==
+        mcp-hangar.io/generation: "0"
+      labels:
+        app.kubernetes.io/component: provider
+        app.kubernetes.io/instance: payments
+        app.kubernetes.io/managed-by: mcp-hangar-operator
+        app.kubernetes.io/name: payments
+        app.kubernetes.io/part-of: mcp-hangar
+        mcp-hangar.io/provider: payments
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - env:
+        - name: MCP_PROVIDER_NAME
+          value: payments
+        - name: MCP_PROVIDER_NAMESPACE
+          value: payments
+        - name: MCP_POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: MCP_POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: LOG_LEVEL
+          value: info
+        image: ghcr.io/example/payments@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        imagePullPolicy: IfNotPresent
+        name: provider
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+      restartPolicy: Always
+      runtimeClassName: kata-qemu-snp
+      securityContext:
+        fsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - emptyDir: {}
+        name: scratch
+status: {}

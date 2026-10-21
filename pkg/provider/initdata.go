@@ -2,11 +2,12 @@ package provider
 
 import (
 	"bytes"
-	"compress/gzip"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
+	"hash/crc32"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 )
@@ -16,16 +17,35 @@ import (
 const AnnotationKataInitData = "io.katacontainers.config.hypervisor.cc_init_data"
 
 // EncodeInitData is spec.initData in the form Kata reads from the annotation:
-// gzip-compressed, then base64-encoded. The document's bytes are not touched,
-// so the hash the Key Broker Service binds is the hash the guest presents. The
-// gzip header carries no name or time, so the same document always encodes the
-// same way and a reconcile never rolls the pod for nothing.
+// gzip, then base64. The document's bytes are not touched, so the hash the Key
+// Broker Service binds is the hash the guest presents.
+//
+// The gzip stream is written here, not by compress/gzip: what that package
+// emits for the same input differs between Go releases, at every level (1.26
+// and 1.27 end a stored stream differently), and a changed annotation rolls
+// every kbs-attested pod when the operator is rebuilt. A fixed header with no
+// name or time, stored deflate blocks (RFC 1951 §3.2.4) and the CRC-32 and size
+// trailer (RFC 1952) encode one document one way. The cost is size, which
+// spec.initData's maxLength bounds.
 func EncodeInitData(document string) string {
+	data := []byte(document)
 	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	// Writes to a bytes.Buffer do not fail.
-	_, _ = zw.Write([]byte(document))
-	_ = zw.Close()
+	// ID1 ID2, CM=deflate, no flags, MTIME 0, XFL 0, OS unknown.
+	buf.Write([]byte{0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff})
+	for first := true; first || len(data) > 0; first = false {
+		n := min(len(data), 0xffff)
+		final := byte(0)
+		if n == len(data) {
+			final = 1
+		}
+		buf.WriteByte(final) // BFINAL, BTYPE 00 (stored)
+		_ = binary.Write(&buf, binary.LittleEndian, uint16(n))
+		_ = binary.Write(&buf, binary.LittleEndian, ^uint16(n))
+		buf.Write(data[:n])
+		data = data[n:]
+	}
+	_ = binary.Write(&buf, binary.LittleEndian, crc32.ChecksumIEEE([]byte(document)))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(len(document)))
 	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 

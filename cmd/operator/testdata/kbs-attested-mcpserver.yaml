@@ -1,0 +1,27 @@
+apiVersion: mcp-hangar.io/v1alpha2
+kind: MCPServer
+metadata:
+  name: payments
+  namespace: payments
+spec:
+  mode: container
+  image: ghcr.io/example/payments@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  runtimeClassName: kata-qemu-snp
+  automountServiceAccountToken: false
+  env:
+    - name: LOG_LEVEL
+      value: info
+  volumes:
+    - name: scratch
+      emptyDir: {}
+  tls:
+    peerIdentity:
+      keyRef: kbs:///default/payments/tls-key
+      spkiSha256:
+        - sha256:9f2c000000000000000000000000000000000000000000000000000000000000
+      issuance: kbs-attested
+  initData: |
+    version = "0.1.0"
+    algorithm = "sha256"
+    [data]
+    "key_ref" = "kbs:///default/payments/tls-key"

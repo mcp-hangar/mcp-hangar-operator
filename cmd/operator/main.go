@@ -47,6 +47,14 @@ func init() {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == renderCommand {
+		if err := render(os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "render:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	var (
 		metricsAddr                     string
 		healthProbeAddr                 string
