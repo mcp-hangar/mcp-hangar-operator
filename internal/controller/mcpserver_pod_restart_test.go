@@ -209,3 +209,18 @@ func TestMCPServer_ForeignDeployment_IsNotOverwritten(t *testing.T) {
 	assert.Equal(t, ReasonDeploymentNameTaken,
 		getCondition(getMCPServer(t, r, "taken", "default").Status.Conditions, ConditionReady).Reason)
 }
+
+// ADR-031 T29: the status names the digests of the init-data the pod carries.
+func TestMCPServer_ContainerMode_PublishesTheInitDataDigests(t *testing.T) {
+	srv := restartServer("attested", 1)
+	srv.Spec.InitData = "[data]\n\"key_ref\" = \"payments-tls\"\n"
+	r := newMCPServerReconciler(srv)
+
+	reconcileMCPServer(t, r, "attested", "default")
+
+	out := getMCPServer(t, r, "attested", "default")
+	assert.Equal(t, provider.InitDataDigests(srv.Spec.InitData), out.Status.InitDataDigests)
+	d, err := getDeployment(t, r, "attested")
+	require.NoError(t, err)
+	assert.Contains(t, d.Spec.Template.Annotations, provider.AnnotationKataInitData)
+}

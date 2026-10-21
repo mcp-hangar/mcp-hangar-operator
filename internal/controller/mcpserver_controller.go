@@ -244,6 +244,9 @@ func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mc
 		return ctrl.Result{}, nil
 	}
 
+	// What the guest will present, from the spec alone: the pod need not exist.
+	mcpServer.Status.InitDataDigests = provider.InitDataDigests(mcpServer.Spec.InitData)
+
 	// Reconcile NetworkPolicy (independent of Pod lifecycle)
 	if err := r.reconcileNetworkPolicy(ctx, mcpServer); err != nil {
 		logger.Error(err, "Failed to reconcile NetworkPolicy")

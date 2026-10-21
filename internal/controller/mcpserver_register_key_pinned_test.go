@@ -196,9 +196,9 @@ func TestKeyPinned_IsNotRegisteredWhereItsKeyWouldGoUnchecked(t *testing.T) {
 	}{
 		"core without the capability": {newCore(), true, nil, "peer_identity capability"},
 		"plaintext hangar.url":        {newCore(hangar.PeerIdentityCapability), false, nil, "only over https"},
-		"a declared issuance": {newCore(hangar.PeerIdentityCapability), true, func(s *mcpv1alpha2.MCPServer) {
+		"a declared issuance, core does not record it": {newCore(hangar.PeerIdentityCapability), true, func(s *mcpv1alpha2.MCPServer) {
 			s.Spec.TLS.PeerIdentity.Issuance = mcpv1alpha2.PeerKeyIssuanceKBSAttested
-		}, "issuance"},
+		}, "declared_key_issuance capability"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -221,4 +221,19 @@ func TestKeyPinned_IsNotRegisteredWhereItsKeyWouldGoUnchecked(t *testing.T) {
 			assert.Contains(t, degraded.Message, c.message)
 		})
 	}
+}
+
+// ADR-031 §3: a core that records the declaration gets it with the key list.
+func TestKeyPinned_ADeclaredIssuanceIsRegisteredWithACoreThatRecordsIt(t *testing.T) {
+	core := newCore(hangar.PeerIdentityCapability, hangar.DeclaredKeyIssuanceCapability)
+	cr := keyPinnedCR("payments", keyA)
+	cr.Spec.TLS.PeerIdentity.Issuance = mcpv1alpha2.PeerKeyIssuanceKBSAttested
+	r, _ := overHTTPS(core.serve(t), cr)
+
+	reconcileMCPServer(t, r, "payments", "default")
+
+	registered := core.servers["payments"]
+	require.NotNil(t, registered)
+	assert.Equal(t, map[string]any{"key_ref": "lineage", "spki_sha256": []any{keyA}, "issuance": "kbs-attested"},
+		registered["tls"].(map[string]any)["peer_identity"])
 }

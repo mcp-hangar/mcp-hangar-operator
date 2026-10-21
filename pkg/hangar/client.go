@@ -596,6 +596,11 @@ func (c *Client) UpdateMCPServerConnection(ctx context.Context, name, endpoint s
 // an upstream's key; an older core would ignore the tls block (ADR-030 §4e).
 const PeerIdentityCapability = "peer_identity"
 
+// DeclaredKeyIssuanceCapability is what core lists when it accepts and records
+// tls.peer_identity.issuance (ADR-030 §2, core #1998, after 2.32.1); an older core refuses
+// the key at load.
+const DeclaredKeyIssuanceCapability = "declared_key_issuance"
+
 // Capabilities is what this core says it enforces, from GET /api/system/. A core
 // that predates the list reports none.
 func (c *Client) Capabilities(ctx context.Context) (capabilities []string, err error) {
