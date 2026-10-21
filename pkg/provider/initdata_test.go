@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,13 +32,21 @@ func decode(t *testing.T, annotation string) string {
 }
 
 func TestInitData_DecodesToTheSameBytes(t *testing.T) {
-	for _, doc := range []string{initData, initData + "\n", "no trailing newline", "\ttabs  and  spaces \r\n"} {
+	large := strings.Repeat("x = \"y\"\n", 12000) // past one 64 KiB stored block
+	for _, doc := range []string{initData, initData + "\n", "no trailing newline", "\ttabs  and  spaces \r\n", "", large} {
 		assert.Equal(t, doc, decode(t, EncodeInitData(doc)))
 	}
 }
 
 func TestInitData_EncodesTheSameWayEveryTime(t *testing.T) {
 	assert.Equal(t, EncodeInitData(initData), EncodeInitData(initData), "a reconcile must not roll the pod for nothing")
+}
+
+// Pinned bytes, not a round trip: compress/gzip's output moved between
+// Go 1.26 and 1.27, and a moved annotation would roll every kbs-attested pod
+// on an operator rebuild. Stored blocks do not move.
+func TestInitData_EncodesTheSameWayOnEveryGoRelease(t *testing.T) {
+	assert.Equal(t, "H4sIAAAAAAAA/wEEAPv/YWJjCk6BiEcEAAAA", EncodeInitData("abc\n"))
 }
 
 func TestInitData_DigestsAreOfTheBytes(t *testing.T) {

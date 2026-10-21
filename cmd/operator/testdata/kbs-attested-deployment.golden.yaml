@@ -24,7 +24,7 @@ spec:
   template:
     metadata:
       annotations:
-        io.katacontainers.config.hypervisor.cc_init_data: H4sIAAAAAAAA/wBcAKP/dmVyc2lvbiA9ICIwLjEuMCIKYWxnb3JpdGhtID0gInNoYTI1NiIKW2RhdGFdCiJrZXlfcmVmIiA9ICJrYnM6Ly8vZGVmYXVsdC9wYXltZW50cy90bHMta2V5IgoDABrY1w9cAAAA
+        io.katacontainers.config.hypervisor.cc_init_data: H4sIAAAAAAAA/wFcAKP/dmVyc2lvbiA9ICIwLjEuMCIKYWxnb3JpdGhtID0gInNoYTI1NiIKW2RhdGFdCiJrZXlfcmVmIiA9ICJrYnM6Ly8vZGVmYXVsdC9wYXltZW50cy90bHMta2V5Igoa2NcPXAAAAA==
         mcp-hangar.io/generation: "0"
       labels:
         app.kubernetes.io/component: provider

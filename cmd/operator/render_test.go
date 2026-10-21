@@ -28,7 +28,7 @@ func TestRender_AKBSAttestedServerRendersTheGoldenDeployment(t *testing.T) {
 
 	golden := filepath.Join("testdata", "kbs-attested-deployment.golden.yaml")
 	if *update {
-		require.NoError(t, os.WriteFile(golden, out.Bytes(), 0o644))
+		require.NoError(t, os.WriteFile(golden, out.Bytes(), 0o600))
 	}
 	want, err := os.ReadFile(golden)
 	require.NoError(t, err)
