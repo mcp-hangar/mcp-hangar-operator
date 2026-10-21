@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.33](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.32...v0.17.33) (2026-10-21)
+
+### Changed
+
+- **controller:** moving a server core discovered from an `MCPServer`'s own pod to a key-pinned registration now also needs core to report the server's provenance as `discovery` (core 2.32.0 or newer). A server under the same name that core says a human registered is reported as `NameTaken` and left alone, even while the CR's Deployment still stamps its pods for discovery. A core that reports no provenance is judged by the Deployment alone, as before. ([#367](https://github.com/mcp-hangar/mcp-hangar-operator/pull/367))
+
 ## [0.17.32](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.31...v0.17.32) (2026-10-20)
 
 ### Added
