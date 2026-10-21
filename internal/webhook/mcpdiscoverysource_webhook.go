@@ -132,4 +132,3 @@ func sameConfigMapRef(oldObj, newObj *mcpv1alpha2.MCPDiscoverySource) bool {
 func (v *MCPDiscoverySourceV1alpha2Validator) ValidateDelete(_ context.Context, _ *mcpv1alpha2.MCPDiscoverySource) (admission.Warnings, error) {
 	return nil, nil
 }
-

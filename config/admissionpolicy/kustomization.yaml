@@ -1,6 +1,7 @@
 resources:
 - wildcard_egress.yaml
 - image_digest.yaml
+- kbs_attested_image.yaml
 - params.yaml
 
 configurations:
