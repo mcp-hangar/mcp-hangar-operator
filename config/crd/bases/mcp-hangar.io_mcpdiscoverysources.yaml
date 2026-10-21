@@ -1972,6 +1972,14 @@ spec:
                               More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                             type: object
                         type: object
+                      runtimeClassName:
+                        description: |-
+                          RuntimeClassName selects the pod's RuntimeClass, for a sandboxed runtime
+                          such as gVisor or Kata, or a confidential VM. The class must exist in the
+                          cluster: the kubelet refuses a pod naming one that does not.
+                        maxLength: 253
+                        pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        type: string
                       serviceAccountName:
                         description: ServiceAccountName is the ServiceAccount for
                           the provider pod
@@ -1992,6 +2000,57 @@ spec:
                         x-kubernetes-validations:
                         - message: must be a non-negative duration such as 30s
                           rule: duration(self) >= duration('0s')
+                      tls:
+                        description: |-
+                          TLS pins the server's upstream by its key: core accepts a connection
+                          only when the peer presents one of the listed keys, whatever certificate
+                          it shows (ADR-030). Setting it needs mcp_servers:peer_identity in core.
+                        properties:
+                          maxConnectionAge:
+                            description: |-
+                              MaxConnectionAge caps how long one connection serves before a fresh
+                              handshake checks the key again. Core defaults it to 1h.
+                            type: string
+                            x-kubernetes-validations:
+                            - message: must be a positive duration such as 30m
+                              rule: duration(self) > duration('0s')
+                          peerIdentity:
+                            description: PeerIdentity pins the upstream by its key.
+                            properties:
+                              issuance:
+                                description: |-
+                                  Issuance declares where the keys came from. Absent, the operator manages
+                                  them.
+                                enum:
+                                - kbs-attested
+                                type: string
+                              keyRef:
+                                description: |-
+                                  KeyRef is the stable name of the key lineage. It survives rotation, and
+                                  it is the server's identity in core: digest pins are bound to it.
+                                maxLength: 512
+                                minLength: 1
+                                type: string
+                              spkiSha256:
+                                description: |-
+                                  SPKISHA256 lists the keys the upstream may present, each the SHA-256 of
+                                  its DER-encoded SubjectPublicKeyInfo as sha256: and 64 lowercase hex
+                                  characters. List the next key beside the current one to rotate.
+                                items:
+                                  pattern: ^sha256:[0-9a-f]{64}$
+                                  type: string
+                                maxItems: 16
+                                minItems: 1
+                                type: array
+                                x-kubernetes-list-type: set
+                            required:
+                            - keyRef
+                            - spkiSha256
+                            type: object
+                        type: object
+                        x-kubernetes-validations:
+                        - message: spec.tls.maxConnectionAge applies only with spec.tls.peerIdentity
+                          rule: '!has(self.maxConnectionAge) || has(self.peerIdentity)'
                       tolerations:
                         description: Tolerations for pod scheduling
                         items:
@@ -4187,6 +4246,11 @@ spec:
               rule: self.type != 'Namespace' || (has(self.providerTemplate) && has(self.providerTemplate.spec)
                 && has(self.providerTemplate.spec.endpoint) && size(self.providerTemplate.spec.endpoint)
                 > 0)
+            - message: 'spec.providerTemplate.spec.tls.peerIdentity is not allowed:
+                every server the source yields would share one keyRef and one key
+                list'
+              rule: '!has(self.providerTemplate) || !has(self.providerTemplate.spec)
+                || !has(self.providerTemplate.spec.tls) || !has(self.providerTemplate.spec.tls.peerIdentity)'
           status:
             description: MCPDiscoverySourceStatus defines the observed state of MCPDiscoverySource
             properties:

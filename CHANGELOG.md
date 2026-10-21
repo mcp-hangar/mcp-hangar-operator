@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.17.33](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.32...v0.17.33) (2026-10-21)
+
+### Changed
+
+- **controller:** moving a server core discovered from an `MCPServer`'s own pod to a key-pinned registration now also needs core to report the server's provenance as `discovery` (core 2.32.0 or newer). A server under the same name that core says a human registered is reported as `NameTaken` and left alone, even while the CR's Deployment still stamps its pods for discovery. A core that reports no provenance is judged by the Deployment alone, as before. ([#367](https://github.com/mcp-hangar/mcp-hangar-operator/pull/367))
+
+## [0.17.32](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.31...v0.17.32) (2026-10-20)
+
+### Added
+
+- **controller:** a remote `MCPServer` with `spec.tls.peerIdentity` is registered with core together with its key list (ADR-030 §4). The operator registers it only when core lists the `peer_identity` capability in `GET /api/system` and `hangar.url` is `https`. A declared `issuance` is not registered either, because core does not record it yet. In each of these cases the CR reports `Degraded` with reason `PeerIdentityNotCarried`. A changed endpoint or key list is delivered to core in place with `PUT`, keeping the server's identity, rather than by removing the server and registering it again. A refused delivery is retried. A container-mode `MCPServer` with a peer identity is still held without a pod. ([#361](https://github.com/mcp-hangar/mcp-hangar-operator/pull/361))
+- **controller:** a container-mode `MCPServer` with `spec.tls.peerIdentity` now runs (ADR-030 §4a, §4c, §4f).
+  - **Registration:** it is registered with core with its key list before its pod exists, without an endpoint, and core is not asked to start it until it has one.
+  - **Endpoint:** it follows the pod. It is set to `https://<pod IP>:8080` (IPv6 bracketed) once the pod has an address, and cleared while no pod has one, so a call is refused rather than sent to an address another pod may inherit.
+  - **Discovery:** its pod carries no discovery annotations, so core never discovers it as a plain server.
+  - **Moving a discovered server:** a server that core discovered from this MCPServer's own pod before the key was declared is updated in place, not registered again. A server under the same name that someone else registered is reported as `NameTaken` and left alone.
+  - **Refused registrations:** when a key-pinned CR cannot be registered (no capability, plaintext `hangar.url`, or a declared `issuance`), anything it registered before is removed from core rather than left serving the name plain. ([#363](https://github.com/mcp-hangar/mcp-hangar-operator/pull/363))
+- **api:** a container-mode `MCPServer` whose `spec.tls.peerIdentity.issuance` is `kbs-attested` must set `spec.runtimeClassName` (ADR-030 §4, T14). An attested key is released only to a guest in a confidential runtime. This is a precondition, not evidence: any runtime class satisfies it, and none attests anything by itself. A remote server, or a container whose keys the operator manages, needs no runtime class. ([#366](https://github.com/mcp-hangar/mcp-hangar-operator/pull/366))
+- **api:** `MCPServerSpec` gains an optional `runtimeClassName`, passed into the provider pod's `RuntimeClassName`, so a server can run under a sandboxed runtime such as gVisor or Kata, or in a confidential VM. The name must be a DNS subdomain. The class must exist in the cluster; the kubelet refuses a pod naming one that does not. Absent, the pod uses the cluster's default runtime as before. ([#364](https://github.com/mcp-hangar/mcp-hangar-operator/pull/364))
+
+## [0.17.31](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.30...v0.17.31) (2026-10-20)
+
+### Added
+
+- **api:** `MCPServerSpec` gains `tls: {peerIdentity: {keyRef, spkiSha256, issuance}, maxConnectionAge}` (ADR-030), validated by the apiserver with no webhook. `spkiSha256` takes one to sixteen key pins, each in the canonical `sha256:` plus 64-lowercase-hex form. `keyRef` is required. `issuance` accepts only `kbs-attested`. `maxConnectionAge` must be positive and needs a `peerIdentity`. A remote key-pinned server needs an `https` endpoint. An `MCPDiscoverySource` whose `providerTemplate` carries a `peerIdentity` is refused, since every server it yields would share one key list. This operator does not yet register a key-pinned server with its key list, so a CR that declares `peerIdentity` is neither run nor registered. It reports `Ready=False` with reason `PeerIdentityNotCarried`, instead of being served as a plain server. ([#359](https://github.com/mcp-hangar/mcp-hangar-operator/pull/359))
+
 ## [0.17.30](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.29...v0.17.30) (2026-10-15)
 
 ### Added

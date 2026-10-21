@@ -90,6 +90,10 @@ const (
 	// ReasonEndpointNotTrusted: core refused the endpoint as a private address
 	// outside its ssrf.trusted_networks.
 	ReasonEndpointNotTrusted = "EndpointNotTrusted"
+	// ReasonPeerIdentityNotCarried: the CR declares spec.tls.peerIdentity, and
+	// its key list cannot reach core: a container-mode server, a declared
+	// issuance, a plaintext hangar.url, or a core without the capability.
+	ReasonPeerIdentityNotCarried = "PeerIdentityNotCarried"
 	// ReasonRegistrationForbidden: core accepted the operator's API key and
 	// refused it the registration (403): its role cannot create servers.
 	ReasonRegistrationForbidden = "RegistrationForbidden"
@@ -196,6 +200,14 @@ func (r *MCPServerReconciler) reconcileNormal(ctx context.Context, mcpServer *mc
 		return ctrl.Result{}, err
 	}
 
+	// A key-pinned container is registered by the operator, which needs core's
+	// client and the registration claims. Without them its pod would run with
+	// nobody to tell core its key list. It is held, and says so.
+	if keyPinned(mcpServer) && mcpServer.Spec.Mode == mcpv1alpha2.MCPServerModeContainer &&
+		(r.HangarClient == nil || r.Claims == nil) {
+		return ctrl.Result{}, r.holdPeerIdentity(ctx, mcpServer)
+	}
+
 	// Route based on mode
 	switch mcpServer.Spec.Mode {
 	case mcpv1alpha2.MCPServerModeContainer:
@@ -250,6 +262,19 @@ func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mc
 
 	// Audit wildcard egress override usage (emits Warning event for audit trail)
 	r.reconcileEgressAudit(ctx, mcpServer)
+
+	// A key-pinned container is registered before its pod exists and its
+	// endpoint follows the pod: set when the pod has an address, cleared when
+	// it goes. Its pod carries no discovery annotations (ADR-030 §4a, §4c).
+	if keyPinned(mcpServer) {
+		endpoint, err := r.podEndpoint(ctx, mcpServer)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if _, _, err := r.registration(ctx, mcpServer, endpoint); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 
 	return r.reconcileDeployment(ctx, mcpServer)
 }
@@ -388,6 +413,20 @@ func (r *MCPServerReconciler) reportPodStuck(mcpServer *mcpv1alpha2.MCPServer, r
 	setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, reason, msg)
 	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Dead")
 	return defaultRequeueAfter
+}
+
+// holdPeerIdentity reports a key-pinned CR this operator does not yet run or
+// register, and does neither.
+func (r *MCPServerReconciler) holdPeerIdentity(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) error {
+	msg := "spec.tls.peerIdentity is declared on a container-mode server, and this operator runs without " +
+		"--hangar-url, so it cannot register the server with its key list; its pod is not created"
+	if conditionChanges(mcpServer.Status.Conditions, ConditionReady, metav1.ConditionFalse, ReasonPeerIdentityNotCarried) {
+		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonPeerIdentityNotCarried, ActionReconcile, "%s", msg)
+	}
+	mcpServer.Status.State = mcpv1alpha2.MCPServerStateCold
+	setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, ReasonPeerIdentityNotCarried, msg)
+	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, string(mcpServer.Status.State))
+	return writeStatus(ctx, r.Client, mcpServer)
 }
 
 // reconcileRemoteProvider handles remote-mode providers

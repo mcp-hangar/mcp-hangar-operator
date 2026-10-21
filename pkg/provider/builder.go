@@ -89,6 +89,7 @@ func BuildPodForMCPServer(provider *mcpv1alpha2.MCPServer) (*corev1.Pod, error) 
 			NodeSelector:                  provider.Spec.NodeSelector,
 			ImagePullSecrets:              provider.Spec.ImagePullSecrets,
 			PriorityClassName:             provider.Spec.PriorityClassName,
+			RuntimeClassName:              provider.Spec.RuntimeClassName,
 			TerminationGracePeriodSeconds: getTerminationGracePeriod(provider),
 		},
 	}
@@ -188,7 +189,11 @@ func buildAnnotations(provider *mcpv1alpha2.MCPServer) map[string]string {
 		AnnotationGeneration: strconv.FormatInt(provider.Generation, 10),
 	}
 
-	if provider.Spec.Mode == mcpv1alpha2.MCPServerModeContainer {
+	// A key-pinned server is registered by the operator with its key list.
+	// Discovered, it would be a plain server whose key nothing checks
+	// (ADR-030 §4c).
+	keyPinned := provider.Spec.TLS != nil && provider.Spec.TLS.PeerIdentity != nil
+	if provider.Spec.Mode == mcpv1alpha2.MCPServerModeContainer && !keyPinned {
 		annotations[AnnotationDiscoveryEnabled] = "true"
 		annotations[AnnotationDiscoveryName] = provider.Name
 		annotations[AnnotationDiscoveryMode] = DiscoveryModeHTTP

@@ -494,3 +494,25 @@ func findVolumeMount(mounts []corev1.VolumeMount, name string) *corev1.VolumeMou
 	}
 	return nil
 }
+
+func TestBuildPodForMCPServer_RuntimeClassName(t *testing.T) {
+	gvisor := "gvisor"
+	withClass := &mcpv1alpha2.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "sandboxed", Namespace: "default"},
+		Spec: mcpv1alpha2.MCPServerSpec{
+			Mode: mcpv1alpha2.MCPServerModeContainer, Image: "ghcr.io/example/provider:1.0", RuntimeClassName: &gvisor,
+		},
+	}
+	pod, err := BuildPodForMCPServer(withClass)
+	require.NoError(t, err)
+	require.NotNil(t, pod.Spec.RuntimeClassName)
+	assert.Equal(t, "gvisor", *pod.Spec.RuntimeClassName)
+	dep, err := BuildDeploymentForMCPServer(withClass)
+	require.NoError(t, err)
+	require.NotNil(t, dep.Spec.Template.Spec.RuntimeClassName, "the Deployment's pod gets it too")
+
+	withClass.Spec.RuntimeClassName = nil
+	pod, err = BuildPodForMCPServer(withClass)
+	require.NoError(t, err)
+	assert.Nil(t, pod.Spec.RuntimeClassName, "absent, the cluster's default runtime is used")
+}

@@ -336,7 +336,7 @@ func TestRemote_ClaimedButNotRegisteredIsRegistered(t *testing.T) {
 	core := c.server(t)
 	p := remoteCR("default", "notes", "http://notes:8080/mcp")
 	r, _ := reconcilerAgainst(core, p)
-	_, err := r.Claims.take(context.Background(), p)
+	_, err := r.Claims.take(context.Background(), p, p.Spec.Endpoint)
 	require.NoError(t, err)
 
 	reconcileMCPServer(t, r, "notes", "default")

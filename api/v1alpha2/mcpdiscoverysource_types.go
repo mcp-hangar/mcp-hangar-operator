@@ -30,6 +30,7 @@ const (
 // MCPDiscoverySourceSpec defines the desired state of MCPDiscoverySource
 // +kubebuilder:validation:XValidation:rule="self.type != 'ConfigMap' || has(self.configMapRef)",message="spec.configMapRef is required when spec.type is ConfigMap"
 // +kubebuilder:validation:XValidation:rule="self.type != 'Namespace' || (has(self.providerTemplate) && has(self.providerTemplate.spec) && has(self.providerTemplate.spec.endpoint) && size(self.providerTemplate.spec.endpoint) > 0)",message="spec.providerTemplate.spec.endpoint is required when spec.type is Namespace: a namespace names no Service to dial, and every server it yields is remote"
+// +kubebuilder:validation:XValidation:rule="!has(self.providerTemplate) || !has(self.providerTemplate.spec) || !has(self.providerTemplate.spec.tls) || !has(self.providerTemplate.spec.tls.peerIdentity)",message="spec.providerTemplate.spec.tls.peerIdentity is not allowed: every server the source yields would share one keyRef and one key list"
 type MCPDiscoverySourceSpec struct {
 	// Type is the discovery source type
 	// +kubebuilder:validation:Required
