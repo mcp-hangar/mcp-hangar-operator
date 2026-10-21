@@ -261,7 +261,6 @@ func TestMCPServer_RemoteMode_Healthy_RequeuesSlow(t *testing.T) {
 	assert.Equal(t, mcpv1alpha2.MCPServerStateReady, got.Status.State)
 }
 
-
 func TestMCPServer_Deletion_CleansDeploymentAndFinalizer(t *testing.T) {
 	p := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{

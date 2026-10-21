@@ -1,0 +1,60 @@
+# A server whose key list declares issuance: kbs-attested may not opt out of
+# a digest-pinned image (ADR-030 §4, #358). The declaration says a Key Broker
+# Service released the key only to an attested guest; a mutable tag would let
+# the image change under that guest after the key was bound to it.
+#
+# No paramKind on purpose. The image digest policy is parameterised and admits
+# when its ConfigMap is missing or its level is warn or off; this rule must
+# hold at every level and with no ConfigMap, so it reads none. CRD CEL cannot
+# see metadata.annotations, which is why this is an admission policy.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: kbs-attested-image
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["mcp-hangar.io"]
+      apiVersions: ["*"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["mcpservers"]
+  matchConditions:
+  - name: not-deleting
+    expression: "!has(object.metadata.deletionTimestamp)"
+  # Ratchet, as image-digest and wildcard-egress do: an update that leaves the
+  # declaration and the opt-out alone is not re-judged, so an object admitted
+  # before this policy existed can still be reconciled and deleted.
+  - name: issuance-or-opt-out-changed
+    expression: >-
+      request.operation != 'UPDATE' ||
+      (has(object.spec.tls) && has(object.spec.tls.peerIdentity) && has(object.spec.tls.peerIdentity.issuance)
+        ? object.spec.tls.peerIdentity.issuance : '') !=
+      (has(oldObject.spec.tls) && has(oldObject.spec.tls.peerIdentity) && has(oldObject.spec.tls.peerIdentity.issuance)
+        ? oldObject.spec.tls.peerIdentity.issuance : '') ||
+      (has(object.metadata.annotations) && 'hangar.io/allow-mutable-image' in object.metadata.annotations
+        ? object.metadata.annotations['hangar.io/allow-mutable-image'] : '') !=
+      (has(oldObject.metadata.annotations) && 'hangar.io/allow-mutable-image' in oldObject.metadata.annotations
+        ? oldObject.metadata.annotations['hangar.io/allow-mutable-image'] : '')
+  variables:
+  - name: kbsAttested
+    expression: >-
+      has(object.spec.tls) && has(object.spec.tls.peerIdentity) &&
+      has(object.spec.tls.peerIdentity.issuance) && object.spec.tls.peerIdentity.issuance == 'kbs-attested'
+  - name: optedOut
+    expression: >-
+      has(object.metadata.annotations) && 'hangar.io/allow-mutable-image' in object.metadata.annotations
+  validations:
+  - expression: "!variables.kbsAttested || !variables.optedOut"
+    message: >-
+      tls.peerIdentity.issuance is kbs-attested, so the image must stay digest-pinned:
+      remove the hangar.io/allow-mutable-image annotation
+    reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: kbs-attested-image
+spec:
+  policyName: kbs-attested-image
+  validationActions: ["Deny"]

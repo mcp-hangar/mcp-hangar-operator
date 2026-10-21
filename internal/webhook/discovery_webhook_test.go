@@ -14,7 +14,6 @@ import (
 
 // ── MCPDiscoverySource (v1alpha2) ─────────────────────────────────────
 
-
 func TestDiscoveryV2_InvalidIncludeRegexp(t *testing.T) {
 	v := &webhook.MCPDiscoverySourceV1alpha2Validator{}
 	d := &mcpv1alpha2.MCPDiscoverySource{

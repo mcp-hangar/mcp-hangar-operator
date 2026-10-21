@@ -110,7 +110,7 @@ func installPolicies() error {
 		return err
 	}
 	dir := filepath.Join("..", "..", "config", "admissionpolicy")
-	for _, name := range []string{"wildcard_egress.yaml", "image_digest.yaml", "params.yaml"} {
+	for _, name := range []string{"wildcard_egress.yaml", "image_digest.yaml", "kbs_attested_image.yaml", "params.yaml"} {
 		data, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			return err
@@ -402,4 +402,82 @@ func TestWildcardEgress_LegacyServerKeepsReconciling(t *testing.T) {
 	err := k8sClient.Update(ctx, narrowed, client.DryRunAll)
 	require.Error(t, err, "an egress change is judged, and the wildcard is still there")
 	assert.Contains(t, err.Error(), egressOptIn)
+}
+
+// keyPinned is a container-mode server pinned by its key, declaring
+// issuance when one is given, with a digest-pinned image so the image digest
+// policy has nothing to say about it.
+func keyPinned(name string, issuance mcpv1alpha2.PeerKeyIssuance, annotations map[string]string) *mcpv1alpha2.MCPServer {
+	s := containerServer(name, pinnedImage, annotations)
+	s.Spec.TLS = &mcpv1alpha2.MCPServerTLS{PeerIdentity: &mcpv1alpha2.PeerIdentity{
+		KeyRef:     "payments-tls",
+		SPKISHA256: []string{"sha256:" + strings.Repeat("a", 64)},
+		Issuance:   issuance,
+	}}
+	if issuance == mcpv1alpha2.PeerKeyIssuanceKBSAttested {
+		runtimeClass := "kata-qemu-snp"
+		s.Spec.RuntimeClassName = &runtimeClass
+	}
+	return s
+}
+
+const mutableImageOptOut = "hangar.io/allow-mutable-image"
+
+// TestKBSAttested_RefusesTheMutableImageOptOut is T15 (ADR-030 §4, #358): a
+// server declaring issuance: kbs-attested cannot carry the opt-out, whatever
+// the image digest policy's level, and with its ConfigMap gone; a key-pinned
+// server without the declaration carries it as before.
+func TestKBSAttested_RefusesTheMutableImageOptOut(t *testing.T) {
+	optedOut := map[string]string{mutableImageOptOut: "true"}
+	for _, level := range []string{"block", "warn", "off"} {
+		setDigestLevel(t, level)
+		t.Run(level, func(t *testing.T) {
+			err := dryRunCreate(keyPinned("kbs-"+level, mcpv1alpha2.PeerKeyIssuanceKBSAttested, optedOut))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "remove the hangar.io/allow-mutable-image annotation")
+
+			require.NoError(t, dryRunCreate(keyPinned("kbs-clean-"+level, mcpv1alpha2.PeerKeyIssuanceKBSAttested, nil)))
+		})
+	}
+
+	setDigestLevel(t, "off")
+	require.NoError(t, dryRunCreate(keyPinned("operator-managed", "", optedOut)),
+		"a key-pinned server without issuance keeps the opt-out")
+
+	t.Run("no ConfigMap", func(t *testing.T) {
+		// At block, the probe below is refused until the ConfigMap is gone.
+		setDigestLevel(t, "block")
+		cm := &corev1.ConfigMap{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Namespace: paramsNamespace, Name: paramsName}, cm))
+		require.NoError(t, k8sClient.Delete(ctx, cm))
+		t.Cleanup(func() {
+			restored := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: paramsNamespace, Name: paramsName}, Data: cm.Data}
+			require.NoError(t, k8sClient.Create(ctx, restored))
+		})
+		// The digest bindings admit everything without the ConfigMap; wait
+		// until the apiserver has seen it go, then judge.
+		require.Eventually(t, func() bool {
+			return dryRunCreate(containerServer("probe-no-params", "ghcr.io/example/app:latest", nil)) == nil
+		}, 30*time.Second, 200*time.Millisecond)
+
+		err := dryRunCreate(keyPinned("kbs-no-params", mcpv1alpha2.PeerKeyIssuanceKBSAttested, optedOut))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "remove the hangar.io/allow-mutable-image annotation")
+	})
+
+	t.Run("remote mode", func(t *testing.T) {
+		remote := &mcpv1alpha2.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "kbs-remote", Namespace: testNamespace, Annotations: optedOut},
+			Spec: mcpv1alpha2.MCPServerSpec{
+				Mode:     mcpv1alpha2.MCPServerModeRemote,
+				Endpoint: "https://payments.example.com:8443/mcp",
+				TLS: &mcpv1alpha2.MCPServerTLS{PeerIdentity: &mcpv1alpha2.PeerIdentity{
+					KeyRef:     "payments-tls",
+					SPKISHA256: []string{"sha256:" + strings.Repeat("a", 64)},
+					Issuance:   mcpv1alpha2.PeerKeyIssuanceKBSAttested,
+				}},
+			},
+		}
+		require.Error(t, dryRunCreate(remote))
+	})
 }
