@@ -1,9 +1,11 @@
 package controller
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
@@ -110,12 +112,96 @@ func TestCRDRules_AnAttestedContainerNeedsARuntimeClass(t *testing.T) {
 	}
 	requireRejected(t, createAndCleanup(t, attested("cel-attested-no-class")), "spec.runtimeClassName is required")
 
-	withClass := attested("cel-attested-class")
-	class := "kata-qemu-snp"
-	withClass.Spec.RuntimeClassName = &class
-	require.NoError(t, createAndCleanup(t, withClass))
+	require.NoError(t, createAndCleanup(t, kbsAttestedContainer("cel-attested-class")))
 
 	operatorManaged := attested("cel-container-managed-keys")
 	operatorManaged.Spec.TLS.PeerIdentity.Issuance = ""
 	require.NoError(t, createAndCleanup(t, operatorManaged), "keys the operator manages need no runtime class")
+}
+
+const attestedKeyRef = "kbs:///default/payments/tls-key"
+
+// kbsAttestedContainer is a container-mode server that satisfies every rule
+// ADR-031 §3 sets for issuance kbs-attested.
+func kbsAttestedContainer(name string) *mcpv1alpha2.MCPServer {
+	s := celServer(name, mcpv1alpha2.MCPServerModeContainer)
+	s.Spec.Image = "ghcr.io/example/provider@sha256:" + strings.Repeat("0", 64)
+	class := "kata-qemu-snp"
+	s.Spec.RuntimeClassName = &class
+	automount := false
+	s.Spec.AutomountServiceAccountToken = &automount
+	s.Spec.InitData = "version = \"0.1.0\"\nalgorithm = \"sha256\"\n[data]\n\"key_ref\" = \"" + attestedKeyRef + "\"\n"
+	s.Spec.TLS = &mcpv1alpha2.MCPServerTLS{PeerIdentity: &mcpv1alpha2.PeerIdentity{
+		KeyRef: attestedKeyRef, SPKISHA256: []string{pinA}, Issuance: mcpv1alpha2.PeerKeyIssuanceKBSAttested,
+	}}
+	return s
+}
+
+// ADR-031 T28: on a kbs-attested container server the CRD refuses what would
+// make the init-data say less than it seems to, and refuses init-data anywhere
+// else.
+func TestCRDRules_AnAttestedContainerIsHeldToItsInitData(t *testing.T) {
+	cases := map[string]struct {
+		mutate func(*mcpv1alpha2.MCPServer)
+		want   string
+	}{
+		"no-init-data": {func(s *mcpv1alpha2.MCPServer) { s.Spec.InitData = "" }, "spec.initData is required"},
+		"init-data-without-key-ref": {func(s *mcpv1alpha2.MCPServer) {
+			s.Spec.InitData = "version = \"0.1.0\"\n"
+		}, "must name spec.tls.peerIdentity.keyRef"},
+		"tagged-image": {func(s *mcpv1alpha2.MCPServer) { s.Spec.Image = "ghcr.io/example/provider:1.0" }, "digest-pinned spec.image"},
+		"env-from-secret": {func(s *mcpv1alpha2.MCPServer) {
+			s.Spec.Env = []corev1.EnvVar{{Name: "TOKEN", ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "s"}, Key: "k"},
+			}}}
+		}, "cannot take spec.env from a Secret"},
+		"configmap-volume": {func(s *mcpv1alpha2.MCPServer) {
+			s.Spec.Volumes = []corev1.Volume{{Name: "c", VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "c"}},
+			}}}
+		}, "takes only emptyDir volumes"},
+		"secret-volume": {func(s *mcpv1alpha2.MCPServer) {
+			s.Spec.Volumes = []corev1.Volume{{Name: "s", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "s"}}}}
+		}, "takes only emptyDir volumes"},
+		"projected-volume": {func(s *mcpv1alpha2.MCPServer) {
+			s.Spec.Volumes = []corev1.Volume{{Name: "p", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{}}}}
+		}, "takes only emptyDir volumes"},
+		"token-unset":   {func(s *mcpv1alpha2.MCPServer) { s.Spec.AutomountServiceAccountToken = nil }, "automountServiceAccountToken: false"},
+		"token-mounted": {func(s *mcpv1alpha2.MCPServer) { yes := true; s.Spec.AutomountServiceAccountToken = &yes }, "automountServiceAccountToken: false"},
+		"too-long": {func(s *mcpv1alpha2.MCPServer) {
+			s.Spec.InitData = attestedKeyRef + strings.Repeat("#", 98304)
+		}, "initData"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := kbsAttestedContainer("cel-init-data-" + name)
+			c.mutate(s)
+			requireRejected(t, createAndCleanup(t, s), c.want)
+		})
+	}
+
+	t.Run("compliant", func(t *testing.T) {
+		s := kbsAttestedContainer("cel-init-data-ok")
+		s.Spec.Env = []corev1.EnvVar{{Name: "MODE", Value: "strict"}}
+		s.Spec.Volumes = []corev1.Volume{{Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}
+		require.NoError(t, createAndCleanup(t, s))
+	})
+}
+
+func TestCRDRules_InitDataIsRefusedOffAnAttestedContainer(t *testing.T) {
+	remote := celServer("cel-init-data-remote", mcpv1alpha2.MCPServerModeRemote)
+	remote.Spec.InitData = "version = \"0.1.0\"\n"
+	requireRejected(t, createAndCleanup(t, remote), "spec.initData applies only to")
+
+	managed := kbsAttestedContainer("cel-init-data-managed-keys")
+	managed.Spec.TLS.PeerIdentity.Issuance = ""
+	requireRejected(t, createAndCleanup(t, managed), "spec.initData applies only to")
+
+	d := &mcpv1alpha2.MCPDiscoverySource{
+		ObjectMeta: metav1.ObjectMeta{Name: "cel-template-init-data", Namespace: "default"},
+		Spec: mcpv1alpha2.MCPDiscoverySourceSpec{Type: mcpv1alpha2.DiscoveryTypeAnnotations, Paused: true, MCPServerTemplate: &mcpv1alpha2.MCPServerTemplateConfig{
+			Spec: &mcpv1alpha2.MCPServerSpec{Mode: mcpv1alpha2.MCPServerModeContainer, InitData: "x"},
+		}},
+	}
+	requireRejected(t, createAndCleanup(t, d), "providerTemplate.spec.initData is not allowed")
 }
