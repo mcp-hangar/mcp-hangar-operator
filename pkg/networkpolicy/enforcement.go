@@ -187,7 +187,7 @@ func (p *EnforcementProbe) Signal(ctx context.Context) EnforcementSignal {
 		// asserted verdict must not turn a leftover Cilium CRD into the
 		// Cilium flavor (#200).
 		return EnforcementSignal{
-			Verdict:     p.Override,
+			Verdict:            p.Override,
 			Source:             "asserted by the operator's --networkpolicy-enforcement flag, not by a look at this cluster",
 			CiliumAgent:        signal.CiliumAgent,
 			NodeLocalDNSOnHost: signal.NodeLocalDNSOnHost,
@@ -286,7 +286,7 @@ func (p *EnforcementProbe) probe(ctx context.Context) EnforcementSignal {
 	if len(agents) > 0 {
 		sort.Strings(agents)
 		return EnforcementSignal{
-			Verdict:     EnforcementObserved,
+			Verdict:            EnforcementObserved,
 			Source:             "agent running in this cluster: " + strings.Join(agents, ", "),
 			CiliumAgent:        ciliumAgent,
 			NodeLocalDNSOnHost: nodeLocalDNSOnHost,

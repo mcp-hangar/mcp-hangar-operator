@@ -29,7 +29,6 @@ func dur(d string) *metav1.Duration {
 	return &metav1.Duration{Duration: pd}
 }
 
-
 func TestV2_ContainerMode_Valid(t *testing.T) {
 	v := &webhook.MCPServerV1alpha2Validator{}
 	p := newProviderV2("valid", mcpv1alpha2.MCPServerModeContainer)
@@ -52,9 +51,6 @@ func TestV2_ContainerMode_EndpointWarning(t *testing.T) {
 	assert.Contains(t, warnings[0], "spec.endpoint is ignored")
 }
 
-
-
-
 func TestV2_ValidDurations(t *testing.T) {
 	v := &webhook.MCPServerV1alpha2Validator{}
 	p := newProviderV2("valid-dur", mcpv1alpha2.MCPServerModeContainer)
@@ -66,7 +62,6 @@ func TestV2_ValidDurations(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Empty(t, warnings)
 }
-
 
 func TestV2_EgressHostOnlyWarns(t *testing.T) {
 	v := &webhook.MCPServerV1alpha2Validator{}
@@ -131,8 +126,6 @@ func TestV2_TypedNilRejected(t *testing.T) {
 }
 
 // ── Remote endpoint scheme (#22) ──────────────────────────────────────
-
-
 
 func TestV2_RemoteMode_HTTPAccepted(t *testing.T) {
 	v := &webhook.MCPServerV1alpha2Validator{}
