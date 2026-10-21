@@ -91,15 +91,24 @@ func (r *MCPServerReconciler) podEndpoint(ctx context.Context, mcpServer *mcpv1a
 }
 
 // discoveredFromItsOwnPod reports whether core's server under this CR's name
-// came from this CR's own pod, by core's discovery: the Deployment this CR
-// controls still stamps its pods with mcp-hangar.io/name. The operator wrote
-// that itself, so it is evidence a pod created by anyone else is not. Core
-// does not report a server's provenance (mcp-hangar#1977).
+// came from this CR's own pod, by core's discovery. Two things must agree: the
+// Deployment this CR controls still stamps its pods with mcp-hangar.io/name,
+// which the operator wrote itself, and core reports the server's provenance as
+// discovery. A human registered the server otherwise, and it is not this CR's
+// to move. A core before 2.32.0 reports no provenance, and the Deployment
+// alone decides there.
 func (r *MCPServerReconciler) discoveredFromItsOwnPod(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) bool {
 	deployment := &appsv1.Deployment{}
 	key := client.ObjectKey{Namespace: mcpServer.Namespace, Name: provider.DeploymentName(mcpServer)}
 	if err := r.Get(ctx, key, deployment); err != nil || !metav1.IsControlledBy(deployment, mcpServer) {
 		return false
 	}
-	return deployment.Spec.Template.Annotations[provider.AnnotationDiscoveryName] == mcpServer.Name
+	if deployment.Spec.Template.Annotations[provider.AnnotationDiscoveryName] != mcpServer.Name {
+		return false
+	}
+	provenance, err := r.HangarClient.GetMCPServerProvenance(ctx, mcpServer.Name)
+	if err != nil {
+		return false
+	}
+	return provenance == "" || provenance == "discovery"
 }

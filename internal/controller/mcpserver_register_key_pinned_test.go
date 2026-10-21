@@ -72,6 +72,12 @@ func (c *pinningCore) serve(t *testing.T) *httptest.Server {
 			}
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/start"):
 			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/mcp_servers/"+name && name != "":
+			if c.servers[name] == nil {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"mcp_server_id": name, "provenance": c.servers[name]["provenance"]})
 		case strings.HasSuffix(r.URL.Path, "/health"):
 			if c.servers[name] == nil {
 				w.WriteHeader(http.StatusNotFound)

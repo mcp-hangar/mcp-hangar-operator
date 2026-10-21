@@ -79,6 +79,37 @@ func TestKeyPinnedContainer_ItsEndpointFollowsThePod(t *testing.T) {
 	assert.Len(t, core.sent(http.MethodPut), 3)
 }
 
+// discoveredServer seeds core with a server under the CR's name and the CR's
+// own Deployment as it was before the key was declared, still stamping its
+// pods for core's discovery.
+func discoveredServer(t *testing.T, core *pinningCore, provenance any) *MCPServerReconciler {
+	t.Helper()
+	s := keyPinnedContainer("payments")
+	plain := s.DeepCopy()
+	plain.Spec.TLS = nil
+	discovered, err := provider.BuildDeploymentForMCPServer(plain)
+	require.NoError(t, err)
+	discovered.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(s, mcpv1alpha2.GroupVersion.WithKind("MCPServer"))}
+	core.servers["payments"] = map[string]any{"mcp_server_id": "payments", "endpoint": "http://10.244.3.17:8080", "provenance": provenance}
+	r, _ := overHTTPS(core.serve(t), s)
+	require.NoError(t, r.Create(t.Context(), discovered))
+	return r
+}
+
+// Core 2.32.0 reports provenance; the move needs it to say discovery (#365).
+func TestKeyPinnedContainer_MovesOnlyAServerCoreSaysWasDiscovered(t *testing.T) {
+	discovered := newCore(hangar.PeerIdentityCapability)
+	r := discoveredServer(t, discovered, "discovery")
+	reconcileMCPServer(t, r, "payments", "default")
+	assert.Len(t, discovered.sent(http.MethodPut), 1, "a discovered server is moved")
+
+	human := newCore(hangar.PeerIdentityCapability)
+	r = discoveredServer(t, human, "human")
+	reconcileMCPServer(t, r, "payments", "default")
+	assert.Empty(t, human.sent(http.MethodPut), "a server a human registered is not taken over")
+	assert.Equal(t, ReasonNameTaken, degradedReason(t, r, "default", "payments").Reason)
+}
+
 func TestKeyPinnedContainer_AServerDiscoveredFromItsOwnPodIsMoved(t *testing.T) {
 	core := newCore(hangar.PeerIdentityCapability)
 	s := keyPinnedContainer("payments")
