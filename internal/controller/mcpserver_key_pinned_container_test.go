@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -158,4 +159,71 @@ func TestKeyPinned_AGatedCRLeavesNothingPlainInCore(t *testing.T) {
 	assert.Nil(t, core.servers["payments"], "the plain registration is removed")
 	assert.Nil(t, claimOf(t, r, "payments"), "and the name given back")
 	assert.Equal(t, ReasonPeerIdentityNotCarried, degradedReason(t, r, "default", "payments").Reason)
+}
+
+// runningPod makes s's pod Running with every container ready, which is when
+// the operator asks core for its tools.
+func runningPod(r *MCPServerReconciler, t *testing.T, s *mcpv1alpha2.MCPServer, ip string) {
+	t.Helper()
+	pod := podFor(r, t, s, ip)
+	pod.Status.Phase = corev1.PodRunning
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "provider", Ready: true}}
+	require.NoError(t, r.Status().Update(t.Context(), pod))
+}
+
+// #381: the status a refused registration writes survives the rest of the
+// reconcile. The tools read that follows a running pod used to replace it with
+// "provider not found", or with Ready for a name someone else holds.
+func TestKeyPinnedContainer_ARefusedRegistrationStaysInStatusOnceItsPodRuns(t *testing.T) {
+	cases := []struct {
+		name   string
+		core   func() *pinningCore
+		reason string
+		says   string
+	}{
+		{
+			name: "core refuses the registration",
+			core: func() *pinningCore {
+				c := newCore(hangar.PeerIdentityCapability)
+				c.registerRefusal = `{"error":{"code":"ValidationError","message":"declaring a peer identity needs a durable configuration store"}}`
+				return c
+			},
+			reason: ReasonRegistrationFailed,
+			says:   "durable configuration store",
+		},
+		{
+			name:   "core does not carry a key list",
+			core:   func() *pinningCore { return newCore() },
+			reason: ReasonPeerIdentityNotCarried,
+			says:   "peer_identity capability",
+		},
+		{
+			name: "core holds the name for someone else",
+			core: func() *pinningCore {
+				c := newCore(hangar.PeerIdentityCapability)
+				c.servers["payments"] = map[string]any{"provenance": "human"}
+				return c
+			},
+			reason: ReasonNameTaken,
+			says:   "did not register",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := keyPinnedContainer("payments")
+			r, _ := overHTTPS(tc.core().serve(t), s)
+			reconcileMCPServer(t, r, "payments", "default")
+			runningPod(r, t, s, "10.244.3.17")
+
+			reconcileMCPServer(t, r, "payments", "default")
+			reconcileMCPServer(t, r, "payments", "default")
+
+			out := getMCPServer(t, r, "payments", "default")
+			degraded := meta.FindStatusCondition(out.Status.Conditions, ConditionDegraded)
+			require.NotNil(t, degraded)
+			assert.Equal(t, tc.reason, degraded.Reason)
+			assert.Contains(t, degraded.Message, tc.says)
+			assert.False(t, meta.IsStatusConditionTrue(out.Status.Conditions, ConditionReady), "not Ready while unregistered")
+		})
+	}
 }
