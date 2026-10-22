@@ -297,3 +297,11 @@ e2e-remote: ## Run the remote-lifecycle e2e against the current kube context.
 .PHONY: e2e-remote-clean
 e2e-remote-clean: ## Delete the remote-lifecycle e2e cluster.
 	-kind delete cluster --name $(E2E_REMOTE_CLUSTER)
+
+# The kbs-attested end-to-end run (T26, mcp-hangar/mcp-hangar#1950) needs KVM.
+# What it does not need runs here: the KBS resource policy's tests, and the
+# upstream image serving its released key against a stub CDH. Needs docker.
+
+.PHONY: e2e-coco-check
+e2e-coco-check: ## Check the T26 KBS policy and upstream image without KVM.
+	test/e2e/coco/check.sh
