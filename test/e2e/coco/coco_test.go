@@ -348,6 +348,23 @@ func agentPolicy(t *testing.T, cr *mcpv1alpha2.MCPServer) string {
 	if err != nil {
 		t.Fatalf("manager render: %v: %s", err, stderrOf(err))
 	}
+	// genpolicy (kata 4.2.0, and main as of 2026-10-22) refuses any field it does
+	// not model, and it does not model automountServiceAccountToken, which
+	// ADR-031 requires to be false. With it false no token is mounted, so the
+	// one field is removed rather than passing -s, which would silence every
+	// unknown field.
+	var doc map[string]any
+	if err := yaml.Unmarshal(deployment, &doc); err != nil {
+		t.Fatalf("read the rendered Deployment: %v", err)
+	}
+	podSpec := doc["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+	if podSpec["automountServiceAccountToken"] != false {
+		t.Fatalf("the rendered pod does not set automountServiceAccountToken: false: %v", podSpec["automountServiceAccountToken"])
+	}
+	delete(podSpec, "automountServiceAccountToken")
+	if deployment, err = yaml.Marshal(doc); err != nil {
+		t.Fatal(err)
+	}
 	dir := t.TempDir()
 	if err := os.WriteFile(dir+"/deployment.yaml", deployment, 0o600); err != nil {
 		t.Fatal(err)
