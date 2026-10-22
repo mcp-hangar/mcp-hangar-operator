@@ -399,7 +399,7 @@ func agentPolicy(t *testing.T, cr *mcpv1alpha2.MCPServer) string {
 	kata := stateDir() + "/kata-tools/opt/kata"
 	gen := exec.Command(kata+"/bin/genpolicy", "-r", "-y", dir+"/deployment.yaml",
 		"-p", kata+"/share/defaults/kata-containers/rules.rego",
-		"-j", kata+"/share/defaults/kata-containers/genpolicy-settings.json")
+		"-j", kata+"/share/defaults/kata-containers")
 	gen.Dir = dir
 	policy, err := gen.Output()
 	if err != nil {

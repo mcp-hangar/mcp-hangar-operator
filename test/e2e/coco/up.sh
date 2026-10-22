@@ -56,6 +56,10 @@ if [ ! -x "${STATE}/kata-tools/opt/kata/bin/genpolicy" ]; then
   echo "${KATA_TOOLS_SHA256}  ${tools}" | sha256sum -c -
   mkdir -p "${STATE}/kata-tools"
   tar --zstd -xf "${tools}" -C "${STATE}/kata-tools" ./opt/kata/bin/genpolicy ./opt/kata/share/defaults/kata-containers
+  # kind's containerd sends OCI 1.3.0 and the default settings expect 1.1.0;
+  # kata's own CI adds the same drop-in for a current containerd.
+  settings="${STATE}/kata-tools/opt/kata/share/defaults/kata-containers"
+  cp "${settings}/drop-in-examples/20-oci-1.3.0-drop-in.json" "${settings}/genpolicy-settings.d/"
 fi
 
 echo "deploying the KBS..."
