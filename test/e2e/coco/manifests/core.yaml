@@ -28,6 +28,8 @@ data:
     # core refuses a private endpoint it does not trust. kind's pod range.
     ssrf:
       trusted_networks: ["10.244.0.0/16"]
+    # Required, and empty: the only server is the one the operator registers.
+    mcp_servers: {}
 ---
 apiVersion: apps/v1
 kind: Deployment
