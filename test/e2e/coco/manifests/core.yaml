@@ -55,6 +55,8 @@ spec:
               value: "mcp-hangar.hangar-e2e.svc.cluster.local,mcp-hangar.hangar-e2e.svc,mcp-hangar,localhost,127.0.0.1"
             - { name: MCP_CONFIG, value: /etc/mcp-hangar/config.yaml }
             - { name: MCP_JSON_LOGS, value: "true" }
+            # Nothing collects traces here; the exporter's retries would bury the log.
+            - { name: MCP_TRACING_ENABLED, value: "false" }
           ports:
             - containerPort: 8080
           readinessProbe:
