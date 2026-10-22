@@ -1,0 +1,77 @@
+name: e2e coco spike
+
+# SPIKE for mcp-hangar/mcp-hangar#1950, not for merge: does kata-qemu-coco-dev
+# boot a pod inside kind on a GitHub-hosted runner with /dev/kvm?
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/e2e-coco-spike.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  spike:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      KIND_NODE_IMAGE: "kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5"
+    steps:
+      - name: Host facts
+        run: |
+          ls -l /dev/kvm /dev/vhost-vsock /dev/vhost-net || true
+          sudo chmod 666 /dev/kvm
+          nproc; free -g; df -h / | tail -1
+
+      - name: kind with /dev/kvm in the node
+        run: |
+          cat > kind.yaml <<'K'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+            - role: control-plane
+              extraMounts:
+                - { hostPath: /dev/kvm, containerPath: /dev/kvm }
+                - { hostPath: /dev/vhost-vsock, containerPath: /dev/vhost-vsock }
+                - { hostPath: /dev/vhost-net, containerPath: /dev/vhost-net }
+          K
+          kind create cluster --name coco --image "${KIND_NODE_IMAGE}" --config kind.yaml --wait 120s
+          docker exec coco-control-plane ls -l /dev/kvm /dev/vhost-vsock
+
+      - name: kata-deploy 4.2.0, qemu-coco-dev only
+        run: |
+          cat > kata.yaml <<'K'
+          shims:
+            disableAll: true
+            qemu-coco-dev:
+              enabled: true
+              allowedHypervisorAnnotations: ["cc_init_data"]
+          K
+          helm install kata-deploy oci://ghcr.io/kata-containers/kata-deploy-charts/kata-deploy \
+            --version 4.2.0 -n kube-system -f kata.yaml --wait --timeout 15m
+          kubectl get runtimeclass
+
+      - name: A pod on kata-qemu-coco-dev
+        run: |
+          cat <<'K' | kubectl apply -f -
+          apiVersion: v1
+          kind: Pod
+          metadata: { name: coco }
+          spec:
+            runtimeClassName: kata-qemu-coco-dev
+            containers:
+              - name: c
+                image: busybox:1.37
+                command: ["sh", "-c", "uname -r; sleep 3600"]
+          K
+          kubectl wait --for=condition=Ready pod/coco --timeout=10m
+          echo "host kernel: $(uname -r)"; echo "guest kernel: $(kubectl logs coco)"
+
+      - name: Diagnostics
+        if: always()
+        run: |
+          kubectl get pods -A -o wide || true
+          kubectl describe pod coco || true
+          kubectl -n kube-system logs -l name=kata-deploy --tail=80 || true
+          docker exec coco-control-plane journalctl -u containerd --no-pager | tail -60 || true
