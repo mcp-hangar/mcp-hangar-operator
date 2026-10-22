@@ -7,11 +7,14 @@
 // The test is the provisioner. It generates the key pair, keeps the SPKI as the
 // CR's pin, uploads only the bundle of private key and certificate to the KBS,
 // and binds its release to the hash of the CR's init-data with
-// kbs/resource-policy.rego. Then:
+// kbs/resource-policy.rego. The init-data carries an agent policy generated
+// with kata's genpolicy from what `manager render` prints for the CR, so the
+// guest runs only the container the policy describes. Then:
 //
 //   - status.initDataDigests is the hash of the document the test bound;
 //   - the pod gets the key from the KBS, serves TLS with it, core's handshake
 //     check passes and a tools/call through the gateway succeeds (T1);
+//   - kubectl exec into the pod is refused by the agent policy;
 //   - a pod with other init-data gets no key and never serves.
 //
 // This proves the wiring, not confidentiality: the guest attests with
@@ -56,6 +59,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/provider"
@@ -80,6 +84,8 @@ const (
 	pythonImage = "python:3.13-slim@sha256:57b29a7c050c4e679e4bea572e14b3965cf4b5839de2da49d55e49ffc4024f39"
 	kbsLocal    = "127.0.0.1:18080"
 	readyWithin = 15 * time.Minute
+	// operatorImage is the build of this checkout up.sh loaded into kind.
+	operatorImage = "localhost/mcp-hangar-operator:e2e"
 )
 
 // initData is the CR's init-data: where the guest's attestation agent and CDH
@@ -106,7 +112,9 @@ url = "` + kbsURL + `"
 func TestKBSAttestedEndToEnd(t *testing.T) {
 	cl := kubeClient(t)
 	bundle, pin := keyBundle(t)
-	document := initData("")
+	cr := buildServer(initData(""), pin)
+	document := initData(agentPolicy(t, cr))
+	cr.Spec.InitData = document
 	digest := sha256.Sum256([]byte(document))
 
 	stop := portForwardKBS(t)
@@ -117,7 +125,7 @@ func TestKBSAttestedEndToEnd(t *testing.T) {
 	}))
 	provision(t, "resource/"+keyPath, "application/octet-stream", bundle)
 
-	createServer(t, cl, document, pin)
+	createServer(t, cl, cr)
 	srv := waitReady(t, cl)
 
 	t.Run("status.initDataDigests is the hash the key is bound to", func(t *testing.T) {
@@ -131,6 +139,18 @@ func TestKBSAttestedEndToEnd(t *testing.T) {
 		if !strings.Contains(out, `"success": true`) && !strings.Contains(out, `"success":true`) {
 			t.Fatalf("hangar_call echo did not succeed: %s", out)
 		}
+	})
+
+	t.Run("the agent policy refuses kubectl exec", func(t *testing.T) {
+		out, err := exec.Command("kubectl", "-n", stackNamespace, "exec", srv.Status.PodName, "--",
+			"python", "-c", "print('inside')").CombinedOutput()
+		if err == nil || strings.Contains(string(out), "inside") {
+			t.Fatalf("kubectl exec ran in the guest: %s", out)
+		}
+		if !strings.Contains(string(out), "ExecProcessRequest") {
+			t.Fatalf("kubectl exec failed, but not on the agent policy: %s", out)
+		}
+		t.Logf("kubectl exec refused: %s", strings.TrimSpace(string(out)))
 	})
 
 	t.Run("a pod with other init-data gets no key", func(t *testing.T) {
@@ -240,11 +260,7 @@ func portForwardKBS(t *testing.T) func() {
 // up.sh generated and the KBS trusts.
 func adminToken(t *testing.T) string {
 	t.Helper()
-	state := os.Getenv("E2E_COCO_STATE")
-	if state == "" {
-		state = "/tmp/e2e-coco"
-	}
-	raw, err := os.ReadFile(state + "/kbs-admin.key")
+	raw, err := os.ReadFile(stateDir() + "/kbs-admin.key")
 	if err != nil {
 		t.Fatalf("read the KBS admin key: %v", err)
 	}
@@ -287,15 +303,12 @@ func provision(t *testing.T, path, contentType string, body []byte) {
 	}
 }
 
-func createServer(t *testing.T, cl crclient.Client, document, pin string) {
-	t.Helper()
-	ctx := context.Background()
-	old := &mcpv1alpha2.MCPServer{ObjectMeta: metav1.ObjectMeta{Name: serverName, Namespace: stackNamespace}}
-	if err := cl.Delete(ctx, old); err != nil && !apierrors.IsNotFound(err) {
-		t.Fatalf("delete leftover: %v", err)
-	}
+// buildServer is the kbs-attested MCPServer the test runs, with document as
+// its init-data.
+func buildServer(document, pin string) *mcpv1alpha2.MCPServer {
 	rc, noToken := runtimeClass, false
-	cr := &mcpv1alpha2.MCPServer{
+	return &mcpv1alpha2.MCPServer{
+		TypeMeta:   metav1.TypeMeta{APIVersion: mcpv1alpha2.GroupVersion.String(), Kind: "MCPServer"},
 		ObjectMeta: metav1.ObjectMeta{Name: serverName, Namespace: stackNamespace},
 		Spec: mcpv1alpha2.MCPServerSpec{
 			Mode:                         mcpv1alpha2.MCPServerModeContainer,
@@ -313,6 +326,61 @@ func createServer(t *testing.T, cl crclient.Client, document, pin string) {
 			}},
 			InitData: document,
 		},
+	}
+}
+
+// agentPolicy generates the Kata agent policy for cr the way ADR-031 says a
+// provisioner does: `manager render` from the operator image under test
+// prints the Deployment, and genpolicy from the kata release up.sh fetched
+// turns it into Rego. It returns the policy as an init-data entry. The CR is
+// rendered as created, at generation 1, because the pod template carries it.
+func agentPolicy(t *testing.T, cr *mcpv1alpha2.MCPServer) string {
+	t.Helper()
+	created := cr.DeepCopy()
+	created.Generation = 1
+	manifest, err := yaml.Marshal(created)
+	if err != nil {
+		t.Fatal(err)
+	}
+	render := exec.Command("docker", "run", "--rm", "-i", operatorImage, "render")
+	render.Stdin = bytes.NewReader(manifest)
+	deployment, err := render.Output()
+	if err != nil {
+		t.Fatalf("manager render: %v: %s", err, stderrOf(err))
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/deployment.yaml", deployment, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	kata := stateDir() + "/kata-tools/opt/kata"
+	gen := exec.Command(kata+"/bin/genpolicy", "-r", "-y", dir+"/deployment.yaml",
+		"-p", kata+"/share/defaults/kata-containers/rules.rego",
+		"-j", kata+"/share/defaults/kata-containers/genpolicy-settings.json")
+	gen.Dir = dir
+	policy, err := gen.Output()
+	if err != nil {
+		t.Fatalf("genpolicy: %v: %s", err, stderrOf(err))
+	}
+	const literal = "'''"
+	if strings.Contains(string(policy), literal) {
+		t.Fatal("the generated policy contains ''' and cannot sit in a TOML literal string")
+	}
+	return `"policy.rego" = ` + literal + "\n" + strings.TrimRight(string(policy), "\n") + "\n" + literal + "\n"
+}
+
+func stderrOf(err error) []byte {
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return exitErr.Stderr
+	}
+	return nil
+}
+
+func createServer(t *testing.T, cl crclient.Client, cr *mcpv1alpha2.MCPServer) {
+	t.Helper()
+	ctx := context.Background()
+	old := &mcpv1alpha2.MCPServer{ObjectMeta: metav1.ObjectMeta{Name: serverName, Namespace: stackNamespace}}
+	if err := cl.Delete(ctx, old); err != nil && !apierrors.IsNotFound(err) {
+		t.Fatalf("delete leftover: %v", err)
 	}
 	if err := cl.Create(ctx, cr); err != nil {
 		t.Fatalf("create the kbs-attested MCPServer: %v", err)
@@ -410,6 +478,14 @@ func podWithOtherInitData(t *testing.T, cl crclient.Client) (string, string) {
 	out, _ := exec.Command("kubectl", "-n", stackNamespace, "logs", pod.Name).CombinedOutput()
 	t.Fatalf("the pod with other init-data did not exit within %s (phase %s); logs:\n%s", readyWithin, pod.Status.Phase, out)
 	return "", ""
+}
+
+// stateDir is where up.sh left the KBS admin key and the kata tools.
+func stateDir() string {
+	if state := os.Getenv("E2E_COCO_STATE"); state != "" {
+		return state
+	}
+	return "/tmp/e2e-coco"
 }
 
 func mustJSON(t *testing.T, v any) []byte {
