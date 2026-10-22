@@ -143,7 +143,9 @@ func TestKBSAttestedEndToEnd(t *testing.T) {
 
 	t.Run("the agent policy refuses kubectl exec", func(t *testing.T) {
 		out, err := exec.Command("kubectl", "-n", stackNamespace, "exec", srv.Status.PodName, "--",
-			"python", "-c", "print('inside')").CombinedOutput()
+			"python", "-c", "print('in' + 'side')").CombinedOutput()
+		// The marker is built in the guest, so a refusal that echoes the
+		// arguments cannot contain it.
 		if err == nil || strings.Contains(string(out), "inside") {
 			t.Fatalf("kubectl exec ran in the guest: %s", out)
 		}
