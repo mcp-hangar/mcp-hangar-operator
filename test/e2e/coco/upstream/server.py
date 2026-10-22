@@ -1,47 +1,44 @@
 """A key-pinned MCP upstream whose TLS key is released by a Key Broker Service (T26, mcp-hangar/mcp-hangar#1950).
 
-The key is never in the image, a Secret or a volume. At start the server asks the
-Confidential Data Hub inside the pod for KBS_RESOURCE; the CDH attests the guest
-and the KBS releases the key only if its resource policy admits the evidence
-(test/e2e/coco/kbs/resource-policy.rego binds it to the init-data hash).
+The standard library only, so it runs on a public Python image pinned by digest:
+a CoCo guest pulls its image itself and cannot reach a registry local to kind.
 
-The key stays in memory: it is written to a memfd, never to a filesystem, and the
-certificate is self-signed at start -- core pins the SPKI and checks nothing else.
+The key is never in the image, a Secret or a volume. At start the server asks the
+Confidential Data Hub inside the pod for KBS_RESOURCE, a PEM bundle of the key and
+its certificate. The CDH attests the guest, and the KBS releases the bundle only
+if its resource policy admits the evidence (kbs/resource-policy.rego binds it to
+the init-data hash). The bundle stays in memory: it is written to a memfd, never
+to a filesystem.
 
 No key, no server: if the CDH does not release it within KEY_WAIT_S, the process
 exits non-zero, so a pod the policy refuses never serves TLS.
+
+It speaks just enough streamable HTTP for a client to initialize, list tools and
+call `echo`, with JSON responses, on every path.
 """
 
-import datetime
-import ipaddress
+import json
 import os
+import ssl
 import sys
 import time
 import urllib.error
 import urllib.request
-
-import uvicorn
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.x509.oid import NameOID
-from mcp.server.mcpserver import MCPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 CDH_URL = os.environ.get("CDH_URL", "http://127.0.0.1:8006")
 RESOURCE = os.environ["KBS_RESOURCE"]  # <repo>/<type>/<tag>, the path of the key_ref
-HOST = os.environ.get("MCP_POD_IP", "0.0.0.0")
-PORT = int(os.environ.get("PORT", "8443"))
-KEY_WAIT_S = float(os.environ.get("KEY_WAIT_S", "120"))
+PORT = int(os.environ.get("PORT", "8080"))
+KEY_WAIT_S = float(os.environ.get("KEY_WAIT_S", "300"))
 
-mcp = MCPServer("kbs-attested-upstream")
-
-
-@mcp.tool(name="echo")
-def echo(text: str) -> str:
-    """Echo the text back."""
-    return text
+ECHO = {
+    "name": "echo",
+    "description": "Echo the text back.",
+    "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
+}
 
 
-def fetch_key() -> bytes:
+def fetch_bundle() -> bytes:
     url = f"{CDH_URL}/cdh/resource/{RESOURCE}"
     deadline = time.monotonic() + KEY_WAIT_S
     while True:
@@ -55,33 +52,61 @@ def fetch_key() -> bytes:
             time.sleep(3)
 
 
-def self_signed(key_pem: bytes) -> bytes:
-    key = serialization.load_pem_private_key(key_pem, password=None)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "kbs-attested-upstream")])
-    now = datetime.datetime.now(datetime.UTC)
-    builder = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - datetime.timedelta(minutes=5))
-        .not_valid_after(now + datetime.timedelta(days=1))
-    )
-    if HOST != "0.0.0.0":
-        builder = builder.add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address(HOST))]), False)
-    return builder.sign(key, hashes.SHA256()).public_bytes(serialization.Encoding.PEM)
+def answer(method: str, params: dict) -> dict:
+    if method == "initialize":
+        return {
+            "protocolVersion": params.get("protocolVersion", "2025-06-18"),
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "kbs-attested-upstream", "version": "0"},
+        }
+    if method == "tools/list":
+        return {"tools": [ECHO]}
+    if method == "tools/call" and params.get("name") == "echo":
+        text = str((params.get("arguments") or {}).get("text", ""))
+        return {"content": [{"type": "text", "text": text}], "isError": False}
+    if method == "ping":
+        return {}
+    raise LookupError(method)
 
 
-def memfd(name: str, data: bytes) -> str:
-    fd = os.memfd_create(name)
-    os.write(fd, data)
-    return f"/proc/self/fd/{fd}"
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, fmt, *args):
+        pass
+
+    def _send(self, status: int, body: dict | None = None) -> None:
+        data = json.dumps(body).encode() if body is not None else b""
+        self.send_response(status)
+        if body is not None:
+            self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        self._send(405)
+
+    def do_DELETE(self):
+        self._send(405)
+
+    def do_POST(self):
+        msg = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"{}")
+        if "id" not in msg:
+            self._send(202)
+            return
+        try:
+            self._send(200, {"jsonrpc": "2.0", "id": msg["id"], "result": answer(msg.get("method", ""), msg.get("params") or {})})
+        except LookupError:
+            self._send(200, {"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32601, "message": "method not found"}})
 
 
 if __name__ == "__main__":
-    key_pem = fetch_key()
-    keyfile, certfile = memfd("key", key_pem), memfd("cert", self_signed(key_pem))
-    # The SDK answers 421 to a Host it was not built for, and its default is loopback.
-    app = mcp.streamable_http_app(host=HOST)
-    uvicorn.run(app, host=HOST, port=PORT, ssl_certfile=certfile, ssl_keyfile=keyfile, log_level="warning")
+    fd = os.memfd_create("tls")
+    os.write(fd, fetch_bundle())
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(f"/proc/self/fd/{fd}")
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    print(f"serving {RESOURCE} on :{PORT}", file=sys.stderr, flush=True)
+    server.serve_forever()
