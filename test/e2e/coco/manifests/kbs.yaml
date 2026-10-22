@@ -1,0 +1,105 @@
+# A Trustee Key Broker Service with its built-in Attestation Service, for T26
+# (mcp-hangar/mcp-hangar#1950). Adapted from Trustee v0.22.0's
+# kbs/config/kubernetes/base.
+#
+# The Service has a fixed ClusterIP because the guest reaches the KBS by the
+# address the init-data names, and the init-data hash is what the key is bound
+# to: a moving address would move the hash.
+#
+# Admin calls need a bearer JWT signed by the key up.sh generates; the test
+# signs one to provision the key and the resource policy, the way an operator's
+# provisioner would. Resource reads need attestation, as always.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trustee
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kbs-config
+  namespace: trustee
+data:
+  kbs-config.toml: |
+    [http_server]
+    sockets = ["0.0.0.0:8080"]
+    insecure_http = true
+
+    [attestation_token]
+    insecure_header_jwk = true
+
+    [attestation_service]
+    type = "coco_as_builtin"
+
+    [attestation_service.attestation_token_broker]
+    duration_min = 5
+
+    [attestation_service.rvps_config]
+    type = "BuiltIn"
+
+    [admin]
+    authorization_mode = "AuthenticatedAuthorization"
+
+    [admin.authentication.bearer_jwt]
+    identity_providers = [{ public_key_uri = "/kbs-admin/public.pem" }]
+
+    [admin.authorization.regex_acl]
+    acls = [
+      { role = "provisioner", allowed_endpoints = "^/kbs/v0/resource/default/hangar-e2e/.+$" },
+      { role = "provisioner", allowed_endpoints = "^/kbs/v0/resource-policy$" },
+    ]
+
+    [[plugins]]
+    name = "resource"
+    storage_backend_type = "kvstorage"
+
+    [storage_backend]
+    storage_type = "LocalFs"
+
+    [storage_backend.backends.local_fs]
+    dir_path = "/opt/confidential-containers/kbs"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kbs
+  namespace: trustee
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: kbs }
+  template:
+    metadata:
+      labels: { app: kbs }
+    spec:
+      containers:
+        - name: kbs
+          image: ghcr.io/confidential-containers/key-broker-service:built-in-as-v0.22.0@sha256:c1960cb4df0b1bdc0e4309f97dc65b0a1a777a92dabb2211acb45542f906c625
+          command: [/usr/local/bin/kbs, --config-file, /etc/kbs/kbs-config.toml]
+          env:
+            - { name: RUST_LOG, value: "info,kbs=debug,attestation_service=debug" }
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - { name: config, mountPath: /etc/kbs }
+            - { name: admin, mountPath: /kbs-admin }
+            - { name: storage, mountPath: /opt/confidential-containers/kbs }
+      volumes:
+        - name: config
+          configMap: { name: kbs-config }
+        - name: admin
+          secret: { secretName: kbs-admin-public-key }
+        - name: storage
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kbs
+  namespace: trustee
+spec:
+  selector: { app: kbs }
+  clusterIP: 10.96.200.10
+  ports:
+    - port: 8080
+      targetPort: 8080

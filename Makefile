@@ -300,8 +300,26 @@ e2e-remote-clean: ## Delete the remote-lifecycle e2e cluster.
 
 # The kbs-attested end-to-end run (T26, mcp-hangar/mcp-hangar#1950) needs KVM.
 # What it does not need runs here: the KBS resource policy's tests, and the
-# upstream image serving its released key against a stub CDH. Needs docker.
+# upstream serving its released key against a stub CDH. Needs docker.
 
 .PHONY: e2e-coco-check
-e2e-coco-check: ## Check the T26 KBS policy and upstream image without KVM.
+e2e-coco-check: ## Check the T26 KBS policy and upstream without KVM.
 	test/e2e/coco/check.sh
+
+# The run itself: kind with /dev/kvm, kata-qemu-coco-dev, a Trustee KBS, core
+# behind TLS and the operator from this checkout; the Go test provisions the key
+# and runs a kbs-attested MCPServer. Needs a host with /dev/kvm.
+
+E2E_COCO_CLUSTER ?= mcp-coco-e2e
+
+.PHONY: e2e-coco-up
+e2e-coco-up: ## Boot kind + kata + KBS + core + operator for T26.
+	E2E_COCO_CLUSTER=$(E2E_COCO_CLUSTER) test/e2e/coco/up.sh
+
+.PHONY: e2e-coco
+e2e-coco: ## Run T26 against the current kube context.
+	go test -tags e2e_coco ./test/e2e/coco/... -v -timeout 45m
+
+.PHONY: e2e-coco-clean
+e2e-coco-clean: ## Delete the T26 cluster.
+	-kind delete cluster --name $(E2E_COCO_CLUSTER)

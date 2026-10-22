@@ -1,0 +1,45 @@
+# Operator install for T26 (mcp-hangar/mcp-hangar#1950), as for the remote
+# e2e: config/rbac and config/manager with the image up.sh builds from this
+# checkout, pointed at core over https with up.sh's CA.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: mcp-hangar
+namePrefix: mcp-hangar-operator-
+
+labels:
+  - includeSelectors: true
+    pairs:
+      app.kubernetes.io/name: mcp-hangar-operator
+
+resources:
+  - ../../../../config/rbac
+  - ../../../../config/manager
+
+images:
+  - name: ghcr.io/mcp-hangar/mcp-hangar-operator
+    newName: localhost/mcp-hangar-operator
+    newTag: e2e
+
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: controller-manager
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --hangar-url=https://mcp-hangar.hangar-e2e.svc.cluster.local:8443
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --hangar-ca-file=/etc/mcp-hangar/core-ca/ca.crt
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts
+        value:
+          - { name: core-ca, mountPath: /etc/mcp-hangar/core-ca, readOnly: true }
+      - op: add
+        path: /spec/template/spec/volumes
+        value:
+          - name: core-ca
+            secret: { secretName: core-ca }

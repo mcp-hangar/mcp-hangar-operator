@@ -1,0 +1,10 @@
+# kata-deploy 4.2.0 for T26 (mcp-hangar/mcp-hangar#1950): only
+# kata-qemu-coco-dev, with the init-data annotation passed through. The default
+# shim must be one that is enabled, or kata-deploy crash-loops.
+shims:
+  disableAll: true
+  qemu-coco-dev:
+    enabled: true
+    allowedHypervisorAnnotations: ["cc_init_data"]
+defaultShim:
+  amd64: qemu-coco-dev

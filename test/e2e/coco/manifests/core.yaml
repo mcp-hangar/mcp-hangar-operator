@@ -1,0 +1,100 @@
+# A live mcp-hangar core for T26 (mcp-hangar/mcp-hangar#1950), behind TLS.
+#
+# The operator delivers a key list to core only over https, and core serves
+# plain HTTP, so a socat sidecar terminates TLS on 8443 with the certificate
+# up.sh issues (Secret core-tls); the operator trusts up.sh's CA.
+#
+# 2.33.0 is the first core that lists the declared_key_issuance capability, so
+# the operator registers a kbs-attested server with it at all.
+#
+# --unsafe-no-auth: a disposable single-cluster harness whose clients are the
+# operator under test and the test itself; do not copy it anywhere else.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hangar-e2e
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hangar-config
+  namespace: hangar-e2e
+data:
+  config.yaml: |
+    logging:
+      level: INFO
+      json_format: true
+    # The operator registers a key-pinned container at its pod's address, and
+    # core refuses a private endpoint it does not trust. kind's pod range.
+    ssrf:
+      trusted_networks: ["10.244.0.0/16"]
+    # A peer identity needs a durable configuration store. SQLite on an
+    # emptyDir: durable for the life of this disposable pod, which is all a run needs.
+    persistence:
+      backend: sqlite
+      sqlite:
+        data_dir: /data
+    # Required, and empty: the only server is the one the operator registers.
+    mcp_servers: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-hangar
+  namespace: hangar-e2e
+  labels: { app: mcp-hangar }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mcp-hangar }
+  template:
+    metadata:
+      labels: { app: mcp-hangar }
+    spec:
+      containers:
+        - name: core
+          image: ghcr.io/mcp-hangar/mcp-hangar:2.33.0@sha256:ded8d6a4a839ef2d96f71f887ec5a1dc25514a35e956cc6c367d8ed3a1b99cb9
+          # args, not command: the image's ENTRYPOINT is `mcp-hangar`.
+          args: [serve, --http, --host, 0.0.0.0, --port, "8080", --unsafe-no-auth]
+          env:
+            - name: MCP_TRUSTED_HOSTS
+              value: "mcp-hangar.hangar-e2e.svc.cluster.local,mcp-hangar.hangar-e2e.svc,mcp-hangar,localhost,127.0.0.1"
+            - { name: MCP_CONFIG, value: /etc/mcp-hangar/config.yaml }
+            - { name: MCP_JSON_LOGS, value: "true" }
+            # Nothing collects traces here; the exporter's retries would bury the log.
+            - { name: MCP_TRACING_ENABLED, value: "false" }
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - { name: config, mountPath: /etc/mcp-hangar, readOnly: true }
+            - { name: data, mountPath: /data }
+        - name: tls
+          image: alpine/socat:1.8.0.3@sha256:beb4a68d9e4fe6b0f21ea774a0fde6c31f580dde6368939ed70100c5385b015e
+          args:
+            - OPENSSL-LISTEN:8443,reuseaddr,fork,cert=/tls/tls.crt,key=/tls/tls.key,verify=0
+            - TCP:127.0.0.1:8080
+          ports:
+            - containerPort: 8443
+          volumeMounts:
+            - { name: tls, mountPath: /tls, readOnly: true }
+      volumes:
+        - name: config
+          configMap: { name: hangar-config }
+        - name: tls
+          secret: { secretName: core-tls }
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-hangar
+  namespace: hangar-e2e
+spec:
+  selector: { app: mcp-hangar }
+  ports:
+    - { name: https, port: 8443, targetPort: 8443 }

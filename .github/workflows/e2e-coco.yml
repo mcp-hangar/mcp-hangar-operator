@@ -1,0 +1,70 @@
+name: e2e coco
+
+# T26 of ADR-030 as ADR-031 runs it (mcp-hangar/mcp-hangar#1950): a
+# kbs-attested MCPServer on kata-qemu-coco-dev, its key released by a Trustee
+# KBS bound to the CR's init-data hash, pinned by core.
+#
+# It proves the wiring, not confidentiality: the guest attests with Trustee's
+# sample attester, whose evidence is unsigned, and the KBS policy admits it.
+#
+# GitHub-hosted runners expose /dev/kvm, so this needs no self-hosted runner
+# and holds no credential. Nightly at 04:10 UTC, off the other e2e slots, and
+# on PRs that touch the harness.
+
+on:
+  schedule:
+    - cron: "10 4 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "test/e2e/coco/**"
+      - ".github/workflows/e2e-coco.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-coco-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KIND_NODE_IMAGE: "kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5"
+
+jobs:
+  coco:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Let kind's node open /dev/kvm
+        run: sudo chmod 666 /dev/kvm /dev/vhost-vsock /dev/vhost-net
+
+      - name: Boot kind + kata + KBS + core + operator
+        run: make e2e-coco-up
+
+      - name: T26
+        run: make e2e-coco
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods -A -o wide || true
+          kubectl -n hangar-e2e get mcpservers -o yaml || true
+          kubectl -n hangar-e2e get events --sort-by=.lastTimestamp || true
+          kubectl -n mcp-hangar get leases -o yaml || true
+          kubectl -n hangar-e2e describe pods || true
+          kubectl -n hangar-e2e logs deploy/mcp-hangar -c core --tail=400 || true
+          kubectl -n hangar-e2e logs -l mcp-hangar.io/provider=attested --tail=50 || true
+          kubectl -n trustee logs deploy/kbs --tail=300 || true
+          kubectl -n mcp-hangar logs -l control-plane=controller-manager --tail=200 || true
+          kubectl -n hangar-e2e logs other-init-data || true
+
+      - name: Tear down
+        if: always()
+        run: make e2e-coco-clean
