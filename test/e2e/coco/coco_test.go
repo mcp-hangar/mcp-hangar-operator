@@ -134,10 +134,29 @@ func TestKBSAttestedEndToEnd(t *testing.T) {
 	})
 
 	t.Run("a pod with other init-data gets no key", func(t *testing.T) {
-		logs := podWithOtherInitData(t, cl)
+		logs, podIP := podWithOtherInitData(t, cl)
 		if !strings.Contains(logs, "did not release") {
 			t.Fatalf("the pod with other init-data did not report a refused key; logs:\n%s", logs)
 		}
+		// The refusal is the KBS's: the pod asked for the key and was answered
+		// with something other than 200, every time.
+		out, err := exec.Command("kubectl", "-n", "trustee", "logs", "deploy/kbs").CombinedOutput()
+		if err != nil {
+			t.Fatalf("read the KBS log: %v: %s", err, out)
+		}
+		var asked, released int
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.Contains(line, podIP+" ") && strings.Contains(line, "GET /kbs/v0/resource/"+keyPath+" ") {
+				asked++
+				if strings.Contains(line, " 200 ") {
+					released++
+				}
+			}
+		}
+		if asked == 0 || released != 0 {
+			t.Fatalf("the KBS log shows %d requests for the key from %s, %d of them released", asked, podIP, released)
+		}
+		t.Logf("the KBS refused all %d requests for the key from the pod with other init-data", asked)
 	})
 }
 
@@ -347,9 +366,9 @@ asyncio.run(main())
 }
 
 // podWithOtherInitData runs the upstream as a bare pod on the same runtime with
-// init-data that differs by one comment, and returns its logs once it has
-// exited.
-func podWithOtherInitData(t *testing.T, cl crclient.Client) string {
+// init-data that differs by one comment, and returns its logs and address once
+// it has exited.
+func podWithOtherInitData(t *testing.T, cl crclient.Client) (string, string) {
 	t.Helper()
 	ctx := context.Background()
 	runAsNonRoot, uid, noToken := true, int64(65534), false
@@ -384,13 +403,13 @@ func podWithOtherInitData(t *testing.T, cl crclient.Client) string {
 			t.Fatal("the pod with other init-data exited 0: it started without a released key")
 		case corev1.PodFailed:
 			out, _ := exec.Command("kubectl", "-n", stackNamespace, "logs", pod.Name).CombinedOutput()
-			return string(out)
+			return string(out), pod.Status.PodIP
 		}
 		time.Sleep(10 * time.Second)
 	}
 	out, _ := exec.Command("kubectl", "-n", stackNamespace, "logs", pod.Name).CombinedOutput()
 	t.Fatalf("the pod with other init-data did not exit within %s (phase %s); logs:\n%s", readyWithin, pod.Status.Phase, out)
-	return ""
+	return "", ""
 }
 
 func mustJSON(t *testing.T, v any) []byte {
