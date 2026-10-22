@@ -14,6 +14,9 @@ HERE="${ROOT}/test/e2e/coco"
 CLUSTER="${E2E_COCO_CLUSTER:-mcp-coco-e2e}"
 STATE="${E2E_COCO_STATE:-/tmp/e2e-coco}"
 KATA_VERSION="4.2.0"
+# kata-tools-static-4.2.0-amd64.tar.zst from the kata release: genpolicy and
+# its rules and settings, the same release as the runtime that enforces them.
+KATA_TOOLS_SHA256="a4f8e1b6ee500b6e94d3925249e741c75bb4a89bf275b5d5066d6275c68e29ef"
 OPERATOR_IMAGE="localhost/mcp-hangar-operator:e2e"
 KCTL=(kubectl --context "kind-${CLUSTER}")
 
@@ -44,6 +47,20 @@ helm --kube-context "kind-${CLUSTER}" upgrade --install kata-deploy \
   oci://ghcr.io/kata-containers/kata-deploy-charts/kata-deploy --version "${KATA_VERSION}" \
   -n kube-system -f "${HERE}/kata-values.yaml" --wait --timeout 15m
 until "${KCTL[@]}" get runtimeclass kata-qemu-coco-dev >/dev/null 2>&1; do sleep 5; done
+
+if [ ! -x "${STATE}/kata-tools/opt/kata/bin/genpolicy" ]; then
+  echo "fetching genpolicy from kata ${KATA_VERSION}..."
+  tools="${STATE}/kata-tools-static-${KATA_VERSION}-amd64.tar.zst"
+  curl -fsSL -o "${tools}" \
+    "https://github.com/kata-containers/kata-containers/releases/download/${KATA_VERSION}/kata-tools-static-${KATA_VERSION}-amd64.tar.zst"
+  echo "${KATA_TOOLS_SHA256}  ${tools}" | sha256sum -c -
+  mkdir -p "${STATE}/kata-tools"
+  tar --zstd -xf "${tools}" -C "${STATE}/kata-tools" ./opt/kata/bin/genpolicy ./opt/kata/share/defaults/kata-containers
+  # kind's containerd sends OCI 1.3.0 and the default settings expect 1.1.0;
+  # kata's own CI adds the same drop-in for a current containerd.
+  settings="${STATE}/kata-tools/opt/kata/share/defaults/kata-containers"
+  cp "${settings}/drop-in-examples/20-oci-1.3.0-drop-in.json" "${settings}/genpolicy-settings.d/"
+fi
 
 echo "deploying the KBS..."
 if [ ! -f "${STATE}/kbs-admin.key" ]; then

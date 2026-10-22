@@ -30,18 +30,19 @@ chart.
    policy bound to the base64 SHA-256 of the CR's init-data.
 3. It creates the MCPServer.
 
+The CR's init-data also carries an agent policy. `manager render`, run from
+the operator image under test, prints the Deployment, and `genpolicy` from the
+same kata release as the runtime turns it into Rego.
+
 Then it checks:
 
 - `status.initDataDigests.sha256` is the hash the KBS binds;
 - the pod gets the key, serves TLS with it, core's handshake check passes,
   and `hangar_call echo` through the gateway succeeds (T1);
+- `kubectl exec` into the pod is refused by the agent policy;
 - a bare pod on the same runtime with init-data that differs by one comment
   exits without serving, and the KBS log shows it asked for the key and was
   never answered 200.
-
-Still to come for T26: an agent policy generated with `genpolicy` from
-`manager render`, and the assertion that `kubectl exec` into the pod is
-refused.
 
 ## Running it
 
