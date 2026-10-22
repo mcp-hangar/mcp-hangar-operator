@@ -306,7 +306,7 @@ func provision(t *testing.T, path, contentType string, body []byte) {
 // buildServer is the kbs-attested MCPServer the test runs, with document as
 // its init-data.
 func buildServer(document, pin string) *mcpv1alpha2.MCPServer {
-	rc, noToken := runtimeClass, false
+	rc, noToken, nonRoot, nobody := runtimeClass, false, true, int64(65534)
 	return &mcpv1alpha2.MCPServer{
 		TypeMeta:   metav1.TypeMeta{APIVersion: mcpv1alpha2.GroupVersion.String(), Kind: "MCPServer"},
 		ObjectMeta: metav1.ObjectMeta{Name: serverName, Namespace: stackNamespace},
@@ -319,6 +319,15 @@ func buildServer(document, pin string) *mcpv1alpha2.MCPServer {
 			RuntimeClassName:             &rc,
 			AutomountServiceAccountToken: &noToken,
 			StartupTimeout:               &metav1.Duration{Duration: readyWithin},
+			// The guest pulls the image, so genpolicy cannot take the user from
+			// it and wants the group stated; the rest is the operator's default.
+			PodSecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot:   &nonRoot,
+				RunAsUser:      &nobody,
+				RunAsGroup:     &nobody,
+				FSGroup:        &nobody,
+				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+			},
 			TLS: &mcpv1alpha2.MCPServerTLS{PeerIdentity: &mcpv1alpha2.PeerIdentity{
 				KeyRef:     keyRef,
 				SPKISHA256: []string{pin},
@@ -348,20 +357,38 @@ func agentPolicy(t *testing.T, cr *mcpv1alpha2.MCPServer) string {
 	if err != nil {
 		t.Fatalf("manager render: %v: %s", err, stderrOf(err))
 	}
-	// genpolicy (kata 4.2.0, and main as of 2026-10-22) refuses any field it does
-	// not model, and it does not model automountServiceAccountToken, which
-	// ADR-031 requires to be false. With it false no token is mounted, so the
-	// one field is removed rather than passing -s, which would silence every
-	// unknown field.
+	// genpolicy (kata 4.2.0) refuses any field it does not model, and it does
+	// not model four that the operator renders for a kbs-attested pod. Each is
+	// checked to hold the value that makes dropping it safe, then dropped one by
+	// one, rather than passing -s, which would silence every unknown field:
+	//   - automountServiceAccountToken false: no token is mounted;
+	//   - runAsNonRoot true on the pod and the container: the policy pins the
+	//     UID and GID themselves, 65534 from the pod's securityContext;
+	//   - the pod's seccompProfile RuntimeDefault: the container's own,
+	//     which genpolicy reads, says the same.
 	var doc map[string]any
 	if err := yaml.Unmarshal(deployment, &doc); err != nil {
 		t.Fatalf("read the rendered Deployment: %v", err)
 	}
 	podSpec := doc["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
-	if podSpec["automountServiceAccountToken"] != false {
-		t.Fatalf("the rendered pod does not set automountServiceAccountToken: false: %v", podSpec["automountServiceAccountToken"])
+	podSecurity := podSpec["securityContext"].(map[string]any)
+	containerSecurity := podSpec["containers"].([]any)[0].(map[string]any)["securityContext"].(map[string]any)
+	for _, drop := range []struct {
+		from  map[string]any
+		field string
+		safe  any
+	}{
+		{podSpec, "automountServiceAccountToken", false},
+		{podSecurity, "runAsNonRoot", true},
+		{containerSecurity, "runAsNonRoot", true},
+		{podSecurity, "seccompProfile", map[string]any{"type": "RuntimeDefault"}},
+	} {
+		if fmt.Sprint(drop.from[drop.field]) != fmt.Sprint(drop.safe) {
+			t.Fatalf("the rendered pod has %s %v, not %v, so it cannot be dropped for genpolicy", drop.field, drop.from[drop.field], drop.safe)
+		}
+		delete(drop.from, drop.field)
 	}
-	delete(podSpec, "automountServiceAccountToken")
+	delete(doc, "status")
 	if deployment, err = yaml.Marshal(doc); err != nil {
 		t.Fatal(err)
 	}
