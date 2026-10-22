@@ -29,3 +29,10 @@ jobs:
 
       - name: KBS policy and upstream image
         run: make e2e-coco-check
+
+      # Informational: whether a GitHub-hosted runner could carry the KVM leg
+      # of T26 instead of a self-hosted one.
+      - name: Report KVM on this runner
+        run: |
+          ls -l /dev/kvm || echo "no /dev/kvm on this runner"
+          grep -cE 'vmx|svm' /proc/cpuinfo || echo "no vmx/svm flags"
