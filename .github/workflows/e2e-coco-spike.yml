@@ -47,6 +47,8 @@ jobs:
             qemu-coco-dev:
               enabled: true
               allowedHypervisorAnnotations: ["cc_init_data"]
+          defaultShim:
+            amd64: qemu-coco-dev
           K
           helm install kata-deploy oci://ghcr.io/kata-containers/kata-deploy-charts/kata-deploy \
             --version 4.2.0 -n kube-system -f kata.yaml --wait --timeout 15m
