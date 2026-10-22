@@ -28,6 +28,12 @@ data:
     # core refuses a private endpoint it does not trust. kind's pod range.
     ssrf:
       trusted_networks: ["10.244.0.0/16"]
+    # A peer identity needs a durable configuration store. SQLite on an
+    # emptyDir: durable for the life of this disposable pod, which is all a run needs.
+    persistence:
+      backend: sqlite
+      sqlite:
+        data_dir: /data
     # Required, and empty: the only server is the one the operator registers.
     mcp_servers: {}
 ---
@@ -65,6 +71,7 @@ spec:
             periodSeconds: 5
           volumeMounts:
             - { name: config, mountPath: /etc/mcp-hangar, readOnly: true }
+            - { name: data, mountPath: /data }
         - name: tls
           image: alpine/socat:1.8.0.3@sha256:beb4a68d9e4fe6b0f21ea774a0fde6c31f580dde6368939ed70100c5385b015e
           args:
@@ -79,6 +86,8 @@ spec:
           configMap: { name: hangar-config }
         - name: tls
           secret: { secretName: core-tls }
+        - name: data
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
