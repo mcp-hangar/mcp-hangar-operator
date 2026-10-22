@@ -274,8 +274,15 @@ func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mc
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		if _, _, err := r.registration(ctx, mcpServer, endpoint); err != nil {
+		done, _, err := r.registration(ctx, mcpServer, endpoint)
+		if err != nil {
 			return ctrl.Result{}, err
+		}
+		// Not registered, or not started: the pod is still reconciled, since
+		// core needs its address, but its status keeps the registration's
+		// reason rather than a tools read that can only miss (#381).
+		if done {
+			ctx = withRegistrationIncomplete(ctx)
 		}
 	}
 
@@ -347,6 +354,13 @@ func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *m
 		setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "ContainersStarting", "Waiting for containers to be ready")
 		metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Initializing")
 		return defaultRequeueAfter
+	}
+
+	// A key-pinned server whose registration did not complete keeps the
+	// condition the registration wrote: asking core for its tools would
+	// replace it with "not found", or with Ready for a name someone else holds.
+	if registrationIncomplete(ctx) {
+		return registrationRequeue(mcpServer).RequeueAfter
 	}
 
 	// All containers ready - probe MCP-Hangar for tools

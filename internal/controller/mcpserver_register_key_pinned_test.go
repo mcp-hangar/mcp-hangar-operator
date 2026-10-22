@@ -37,6 +37,8 @@ type pinningCore struct {
 	servers      map[string]map[string]any
 	calls        []string
 	updateStatus int
+	// registerRefusal, when set, is the 422 body core answers a registration with.
+	registerRefusal string
 }
 
 func (c *pinningCore) serve(t *testing.T) *httptest.Server {
@@ -52,6 +54,11 @@ func (c *pinningCore) serve(t *testing.T) *httptest.Server {
 		case r.URL.Path == "/api/system/":
 			_ = json.NewEncoder(w).Encode(map[string]any{"system": map[string]any{"capabilities": c.capabilities}})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/mcp_servers/":
+			if c.registerRefusal != "" {
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				_, _ = w.Write([]byte(c.registerRefusal))
+				return
+			}
 			if c.servers[body["mcp_server_id"].(string)] != nil {
 				w.WriteHeader(http.StatusUnprocessableEntity)
 				_, _ = w.Write([]byte(`{"error":{"code":"ValidationError","message":"McpServer already exists: x"}}`))
@@ -62,6 +69,8 @@ func (c *pinningCore) serve(t *testing.T) *httptest.Server {
 		case r.Method == http.MethodDelete:
 			delete(c.servers, name)
 			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPut && c.servers[name] == nil:
+			w.WriteHeader(http.StatusNotFound)
 		case r.Method == http.MethodPut:
 			if c.updateStatus != 0 {
 				w.WriteHeader(c.updateStatus)

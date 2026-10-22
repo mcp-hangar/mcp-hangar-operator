@@ -394,6 +394,19 @@ func (r *MCPServerReconciler) writeRegistrationStatus(ctx context.Context, mcpSe
 	return writeStatus(ctx, r.Client, mcpServer)
 }
 
+// registrationIncompleteKey marks a reconcile in which a key-pinned
+// container's registration did not complete and wrote its own status.
+type registrationIncompleteKey struct{}
+
+func withRegistrationIncomplete(ctx context.Context) context.Context {
+	return context.WithValue(ctx, registrationIncompleteKey{}, true)
+}
+
+func registrationIncomplete(ctx context.Context) bool {
+	incomplete, _ := ctx.Value(registrationIncompleteKey{}).(bool)
+	return incomplete
+}
+
 // registrationRequeue is how soon a CR whose registration did not complete is
 // looked at again.
 func registrationRequeue(mcpServer *mcpv1alpha2.MCPServer) ctrl.Result {
