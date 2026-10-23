@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.17.35](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.34...v0.17.35) (2026-10-22)
+
+### Fixed
+
+- **controller:** a key-pinned container-mode MCPServer that core refuses to
+  register, or that core does not carry a key list for, now keeps that reason in
+  status after its pod runs. The tools read that followed used to replace it with
+  `ToolsFetchFailed: provider not found`, or report Ready when core held a server
+  of that name registered by someone else ([#383](https://github.com/mcp-hangar/mcp-hangar-operator/pull/383))
+
 ## [0.17.34](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.33...v0.17.34) (2026-10-21)
 
 ### Added
