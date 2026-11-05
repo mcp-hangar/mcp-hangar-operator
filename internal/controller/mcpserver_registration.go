@@ -32,6 +32,10 @@ const (
 	// claimStartedAnnotation is "true" once core has started the registered
 	// server, which is the first evidence that the endpoint answers.
 	claimStartedAnnotation = "mcp-hangar.io/started"
+	// claimEndpointDiscovered is the endpoint a claim records for a server
+	// moved from core's discovery before core took the update: what core
+	// holds is discovery's, and it is removed before registering again.
+	claimEndpointDiscovered = "discovered"
 )
 
 // RegistrationClaims records which MCPServer registered each server name in
@@ -150,8 +154,8 @@ func (r *MCPServerReconciler) reconcileRegistration(ctx context.Context, mcpServ
 }
 
 // registration registers the CR's server with core at endpoint: spec.endpoint
-// for a remote server, the pod's address for a key-pinned container ("" while
-// it has none).
+// for a remote server, the pod's address for a container ("" while it has
+// none).
 func (r *MCPServerReconciler) registration(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer, endpoint string) (bool, ctrl.Result, error) {
 	if r.Claims == nil {
 		return false, ctrl.Result{}, nil
@@ -202,17 +206,29 @@ func (r *MCPServerReconciler) registration(ctx context.Context, mcpServer *mcpv1
 		}
 	}
 
-	// Core cannot change an endpoint: a changed spec.endpoint is removed and
-	// registered again. Deregistered first and the claim moved second, so a
-	// crash between the two repeats the delete, which core answers 404.
+	// A plain server's endpoint is removed and registered again: a changed
+	// spec.endpoint, or a container's pod address. Core changes an endpoint in
+	// place only with a durable configuration store, and refuses to clear a
+	// plain server's, so a container whose pod went is removed until it has an
+	// address again. A claim with no endpoint has nothing in core to remove.
+	// Deregistered first and the claim moved second, so a crash between the
+	// two repeats the delete, which core answers 404.
 	if claim != nil && claim.Annotations[claimTLSAnnotation] == "" && tls == nil &&
 		claim.Annotations[claimEndpointAnnotation] != endpoint {
-		if err := r.HangarClient.DeregisterMCPServer(ctx, mcpServer.Name, mcpServer.Namespace); err != nil {
-			return true, ctrl.Result{}, err
+		was := claim.Annotations[claimEndpointAnnotation]
+		if was != "" {
+			if err := r.HangarClient.DeregisterMCPServer(ctx, mcpServer.Name, mcpServer.Namespace); err != nil {
+				return true, ctrl.Result{}, err
+			}
 		}
-		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonUpdated, ActionReconcile,
-			"Removed %q from core to register it again: its endpoint changed from %s to %s",
-			mcpServer.Name, claim.Annotations[claimEndpointAnnotation], endpoint)
+		if was != "" && endpoint != "" {
+			r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonUpdated, ActionReconcile,
+				"Removed %q from core to register it again: its endpoint changed from %s to %s",
+				mcpServer.Name, was, endpoint)
+		} else if was != "" {
+			r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonUpdated, ActionReconcile,
+				"Removed %q from core while its pod has no address", mcpServer.Name)
+		}
 		if err := r.Claims.annotate(ctx, claim, map[string]string{
 			claimEndpointAnnotation: endpoint, claimStartedAnnotation: "false"}); err != nil {
 			return true, ctrl.Result{}, err
@@ -223,14 +239,19 @@ func (r *MCPServerReconciler) registration(ctx context.Context, mcpServer *mcpv1
 	switch {
 	case hangar.IsNotRegistered(healthErr):
 		return r.register(ctx, mcpServer, claim, endpoint)
-	case healthErr == nil && claim == nil && keyPinned(mcpServer) && r.discoveredFromItsOwnPod(ctx, mcpServer):
+	case healthErr == nil && claim == nil && mcpServer.IsContainerMode() && r.discoveredFromItsOwnPod(ctx, mcpServer):
 		return r.moveDiscovered(ctx, mcpServer, endpoint)
-	case healthErr == nil && claim == nil && keyPinned(mcpServer):
-		// Not a mirror: the CR declares a key list the server core holds does
-		// not have, so reading it as this CR's server would be a false claim.
+	case healthErr == nil && claim == nil && (keyPinned(mcpServer) || mcpServer.IsContainerMode()):
+		// Not a mirror: the server core holds does not have the CR's key list,
+		// or does not reach the CR's pod, so reading it as this CR's server
+		// would be a false claim.
+		why := "it does not reach this MCPServer's pod"
+		if keyPinned(mcpServer) {
+			why = "its key list is not this MCPServer's"
+		}
 		return true, ctrl.Result{}, r.writeRegistrationStatus(ctx, mcpServer, ReasonNameTaken,
-			fmt.Sprintf("core already holds a server named %q that this operator did not register; "+
-				"its key list is not this MCPServer's", mcpServer.Name))
+			fmt.Sprintf("core already holds a server named %q that this operator did not register; %s",
+				mcpServer.Name, why))
 	case healthErr != nil || claim == nil:
 		// Core could not be asked, or holds a server nobody claimed: the
 		// health read that follows reports either.
@@ -274,6 +295,11 @@ func (r *MCPServerReconciler) register(ctx context.Context, mcpServer *mcpv1alph
 	var err error
 	if tls := coreTLS(mcpServer); tls != nil {
 		err = r.HangarClient.RegisterKeyPinnedMCPServer(ctx, mcpServer.Name, endpoint, tls)
+	} else if endpoint == "" {
+		// A plain container whose pod has no address: core takes no plain
+		// server without an endpoint. The name is claimed; the pod's address
+		// registers it.
+		return false, ctrl.Result{}, nil
 	} else {
 		err = r.HangarClient.RegisterRemoteMCPServer(ctx, mcpServer.Name, endpoint)
 	}
@@ -309,17 +335,24 @@ func (r *MCPServerReconciler) register(ctx context.Context, mcpServer *mcpv1alph
 	return true, ctrl.Result{}, r.writeRegistrationStatus(ctx, mcpServer, ReasonRegistrationFailed, err.Error())
 }
 
-// moveDiscovered takes over a server core discovered from this CR's own pod
-// before the CR declared a key (ADR-030 §4f). It is updated, not created
-// again: core gives it the key list and makes it a human's, and its name
-// enters the peer-key name record.
+// moveDiscovered takes over a server core discovered from this CR's own pod:
+// before the CR declared a key (ADR-030 §4f), or before this operator stopped
+// stamping pods for discovery (#334). It is updated, not created again: core
+// gives it the endpoint and any key list and makes it a human's, so
+// discovery's TTL no longer removes it, and a key-pinned name enters the
+// peer-key name record.
+//
+// The claim records claimEndpointDiscovered until core took the update. A core that
+// refuses it -- one without a durable configuration store changes no endpoint
+// in place -- then has the plain server removed and registered again on the
+// next pass, as for any changed endpoint.
 func (r *MCPServerReconciler) moveDiscovered(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer, endpoint string) (bool, ctrl.Result, error) {
-	claim, err := r.Claims.take(ctx, mcpServer, endpoint)
+	claim, err := r.Claims.take(ctx, mcpServer, claimEndpointDiscovered)
 	if err != nil || claim == nil {
 		return true, ctrl.Result{RequeueAfter: errorRequeueAfter}, err
 	}
 	r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonRegistered, ActionReconcile,
-		"Moving %q, which core discovered from this MCPServer's pod, to a key-pinned registration", mcpServer.Name)
+		"Moving %q, which core discovered from this MCPServer's pod, to the operator's registration", mcpServer.Name)
 	return r.deliverConnection(ctx, mcpServer, claim, coreTLS(mcpServer), endpoint)
 }
 
@@ -345,6 +378,8 @@ func (r *MCPServerReconciler) deliverConnection(ctx context.Context, mcpServer *
 		return true, ctrl.Result{}, r.writeRegistrationStatus(ctx, mcpServer, ReasonEndpointNotTrusted,
 			fmt.Sprintf("core refused %s as a private address it does not trust; add its network to "+
 				"ssrf.trusted_networks in core's config", endpoint))
+	case hangar.IsForbidden(err) && tls == nil:
+		return true, ctrl.Result{}, r.writeRegistrationStatus(ctx, mcpServer, ReasonRegistrationForbidden, forbiddenMessage)
 	case hangar.IsForbidden(err):
 		return true, ctrl.Result{}, r.writeRegistrationStatus(ctx, mcpServer, ReasonRegistrationForbidden,
 			"core refused the operator's API key: changing a key-pinned server needs mcp_servers:peer_identity")
@@ -376,7 +411,7 @@ func (r *MCPServerReconciler) start(ctx context.Context, mcpServer *mcpv1alpha2.
 		return true, ctrl.Result{}, r.writeRegistrationStatus(ctx, mcpServer, ReasonRegistrationForbidden, forbiddenMessage)
 	}
 	return true, ctrl.Result{}, r.writeRegistrationStatus(ctx, mcpServer, ReasonStartFailed,
-		fmt.Sprintf("registered with core, which could not start it at %s: %v", mcpServer.Spec.Endpoint, err))
+		fmt.Sprintf("registered with core, which could not start it at %s: %v", claim.Annotations[claimEndpointAnnotation], err))
 }
 
 // writeRegistrationStatus reports a registration that did not complete as
@@ -394,8 +429,8 @@ func (r *MCPServerReconciler) writeRegistrationStatus(ctx context.Context, mcpSe
 	return writeStatus(ctx, r.Client, mcpServer)
 }
 
-// registrationIncompleteKey marks a reconcile in which a key-pinned
-// container's registration did not complete and wrote its own status.
+// registrationIncompleteKey marks a reconcile in which a container's
+// registration did not complete and wrote its own status.
 type registrationIncompleteKey struct{}
 
 func withRegistrationIncomplete(ctx context.Context) context.Context {
@@ -416,17 +451,12 @@ func registrationRequeue(mcpServer *mcpv1alpha2.MCPServer) ctrl.Result {
 	return ctrl.Result{RequeueAfter: readyRequeueAfter}
 }
 
-// deregisterOwned removes from core what this operator put there. A
-// container-mode server exists in core because of the pod the operator ran; a
-// remote one only if this CR holds the claim on its name.
+// deregisterOwned removes from core what this operator put there: a server of
+// either mode only if this CR holds the claim on its name (#334). A container
+// server core discovered and the operator never moved is left to discovery,
+// which drops it once its pod is gone.
 func (r *MCPServerReconciler) deregisterOwned(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) error {
 	logger := log.FromContext(ctx)
-	if mcpServer.IsContainerMode() {
-		if err := r.HangarClient.DeregisterMCPServer(ctx, mcpServer.Name, mcpServer.Namespace); err != nil {
-			logger.Error(err, "Failed to deregister provider from Hangar")
-		}
-		return nil
-	}
 	var claim *coordinationv1.Lease
 	if r.Claims != nil {
 		var err error
