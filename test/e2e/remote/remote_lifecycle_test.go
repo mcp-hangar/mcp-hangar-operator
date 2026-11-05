@@ -23,9 +23,9 @@
 //     same client calling an allowed tool succeeds (#331);
 //   - deleting a remote CR that mirrors a config-defined server leaves that
 //     server in core (#202);
-//   - a container-mode CR runs a pod the operator stamps with the discovery
-//     annotations, core's kubernetes discovery registers it, and the CR reaches
-//     Ready with the backend's tool count; deleting the CR takes it out (#294);
+//   - a container-mode CR runs a pod the operator registers with core at its
+//     address, with no discovery annotation on it, and the CR reaches Ready
+//     with the backend's tool count; deleting the CR takes it out (#294, #334);
 //   - with core unreachable, probing is SUSTAINED at roughly the 10s
 //     errorRequeueAfter cadence (~6/min) -- not the ~168/s self-trigger loop of
 //     #105, and not stalled. Asserted as a rate window, deliberately not a
@@ -323,7 +323,8 @@ func testMistypedEndpoint(t *testing.T, cl crclient.Client) {
 // not trust: the CR must say which core setting to change.
 func testUntrustedEndpoint(t *testing.T, cl crclient.Client) {
 	const name = "untrusted"
-	createRemoteCR(t, cl, name, "http://10.244.0.250:9999/mcp")
+	// Outside both trusted ranges: the pod range is trusted now (#334).
+	createRemoteCR(t, cl, name, "http://172.31.255.250:9999/mcp")
 
 	deadline := time.Now().Add(2 * time.Minute)
 	var degraded *metav1.Condition
@@ -608,17 +609,16 @@ func testDeleteMirror(t *testing.T, cl crclient.Client) {
 	testReady(t, cl)
 }
 
-// containerName is the container-mode CR; core knows it only by discovering
-// its pod.
+// containerName is the container-mode CR; core knows it only because the
+// operator registered its pod.
 const containerName = "boxed"
 
-// testContainerMode drives a container-mode MCPServer end to end (#294). The
-// operator runs the task_upstream image as the CR's pod and stamps the
-// discovery annotations on it (pkg/provider/builder.go); core's kubernetes
-// discovery source reads them and registers the pod as a server; the CR then
-// reaches Ready with the backend's three tools. If the builder stopped
-// stamping the annotations, core would never hear of the server and the CR
-// would never be Ready.
+// testContainerMode drives a container-mode MCPServer end to end (#294, #334).
+// The operator runs the task_upstream image as the CR's pod and registers it
+// with core at http://<pod IP>:8080/mcp, which core trusts
+// (manifests/core.yaml, ssrf.trusted_networks), and starts it; the CR then
+// reaches Ready with the backend's three tools. Core runs no discovery, so
+// nothing else could have registered the server.
 func testContainerMode(t *testing.T, cl crclient.Client, cs *kubernetes.Clientset) {
 	ctx := context.Background()
 	nonRoot := int64(1000)
@@ -652,18 +652,6 @@ func testContainerMode(t *testing.T, cl crclient.Client, cs *kubernetes.Clientse
 		time.Sleep(2 * time.Second)
 	}
 
-	// Core registers a discovered server cold, as config does "backend"; up.sh
-	// starts that one, and this starts the discovered one once core has it, so
-	// its tools are listed.
-	deadline = time.Now().Add(readyTimeout)
-	for time.Now().Before(deadline) {
-		if !strings.HasPrefix(coreGet(t, "/api/mcp_servers/"+containerName), "HTTP ") {
-			corePost(t, "/api/mcp_servers/"+containerName+"/start")
-			break
-		}
-		time.Sleep(3 * time.Second)
-	}
-
 	var last *mcpv1alpha2.MCPServer
 	deadline = time.Now().Add(readyTimeout)
 	for time.Now().Before(deadline) {
@@ -679,8 +667,8 @@ func testContainerMode(t *testing.T, cl crclient.Client, cs *kubernetes.Clientse
 		t.Fatalf("no pod for the container-mode CR: err=%v; status: %+v", err, last.Status)
 	}
 	pod := pods.Items[0]
-	if pod.Annotations["mcp-hangar.io/enabled"] != "true" || pod.Annotations["mcp-hangar.io/name"] != containerName {
-		t.Errorf("the pod lacks the discovery annotations core reads: %v", pod.Annotations)
+	if _, stamped := pod.Annotations["mcp-hangar.io/enabled"]; stamped {
+		t.Errorf("the pod still carries discovery annotations: %v", pod.Annotations)
 	}
 	ready := apimeta.FindStatusCondition(last.Status.Conditions, "Ready")
 	if ready == nil || ready.Status != metav1.ConditionTrue || last.Status.ToolsCount != backendToolCount {
@@ -690,16 +678,16 @@ func testContainerMode(t *testing.T, cl crclient.Client, cs *kubernetes.Clientse
 				waiting = append(waiting, s.State.Waiting.Reason+": "+s.State.Waiting.Message)
 			}
 		}
-		t.Fatalf("container-mode MCPServer %q never reached Ready with %d tools; pod phase %s %v; status: %+v; core: %s\ncore discovery log:\n%s",
+		t.Fatalf("container-mode MCPServer %q never reached Ready with %d tools; pod phase %s %v; status: %+v; core: %s\ncore log:\n%s",
 			containerName, backendToolCount, pod.Status.Phase, waiting, last.Status,
-			strings.TrimSpace(coreGet(t, "/api/mcp_servers/"+containerName)), coreLogLines("discover"))
+			strings.TrimSpace(coreGet(t, "/api/mcp_servers/"+containerName)), coreLogLines(containerName))
 	}
 	if body := coreGet(t, "/api/mcp_servers/"+containerName); strings.HasPrefix(body, "HTTP ") {
 		t.Errorf("core does not list %q although the CR is Ready: %s", containerName, strings.TrimSpace(body))
 	}
 
 	// Deleting the CR takes the server out of core: the operator deregisters
-	// what its pod put there (#202), and the pod is gone for discovery too.
+	// what it registered under its claim (#202, #334).
 	if err := cl.Delete(ctx, cr); err != nil {
 		t.Fatalf("delete container-mode MCPServer: %v", err)
 	}
@@ -732,30 +720,6 @@ func coreLogLines(substr string) string {
 		lines = lines[len(lines)-40:]
 	}
 	return strings.Join(lines, "\n")
-}
-
-// corePost runs a body-less POST from inside the core pod, as coreGet does a GET.
-func corePost(t *testing.T, path string) string {
-	t.Helper()
-	pod, err := exec.Command("kubectl", "-n", stackNamespace, "get", "pod", "-l", "app=mcp-hangar",
-		"-o", "jsonpath={.items[0].metadata.name}").Output()
-	if err != nil {
-		t.Fatalf("find core pod: %v", err)
-	}
-	script := `import sys, urllib.request, urllib.error
-req = urllib.request.Request("http://localhost:8080" + sys.argv[1], method="POST")
-try:
-    print(urllib.request.urlopen(req, timeout=60).read().decode())
-except urllib.error.HTTPError as e:
-    print("HTTP %d: %s" % (e.code, e.read().decode()))
-`
-	out, err := exec.Command("kubectl", "-n", stackNamespace, "exec", string(pod), "--",
-		"python3", "-c", script, path).CombinedOutput()
-	if err != nil {
-		t.Fatalf("POST %s in core: %v: %s", path, err, out)
-	}
-	t.Logf("POST %s: %s", path, strings.TrimSpace(string(out)))
-	return string(out)
 }
 
 // coreGet runs a GET from inside the core pod. The API port is not published

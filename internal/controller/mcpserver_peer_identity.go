@@ -78,11 +78,25 @@ func (r *MCPServerReconciler) peerIdentityRefusal(ctx context.Context, mcpServer
 	return "", "", nil
 }
 
-// podEndpoint is where core reaches a key-pinned container: its pod's address,
-// over https, on the port core's discovery would have used. Empty while the
-// server is off or its pod has no address yet; the endpoint is then cleared in
-// core, so calls are refused rather than sent to an address another pod may
-// inherit (ADR-030 §4a).
+// containerPath is the path core reaches a plain container's MCP server on:
+// what core's discovery used for the operator's pods, mcp-hangar.io/path
+// unset and so /mcp, which the operator never stamped.
+const containerPath = "/mcp"
+
+// annotationDiscoveredAs, on a Deployment this operator controls, records that
+// its pod template once carried mcp-hangar.io/name for core's discovery. The
+// operator writes it, from that annotation, when it stops stamping the
+// template (#334), so a server core discovered before the upgrade is still
+// recognised once the template no longer says so.
+const annotationDiscoveredAs = "mcp-hangar.io/discovered-as"
+
+// podEndpoint is where core reaches a container-mode server: its pod's
+// address, on the port core's discovery used. A key-pinned server is reached
+// over https, as it always was (ADR-030 §4a); a plain one over http at
+// containerPath, the endpoint core's discovery built for it (#334). Empty
+// while the server is off or its pod has no address yet; the endpoint is then
+// cleared in core, so calls are refused rather than sent to an address another
+// pod may inherit.
 func (r *MCPServerReconciler) podEndpoint(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) (string, error) {
 	if mcpServer.IsCold() {
 		return "", nil
@@ -91,23 +105,38 @@ func (r *MCPServerReconciler) podEndpoint(ctx context.Context, mcpServer *mcpv1a
 	if err != nil || pod == nil || pod.Status.PodIP == "" {
 		return "", err
 	}
-	return "https://" + net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(provider.DefaultDiscoveryPort)), nil
+	hostPort := net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(provider.DefaultDiscoveryPort))
+	if keyPinned(mcpServer) {
+		return "https://" + hostPort, nil
+	}
+	return "http://" + hostPort + containerPath, nil
 }
 
 // discoveredFromItsOwnPod reports whether core's server under this CR's name
-// came from this CR's own pod, by core's discovery. Two things must agree: the
-// Deployment this CR controls still stamps its pods with mcp-hangar.io/name,
-// which the operator wrote itself, and core reports the server's provenance as
-// discovery. A human registered the server otherwise, and it is not this CR's
-// to move. A core before 2.32.0 reports no provenance, and the Deployment
-// alone decides there.
+// came from this CR's own pod, by core's discovery. Two things must agree:
+//
+//   - the Deployment this CR controls stamps, or stamped, its pods with
+//     mcp-hangar.io/name: the template annotation itself, which an operator
+//     before #334 wrote, or annotationDiscoveredAs, which this operator
+//     carries over from it when it rewrites the template. Both are written by
+//     the operator on an object the CR controls. The carried marker is what
+//     keeps the decision stable across the upgrade: the registration runs
+//     before the Deployment is rewritten, but a first pass that fails (core
+//     unreachable, say) would otherwise leave the next one nothing to go on;
+//   - core reports the server's provenance as discovery. Core exposes no pod
+//     or namespace of a discovered server, so provenance is the only signal
+//     from core's side; a server a human registered is never discovery, and
+//     is not this CR's to move.
+//
+// A core before 2.32.0 reports no provenance, and the Deployment alone
+// decides there.
 func (r *MCPServerReconciler) discoveredFromItsOwnPod(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) bool {
 	deployment := &appsv1.Deployment{}
 	key := client.ObjectKey{Namespace: mcpServer.Namespace, Name: provider.DeploymentName(mcpServer)}
 	if err := r.Get(ctx, key, deployment); err != nil || !metav1.IsControlledBy(deployment, mcpServer) {
 		return false
 	}
-	if deployment.Spec.Template.Annotations[provider.AnnotationDiscoveryName] != mcpServer.Name {
+	if discoveredAs(deployment) != mcpServer.Name {
 		return false
 	}
 	provenance, err := r.HangarClient.GetMCPServerProvenance(ctx, mcpServer.Name)
@@ -115,4 +144,13 @@ func (r *MCPServerReconciler) discoveredFromItsOwnPod(ctx context.Context, mcpSe
 		return false
 	}
 	return provenance == "" || provenance == "discovery"
+}
+
+// discoveredAs is the server name core's discovery knew the Deployment's pods
+// by, or "" when they were never stamped.
+func discoveredAs(deployment *appsv1.Deployment) string {
+	if name := deployment.Spec.Template.Annotations[provider.AnnotationDiscoveryName]; name != "" {
+		return name
+	}
+	return deployment.Annotations[annotationDiscoveredAs]
 }

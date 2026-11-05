@@ -90,6 +90,8 @@ func discoveredServer(t *testing.T, core *pinningCore, provenance any) *MCPServe
 	plain.Spec.TLS = nil
 	discovered, err := provider.BuildDeploymentForMCPServer(plain)
 	require.NoError(t, err)
+	// As an operator before #334 stamped it.
+	discovered.Spec.Template.Annotations[provider.AnnotationDiscoveryName] = plain.Name
 	discovered.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(s, mcpv1alpha2.GroupVersion.WithKind("MCPServer"))}
 	core.servers["payments"] = map[string]any{"mcp_server_id": "payments", "endpoint": "http://10.244.3.17:8080", "provenance": provenance}
 	r, _ := overHTTPS(core.serve(t), s)
@@ -119,6 +121,8 @@ func TestKeyPinnedContainer_AServerDiscoveredFromItsOwnPodIsMoved(t *testing.T) 
 	plain.Spec.TLS = nil
 	discovered, err := provider.BuildDeploymentForMCPServer(plain)
 	require.NoError(t, err)
+	// As an operator before #334 stamped it.
+	discovered.Spec.Template.Annotations[provider.AnnotationDiscoveryName] = plain.Name
 	discovered.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(s, mcpv1alpha2.GroupVersion.WithKind("MCPServer"))}
 	core.servers["payments"] = map[string]any{"mcp_server_id": "payments", "endpoint": "http://10.244.3.17:8080"}
 	r, _ := overHTTPS(core.serve(t), s)

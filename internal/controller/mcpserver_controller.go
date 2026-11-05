@@ -266,10 +266,12 @@ func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mc
 	// Audit wildcard egress override usage (emits Warning event for audit trail)
 	r.reconcileEgressAudit(ctx, mcpServer)
 
-	// A key-pinned container is registered before its pod exists and its
-	// endpoint follows the pod: set when the pod has an address, cleared when
-	// it goes. Its pod carries no discovery annotations (ADR-030 §4a, §4c).
-	if keyPinned(mcpServer) {
+	// The operator registers every container-mode server in core under the
+	// same Lease claim as a remote one (#334), and its endpoint follows the
+	// pod: set when the pod has an address, cleared when it goes. No pod
+	// carries discovery annotations any more (ADR-030 §4a, §4c). Without a
+	// core client nothing is registered; a key-pinned server was held above.
+	if r.HangarClient != nil {
 		endpoint, err := r.podEndpoint(ctx, mcpServer)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -356,7 +358,7 @@ func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *m
 		return defaultRequeueAfter
 	}
 
-	// A key-pinned server whose registration did not complete keeps the
+	// A container whose registration did not complete keeps the
 	// condition the registration wrote: asking core for its tools would
 	// replace it with "not found", or with Ready for a name someone else holds.
 	if registrationIncomplete(ctx) {
@@ -941,8 +943,8 @@ func (r *MCPServerReconciler) reconcileDelete(ctx context.Context, mcpServer *mc
 	}
 
 	// Deregister from MCP-Hangar core, but only a server this operator put
-	// there. A container-mode server exists in core because of the pod this
-	// operator ran; a remote one only if the operator registered it.
+	// there: a server of either mode only if this CR holds the claim on its
+	// name (#164, #334).
 	if r.HangarClient != nil {
 		if err := r.deregisterOwned(ctx, mcpServer); err != nil {
 			return ctrl.Result{}, err

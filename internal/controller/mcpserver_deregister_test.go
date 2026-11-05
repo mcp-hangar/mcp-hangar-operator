@@ -96,9 +96,10 @@ func TestMCPServer_Delete_TheOldAnnotationIsNotAClaim(t *testing.T) {
 	assert.Empty(t, fc.deleted())
 }
 
-// A container-mode server is in core because of the pod this operator ran, so
-// deleting the CR removes it from core.
-func TestMCPServer_Delete_ContainerModeIsDeregistered(t *testing.T) {
+// A container-mode server is in core because the operator registered it, under
+// a claim (#334). Without the claim the server under its name is someone
+// else's -- one core discovered, say -- and deleting the CR leaves it alone.
+func TestMCPServer_Delete_ContainerModeWithoutAClaimLeavesCoreAlone(t *testing.T) {
 	fc := &fakeCore{}
 	core := fc.server(t)
 	p := &mcpv1alpha2.MCPServer{
@@ -109,5 +110,5 @@ func TestMCPServer_Delete_ContainerModeIsDeregistered(t *testing.T) {
 
 	deleteMCPServerAgainst(t, core, p)
 
-	assert.Equal(t, []string{"/api/mcp_servers/box"}, fc.deleted())
+	assert.Empty(t, fc.deleted())
 }

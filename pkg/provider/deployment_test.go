@@ -37,8 +37,8 @@ func TestBuildDeployment_TemplateIsThePod(t *testing.T) {
 	assert.Equal(t, "mcp-provider-srv", dep.Name)
 	assert.Equal(t, "ns", dep.Namespace)
 	assert.Equal(t, pod.Labels, dep.Spec.Template.Labels)
-	assert.Equal(t, pod.Annotations, dep.Spec.Template.Annotations, "the discovery annotations core reads")
-	assert.Equal(t, "true", dep.Spec.Template.Annotations[AnnotationDiscoveryEnabled])
+	assert.Equal(t, pod.Annotations, dep.Spec.Template.Annotations)
+	assert.NotContains(t, dep.Spec.Template.Annotations, AnnotationDiscoveryEnabled, "the operator registers the server (#334)")
 	assert.Equal(t, corev1.RestartPolicyAlways, dep.Spec.Template.Spec.RestartPolicy)
 	want := pod.Spec
 	want.RestartPolicy = corev1.RestartPolicyAlways

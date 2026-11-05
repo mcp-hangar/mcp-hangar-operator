@@ -100,6 +100,11 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 		}
 		return ctrl.Result{RequeueAfter: coldRequeueAfter}, nil
 	case existing.Annotations[annotationDeploymentHash] != hash:
+		// Pods core discovered before #334: keep the evidence once the
+		// template no longer carries it (discoveredFromItsOwnPod).
+		if name := discoveredAs(existing); name == mcpServer.Name {
+			desired.Annotations[annotationDiscoveredAs] = name
+		}
 		if err := applyOwned(ctx, r.Client, desired); err != nil {
 			return r.deploymentWriteFailed(ctx, mcpServer, err)
 		}

@@ -29,27 +29,17 @@ const (
 	AnnotationGeneration = "mcp-hangar.io/generation"
 	AnnotationConfigHash = "mcp-hangar.io/config-hash"
 
-	// Discovery annotations. These are how a pod becomes a server in the
-	// gateway: core's kubernetes discovery source skips any pod without
-	// `enabled: "true"`, and the operator's client has no registration call, so
-	// without these an MCPServer created through the CRD produced a Running pod
-	// that the gateway never heard of -- while the CR reported Ready (#100).
+	// Discovery annotations core's kubernetes discovery source reads. The
+	// operator no longer stamps them: it registers every container-mode
+	// server itself (#334). They are kept to recognise a pod an older
+	// operator stamped, and to test that none is stamped now.
 	AnnotationDiscoveryEnabled = "mcp-hangar.io/enabled"
 	AnnotationDiscoveryName    = "mcp-hangar.io/name"
-	AnnotationDiscoveryMode    = "mcp-hangar.io/mode"
-	AnnotationDiscoveryPort    = "mcp-hangar.io/port"
-	// AnnotationDiscoveryHealthPath is spec.healthPath, stamped only when set:
-	// core's own default applies otherwise (#306).
-	AnnotationDiscoveryHealthPath = "mcp-hangar.io/health-path"
 
-	// DiscoveryModeHTTP is what a container-mode MCPServer looks like from the
-	// gateway's side: a pod serving HTTP at its own address. Core maps this to
-	// a remote server pointed at the pod IP.
-	DiscoveryModeHTTP = "http"
-
-	// DefaultDiscoveryPort matches core's own default for the port annotation.
-	// The MCPServer spec has no port field, so both sides have to agree on one
-	// number; when the spec grows one, this is where it stops being a constant.
+	// DefaultDiscoveryPort is the port core reaches a container-mode server's
+	// pod on, core's own default for discovery's port annotation, which
+	// registration keeps. The MCPServer spec has no port field; when it grows
+	// one, this is where it stops being a constant.
 	DefaultDiscoveryPort = 8080
 
 	// Container names
@@ -170,37 +160,15 @@ func buildContainer(provider *mcpv1alpha2.MCPServer) corev1.Container {
 	return container
 }
 
-// buildAnnotations creates the pod annotations, including the ones core's
-// kubernetes discovery source reads.
+// buildAnnotations creates the pod annotations.
 //
-// Stamping these is what connects the two halves. The operator creates the pod
-// and never registers anything with the gateway -- its client has read, policy
-// and delete calls, and no create -- so the gateway learns about a pod through
-// discovery or not at all. `name` carries the MCPServer's own name rather than
-// the pod's, because that is the identity the user wrote and the one they will
-// look for in the gateway.
-//
-// Deliberately not stamped: `mcp-hangar.io/ttl`. Core reads that as the
-// discovery TTL -- how long an entry survives without being seen again -- and
-// the spec's `idleTTL` means how long an idle server stays running. Mapping one
-// onto the other because the names rhyme would quietly deregister busy servers.
+// None is for core's discovery any more: the operator registers every
+// container-mode server with core itself, at its pod's address (#334). A pod
+// still stamped for discovery would become a second, unclaimed server under
+// the same name in a core that runs discovery.
 func buildAnnotations(provider *mcpv1alpha2.MCPServer) map[string]string {
 	annotations := map[string]string{
 		AnnotationGeneration: strconv.FormatInt(provider.Generation, 10),
-	}
-
-	// A key-pinned server is registered by the operator with its key list.
-	// Discovered, it would be a plain server whose key nothing checks
-	// (ADR-030 §4c).
-	keyPinned := provider.Spec.TLS != nil && provider.Spec.TLS.PeerIdentity != nil
-	if provider.Spec.Mode == mcpv1alpha2.MCPServerModeContainer && !keyPinned {
-		annotations[AnnotationDiscoveryEnabled] = "true"
-		annotations[AnnotationDiscoveryName] = provider.Name
-		annotations[AnnotationDiscoveryMode] = DiscoveryModeHTTP
-		annotations[AnnotationDiscoveryPort] = strconv.Itoa(DefaultDiscoveryPort)
-		if provider.Spec.HealthPath != "" {
-			annotations[AnnotationDiscoveryHealthPath] = provider.Spec.HealthPath
-		}
 	}
 
 	// The guest's init-data, byte for byte (ADR-031 §3). CEL admits it only on

@@ -78,8 +78,8 @@ kubectl get mcpegresspolicies -A --field-selector spec.mode=Enforce
 
 The operator is the **deploy-time admission plane**, not Hangar's control plane.
 Idle stop, circuit breaking and tool allow-lists are core settings
-(`config.yaml` / the REST API) and are not `MCPServer` fields — a cluster server
-discovered by Hangar takes core's own `idle_ttl_s` default. The tables below
+(`config.yaml` / the REST API) and are not `MCPServer` fields — a server the
+operator registers takes core's own `idle_ttl_s` default. The tables below
 list what the operator actually reads.
 
 ### MCPServer
@@ -101,12 +101,25 @@ deregister, and `policy:write` to deliver egress policy. Core 2.28.0 and later h
 operator's key. `provider-admin` lacks the first two and the CR says so with
 reason `RegistrationForbidden`; `developer` lacks `policy:write`. A changed `spec.endpoint` re-registers the server.
 
+A `mode: container` MCPServer is registered the same way, under the same claim,
+at its pod's address: `http://<pod IP>:8080/mcp`, or `https://<pod IP>:8080`
+when it declares `spec.tls.peerIdentity`. The endpoint follows the pod, and the
+server is not in core while its pod has no address. The operator stamps no
+discovery annotation on the pod, so core needs no discovery configuration for
+it. Every container-mode server therefore needs the cluster's pod CIDR in
+core's `ssrf.trusted_networks` (`ssrf.trustedNetworks` in the `mcp-hangar`
+chart), or it is Degraded with reason `EndpointNotTrusted`. The chart's default
+NetworkPolicy lets core reach only its own namespace, DNS and port 443: for
+servers in other namespaces, add a `networkPolicy.additionalEgress` rule for
+the pod CIDR on port 8080. A server core discovered from the CR's own pod
+under an older operator is moved under the claim, not registered twice.
+
 | Field | Description | Default |
 |-------|-------------|---------|
 | `spec.mode` | Execution mode: `container` or `remote` | Required |
 | `spec.image` | Container image (for container mode) | Required for container |
 | `spec.endpoint` | HTTP endpoint (for remote mode) | Required for remote |
-| `spec.healthPath` | Path core's discovery probes on a container-mode pod (`mcp-hangar.io/health-path`); core 2.27.1+ falls back to an MCP `initialize` on `/mcp` when it answers 404 | core's `/health` |
+| `spec.healthPath` | No longer used: the operator registers container-mode servers itself and stamps no discovery annotation | — |
 | `spec.replicas` | On (`1`) or off (`0`, no pod); a server runs at most one pod, and there is no scale subresource | `1` |
 | `spec.startupTimeout` | Accepted and validated; the operator does not act on it | — |
 | `spec.shutdownGracePeriod` | Pod termination grace period | `30s` when unset (operator default) |

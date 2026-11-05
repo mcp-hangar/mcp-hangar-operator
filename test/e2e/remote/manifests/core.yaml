@@ -22,27 +22,14 @@ data:
     logging:
       level: INFO
       json_format: true
-    # Kubernetes discovery for the container-mode leg (#294): a container-mode
-    # MCPServer reaches core only through the annotations the operator stamps
-    # on its pod. Additive, so the config-defined "backend" is untouched.
-    discovery:
-      enabled: true
-      refresh_interval_s: 5
-      sources:
-        - type: kubernetes
-          mode: additive
-          in_cluster: true
-          namespaces: [hangar-e2e]
-          allowed_namespaces: [hangar-e2e]
-      # No require_health_check: false. task_upstream serves only /mcp, no
-      # /health, and since core 2.27.1 discovery accepts an MCP initialize when
-      # the health path answers 404 (#306) -- which the container-mode leg
-      # proves with the check on.
-    # The kind Service range up.sh pins: the operator registers a remote
-    # MCPServer that names an in-cluster Service, and core refuses a private
-    # endpoint it does not trust (#164, core 2.27.0).
+    # No discovery: the operator registers a container-mode MCPServer itself,
+    # at its pod's address (#334).
+    #
+    # The kind Service range up.sh pins, for a remote MCPServer that names an
+    # in-cluster Service, and kind's pod range, for a container-mode one. Core
+    # refuses a private endpoint it does not trust (#164, core 2.27.0).
     ssrf:
-      trusted_networks: ["10.96.0.0/16"]
+      trusted_networks: ["10.96.0.0/16", "10.244.0.0/16"]
     mcp_servers:
       backend:
         mode: remote
@@ -129,34 +116,9 @@ spec:
     - port: 8080
       targetPort: 8080
 ---
-# What core's kubernetes discovery source needs to read the pods in the one
-# namespace it watches, and nothing more.
+# core's pod identity; core reads nothing from the API server.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: mcp-hangar
   namespace: hangar-e2e
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: mcp-hangar-discovery
-  namespace: hangar-e2e
-rules:
-  - apiGroups: [""]
-    resources: [pods]
-    verbs: [get, list, watch]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: mcp-hangar-discovery
-  namespace: hangar-e2e
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: mcp-hangar-discovery
-subjects:
-  - kind: ServiceAccount
-    name: mcp-hangar
-    namespace: hangar-e2e
