@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.17.36](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.35...v0.17.36) (2026-11-05)
+
+### Changed
+
+- **controller:** the operator registers every container-mode MCPServer in core
+  at `http://<pod IP>:8080/mcp`, under the same Lease claim as a remote one, and
+  its pods no longer carry the discovery annotations. The endpoint follows the
+  pod and the server is removed from core while the pod has no address; deleting
+  the CR removes the server only when the CR holds the claim. A server core
+  discovered from the CR's own pod is moved under the claim rather than
+  duplicated. `spec.healthPath` is no longer used ([#334](https://github.com/mcp-hangar/mcp-hangar-operator/pull/334))
+
 ## [0.17.35](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.34...v0.17.35) (2026-10-22)
 
 ### Fixed
