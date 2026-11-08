@@ -97,31 +97,14 @@ type EgressTargetRef struct {
 	Name string `json:"name"`
 }
 
-// UpstreamMatch selects an upstream and the trust conditions under which it may
-// be reached. Digest/issuer fields reference primitives that already exist
-// elsewhere rather than duplicating them.
+// UpstreamMatch selects an upstream. Host is its only field: the
+// toolSchemaDigestRef, imageDigest and issuers conditions it once declared were
+// never acted on and are gone (#328).
 type UpstreamMatch struct {
 	// Host is the upstream hostname (FQDN) this rule matches.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	Host string `json:"host"`
-
-	// ToolSchemaDigestRef references an existing per-tenant tool-schema pin.
-	// +kubebuilder:validation:MaxLength=512
-	// +optional
-	ToolSchemaDigestRef string `json:"toolSchemaDigestRef,omitempty"`
-
-	// ImageDigest controls how the target's container image pin gates this
-	// upstream: "required" demands a pinned image, "inherited" defers to the
-	// operator-wide image-digest policy.
-	// +kubebuilder:validation:Enum=required;inherited
-	// +optional
-	ImageDigest string `json:"imageDigest,omitempty"`
-
-	// Issuers restricts which token issuers may be brokered to this upstream.
-	// +kubebuilder:validation:MaxItems=32
-	// +optional
-	Issuers []string `json:"issuers,omitempty"`
 }
 
 // ToolRules matches MCP tool calls by glob on tool name. A call may be allowed,

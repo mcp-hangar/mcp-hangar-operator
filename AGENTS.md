@@ -110,7 +110,6 @@ spec:
   mode: container
   image: ghcr.io/example/math-mcp@sha256:...
   capabilities:
-    enforcementMode: block      # alert | block | quarantine
     network:                    # feeds the per-server NetworkPolicy
       egress:
         - host: "api.example.com"
@@ -118,13 +117,16 @@ spec:
           port: 443
     tools:                      # drives capability-violation events
       maxCount: 10
-      expectedTools: [calculate]
 ```
 
 A host with no `cidr` emits no allow rule (fails closed); hostname egress is
 enforced through an `MCPEgressPolicy` with the Cilium flavor.
-`filesystem`, `environment` and `resources` capability children are gone (#121):
-do not re-add a declaration nothing enforces.
+`filesystem`, `environment` and `resources` capability children are gone (#121),
+and so are `enforcementMode`, `tools.expectedTools` and `tools.schemaDriftAlert`
+(#328): do not re-add a declaration nothing enforces.
+`api/v1alpha2/spec_readers_test.go` fails on a spec field with no non-test
+reader; a field only core or a CEL rule reads goes in its `unreadAllowed` with
+the reason.
 
 ## CRD and RBAC development
 
