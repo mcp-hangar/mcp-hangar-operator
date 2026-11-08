@@ -258,6 +258,19 @@ func main() {
 		})
 		setupLog.Info("Hangar core client configured", "url", hangarURL)
 	}
+	// Refuse a core older than hangar.MinCoreVersion instead of degrading
+	// every object against it (#330).
+	var coreGate *controller.CoreGate
+	if hangarClient != nil {
+		coreGate = &controller.CoreGate{
+			Client: hangarClient, Recorder: mgr.GetEventRecorder("core-compatibility"),
+			Self: controller.OperatorPod(), Interval: time.Minute, RetryInterval: 10 * time.Second,
+		}
+		if err := mgr.Add(coreGate); err != nil {
+			setupLog.Error(err, "unable to add the core version check")
+			os.Exit(1)
+		}
+	}
 
 	// One enforcement probe for every writer of a NetworkPolicy (#199): the
 	// per-server policy, the namespace default-deny and the MCPEgressPolicy
@@ -302,6 +315,7 @@ func main() {
 		Scheme:                  mgr.GetScheme(),
 		Recorder:                mgr.GetEventRecorder("mcpserver-controller"),
 		HangarClient:            hangarClient,
+		CoreGate:                coreGate,
 		Claims:                  claims,
 		ProviderIngress:         providerIngress,
 		EnforcementProbe:        enforcementProbe,
@@ -351,6 +365,7 @@ func main() {
 		Scheme:                  mgr.GetScheme(),
 		Recorder:                mgr.GetEventRecorder("mcpegresspolicy-controller"),
 		HangarClient:            hangarClient,
+		CoreGate:                coreGate,
 		GatewayPodSelector:      gatewayPodSelector,
 		EnforcementProbe:        enforcementProbe,
 		EnforcementUpdates:      enforcementUpdates,

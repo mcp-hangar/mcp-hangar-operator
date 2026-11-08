@@ -124,6 +124,9 @@ type MCPServerReconciler struct {
 	// Claims records which MCPServer registered each server name in core
 	// (#164). Nil: the operator registers nothing and only mirrors.
 	Claims *RegistrationClaims
+	// CoreGate holds every call to core while core is older than
+	// hangar.MinCoreVersion (#330). Nil: no check.
+	CoreGate *CoreGate
 	// MaxConcurrentReconciles is how many MCPServers reconcile at once; zero
 	// keeps controller-runtime's default of one. With one worker, a reconcile
 	// stuck on a slow core held up every other server's, pod create and
@@ -272,6 +275,9 @@ func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mc
 	// carries discovery annotations any more (ADR-030 §4a, §4c). Without a
 	// core client nothing is registered; a key-pinned server was held above.
 	if r.HangarClient != nil {
+		if held, result, err := r.holdForCore(ctx, mcpServer); held {
+			return result, err
+		}
 		endpoint, err := r.podEndpoint(ctx, mcpServer)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -473,6 +479,9 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 		// Two distinct failures, kept distinct: we could not ask core, or core
 		// says the upstream is failing. The first is our problem, the second is
 		// the upstream's, and conflating them made both unreadable.
+		if held, result, err := r.holdForCore(ctx, mcpServer); held {
+			return result, err
+		}
 		if done, result, err := r.reconcileRegistration(ctx, mcpServer); done || err != nil {
 			return result, err
 		}

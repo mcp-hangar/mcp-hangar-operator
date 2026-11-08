@@ -603,8 +603,25 @@ const DeclaredKeyIssuanceCapability = "declared_key_issuance"
 
 // Capabilities is what this core says it enforces, from GET /api/system/. A core
 // that predates the list reports none.
-func (c *Client) Capabilities(ctx context.Context) (capabilities []string, err error) {
-	defer c.observe("capabilities")(&err)
+func (c *Client) Capabilities(ctx context.Context) ([]string, error) {
+	info, err := c.SystemInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return info.Capabilities, nil
+}
+
+// SystemInfo is the part of GET /api/system/ this operator reads.
+type SystemInfo struct {
+	// Version is core's package version, PEP 440 ("2.36.1", "2.37.0.dev3").
+	Version      string   `json:"version"`
+	Capabilities []string `json:"capabilities"`
+}
+
+// SystemInfo reads core's version and capabilities from GET /api/system/. Since
+// core 2.34.9 the route needs mcp_servers:read held globally.
+func (c *Client) SystemInfo(ctx context.Context) (_ *SystemInfo, err error) {
+	defer c.observe("system_info")(&err)
 	ctx, cancel := c.bound(ctx)
 	defer cancel()
 	resp, err := c.doWithRetry(ctx, http.MethodGet, fmt.Sprintf("%s/api/system/", c.baseURL), nil)
@@ -618,14 +635,12 @@ func (c *Client) Capabilities(ctx context.Context) (capabilities []string, err e
 		return nil, fmt.Errorf("system info failed: %w", &StatusError{StatusCode: resp.StatusCode, Body: string(body)})
 	}
 	var info struct {
-		System struct {
-			Capabilities []string `json:"capabilities"`
-		} `json:"system"`
+		System SystemInfo `json:"system"`
 	}
 	if err := json.Unmarshal(body, &info); err != nil {
 		return nil, fmt.Errorf("failed to parse system info: %w", err)
 	}
-	return info.System.Capabilities, nil
+	return &info.System, nil
 }
 
 // OverHTTPS reports whether this client reaches core over https. A key list is

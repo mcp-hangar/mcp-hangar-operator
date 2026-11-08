@@ -60,6 +60,8 @@ kind load docker-image "${OPERATOR_IMAGE}" --name "${CLUSTER}"
 echo "deploying backend + core..."
 "${KCTL[@]}" apply -f "${ROOT}/test/e2e/remote/manifests/backend.yaml"
 "${KCTL[@]}" apply -f "${ROOT}/test/e2e/remote/manifests/core.yaml"
+# An older core the refusal case points the operator at (#330).
+"${KCTL[@]}" apply -f "${ROOT}/test/e2e/remote/manifests/core-old.yaml"
 
 echo "installing CRDs (straight from config/crd/bases, like the crd-install job)..."
 "${KCTL[@]}" apply --server-side -f "${ROOT}/config/crd/bases/"
@@ -72,6 +74,7 @@ echo "installing the operator..."
 
 "${KCTL[@]}" -n hangar-e2e rollout status deploy/task-upstream --timeout=180s
 "${KCTL[@]}" -n hangar-e2e rollout status deploy/mcp-hangar --timeout=600s
+"${KCTL[@]}" -n hangar-e2e rollout status deploy/mcp-hangar-old --timeout=600s
 "${KCTL[@]}" -n mcp-hangar rollout status deploy/mcp-hangar-operator-controller-manager --timeout=180s
 
 # Warm the backend: a config-registered remote server is registered at boot but
