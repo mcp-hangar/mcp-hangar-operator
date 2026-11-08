@@ -83,6 +83,10 @@ func setHangarURL(t *testing.T, cl crclient.Client, cs *kubernetes.Clientset, ur
 			args[i] = "--hangar-url=" + url
 		}
 	}
+	// Recreate, not a rolling update: readiness is leader-aware, so a surge
+	// pod never turns Ready while the old pod holds the lease, and the old one
+	// is not removed until it does.
+	dep.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
 	if err := cl.Update(ctx, dep); err != nil {
 		t.Fatalf("point the operator at %s: %v", url, err)
 	}
