@@ -26,6 +26,9 @@
 //   - a container-mode CR runs a pod the operator registers with core at its
 //     address, with no discovery annotation on it, and the CR reaches Ready
 //     with the backend's tool count; deleting the CR takes it out (#294, #334);
+//   - pointed at a core older than hangar.MinCoreVersion, the operator says so
+//     in one Event regarding its Pod and registers nothing; an MCPServer is
+//     Ready=False CoreIncompatible, not Degraded (#330);
 //   - with core unreachable, probing is SUSTAINED at roughly the 10s
 //     errorRequeueAfter cadence (~6/min) -- not the ~168/s self-trigger loop of
 //     #105, and not stalled. Asserted as a rate window, deliberately not a
@@ -186,6 +189,9 @@ func TestRemoteLifecycle(t *testing.T) {
 	})
 	t.Run("ContainerModeThroughDiscovery", func(t *testing.T) {
 		testContainerMode(t, cl, cs)
+	})
+	t.Run("OlderCoreIsRefused", func(t *testing.T) {
+		testOlderCoreRefused(t, cl, cs)
 	})
 	t.Run("CoreUnreachableProbeCadence", func(t *testing.T) {
 		testProbeCadence(t, cl, cs)
@@ -625,7 +631,7 @@ func testContainerMode(t *testing.T, cl crclient.Client, cs *kubernetes.Clientse
 	cr := &mcpv1alpha2.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: containerName, Namespace: stackNamespace},
 		Spec: mcpv1alpha2.MCPServerSpec{
-			Mode:  mcpv1alpha2.MCPServerModeContainer,
+			Mode: mcpv1alpha2.MCPServerModeContainer,
 			// From the local registry up.sh runs: a mutable tag is pulled
 			// with imagePullPolicy Always, so a kind-loaded image is not enough.
 			Image: "localhost:5001/mcp-task-upstream:e2e",
@@ -727,7 +733,13 @@ func coreLogLines(substr string) string {
 // reaches it the same way: the image ships python3, not curl.
 func coreGet(t *testing.T, path string) string {
 	t.Helper()
-	pod, err := exec.Command("kubectl", "-n", stackNamespace, "get", "pod", "-l", "app=mcp-hangar",
+	return coreGetFrom(t, "mcp-hangar", path)
+}
+
+// coreGetFrom is coreGet against the core whose pods carry app=<app>.
+func coreGetFrom(t *testing.T, app, path string) string {
+	t.Helper()
+	pod, err := exec.Command("kubectl", "-n", stackNamespace, "get", "pod", "-l", "app="+app,
 		"-o", "jsonpath={.items[0].metadata.name}").Output()
 	if err != nil {
 		t.Fatalf("find core pod: %v", err)
