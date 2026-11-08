@@ -28,10 +28,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/hangar"
@@ -106,6 +109,9 @@ type MCPEgressPolicyReconciler struct {
 	// MaxConcurrentReconciles is how many policies reconcile at once; zero
 	// keeps controller-runtime's default of one (#201).
 	MaxConcurrentReconciles int
+	// EnforcementUpdates fires when the enforcement verdict changes, so every
+	// policy's BackstopEnforcement is re-read without waiting for a resync.
+	EnforcementUpdates <-chan event.GenericEvent
 
 	gatewayCheck gatewayMatchCheck
 
@@ -954,6 +960,20 @@ func (r *MCPEgressPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			Group: networkpolicy.CiliumGroup, Version: networkpolicy.CiliumVersion, Kind: networkpolicy.CiliumNetworkPolicyKind,
 		})
 		b = b.Owns(cnp)
+	}
+	if r.EnforcementUpdates != nil {
+		b = b.WatchesRawSource(source.Channel(r.EnforcementUpdates,
+			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, _ client.Object) []reconcile.Request {
+				var list mcpv1alpha2.MCPEgressPolicyList
+				if err := r.List(ctx, &list); err != nil {
+					log.FromContext(ctx).Error(err, "list MCPEgressPolicies after an enforcement verdict change")
+				}
+				reqs := make([]reconcile.Request, 0, len(list.Items))
+				for i := range list.Items {
+					reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
+				}
+				return reqs
+			})))
 	}
 	if r.gatewayWatchEnabled() {
 		// Pods are already in the manager's cache (the MCPServer controller
