@@ -22,6 +22,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -50,6 +51,13 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == renderCommand {
 		if err := render(os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "render:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == networkpolicy.CanaryCommand {
+		if err := networkpolicy.RunCanary(ctrl.SetupSignalHandler()); err != nil {
+			fmt.Fprintln(os.Stderr, "enforcement canary:", err)
 			os.Exit(1)
 		}
 		return
@@ -129,11 +137,11 @@ func main() {
 		"How many MCPServers, and separately how many MCPEgressPolicies, reconcile at once. "+
 			"With one, a reconcile waiting on a slow core held up every other one, pod create and delete included.")
 	flag.StringVar(&npEnforcement, "networkpolicy-enforcement", "auto",
-		"Whether to treat this cluster as enforcing NetworkPolicy: \"auto\" looks for a CNI that "+
-			"watches this API server and, when it finds none, reports an MCPEgressPolicy backstop as "+
+		"Whether to treat this cluster as enforcing NetworkPolicy: \"auto\" checks with two canary "+
+			"pods that a NetworkPolicy blocks traffic and, when it does not, reports an MCPEgressPolicy backstop as "+
 			"Unenforced, an MCPServer's NetworkPolicyApplied as False and warns on an enforce-egress "+
-			"namespace, \"enforced\" asserts enforcement (for a CNI this operator does not "+
-			"recognize), \"unenforced\" asserts the opposite. Only status is affected; nothing "+
+			"namespace, \"enforced\" asserts enforcement (and runs no canaries), \"unenforced\" "+
+			"asserts the opposite. Only status is affected; nothing "+
 			"stops being written.")
 
 	opts := zap.Options{Development: false}
@@ -255,12 +263,28 @@ func main() {
 	// per-server policy, the namespace default-deny and the MCPEgressPolicy
 	// backstop all report against the same cached verdict.
 	enforcementProbe := &networkpolicy.EnforcementProbe{
-		Mapper: mgr.GetRESTMapper(),
 		// The uncached reader on purpose: the probe asks once per TTL, and
 		// the manager's cache would answer it by watching every DaemonSet
 		// in the cluster for the lifetime of the operator.
 		Reader:   mgr.GetAPIReader(),
 		Override: enforcementOverride,
+	}
+	// The verdict comes from a packet, not a CNI name (#393). An asserted
+	// verdict needs no canaries.
+	var enforcementUpdates chan event.GenericEvent
+	if enforcementOverride == "" {
+		enforcementUpdates = make(chan event.GenericEvent, 1)
+		podName := os.Getenv("POD_NAME")
+		if podName == "" {
+			podName, _ = os.Hostname() // a pod's default hostname is its name
+		}
+		reach := &networkpolicy.ReachabilityProbe{Client: mgr.GetClient(), Reader: mgr.GetAPIReader(),
+			Namespace: controller.RegistrationNamespace(), PodName: podName, Updates: enforcementUpdates}
+		if err := mgr.Add(reach); err != nil {
+			setupLog.Error(err, "unable to add the enforcement reachability probe")
+			os.Exit(1)
+		}
+		enforcementProbe.Reachability = reach
 	}
 
 	// Register MCPServer controller.
@@ -329,6 +353,7 @@ func main() {
 		HangarClient:            hangarClient,
 		GatewayPodSelector:      gatewayPodSelector,
 		EnforcementProbe:        enforcementProbe,
+		EnforcementUpdates:      enforcementUpdates,
 		MaxConcurrentReconciles: maxConcurrent,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPEgressPolicy")
