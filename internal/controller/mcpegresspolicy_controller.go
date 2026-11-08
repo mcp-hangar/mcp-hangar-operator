@@ -90,6 +90,9 @@ type MCPEgressPolicyReconciler struct {
 	// HangarClient talks to the core REST API to deliver the L7 policy. Nil when
 	// core integration is disabled (no --hangar-url); L7 push is then skipped.
 	HangarClient *hangar.Client
+	// CoreGate holds the L7 push while core is older than
+	// hangar.MinCoreVersion (#330). Nil: no check.
+	CoreGate *CoreGate
 	// EnforcementProbe reports whether the API server this operator writes to
 	// has anything that enforces a NetworkPolicy. Nil reports Unknown, which
 	// surfaces as Unverified rather than as a claim either way.
@@ -240,7 +243,7 @@ func (r *MCPEgressPolicyReconciler) reconcile(ctx context.Context, policy *mcpv1
 		return ctrl.Result{}, err
 	}
 	r.warnIfGatewayUnmatched(ctx, false)
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: r.CoreGate.requeue()}, nil
 }
 
 // handleDeletion clears the L7 policy from core for the policy's targets and
@@ -289,6 +292,14 @@ func (r *MCPEgressPolicyReconciler) handleDeletion(ctx context.Context, policy *
 func (r *MCPEgressPolicyReconciler) pushL7Policy(ctx context.Context, logger logr.Logger, policy *mcpv1alpha2.MCPEgressPolicy, selector metav1.LabelSelector) error {
 	if r.HangarClient == nil {
 		r.setL7CoreIntegrationOff(policy)
+		return nil
+	}
+	if proceed, reason, msg := r.CoreGate.verdict(); !proceed {
+		// Held, not failed: no Degraded. Before core's first answer the
+		// condition is left as it was.
+		if reason != "" {
+			r.setCondition(policy, EgressPolicyConditionL7Delivered, metav1.ConditionFalse, reason, msg)
+		}
 		return nil
 	}
 	payload := compileL7Policy(policy)

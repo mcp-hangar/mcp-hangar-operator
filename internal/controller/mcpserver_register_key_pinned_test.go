@@ -34,6 +34,7 @@ const (
 type pinningCore struct {
 	mu           sync.Mutex
 	capabilities []string
+	version      string // GET /api/system/ version
 	servers      map[string]map[string]any
 	calls        []string
 	updateStatus int
@@ -52,7 +53,7 @@ func (c *pinningCore) serve(t *testing.T) *httptest.Server {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		switch {
 		case r.URL.Path == "/api/system/":
-			_ = json.NewEncoder(w).Encode(map[string]any{"system": map[string]any{"capabilities": c.capabilities}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"system": map[string]any{"capabilities": c.capabilities, "version": c.version}})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/mcp_servers/":
 			if c.registerRefusal != "" {
 				w.WriteHeader(http.StatusUnprocessableEntity)
