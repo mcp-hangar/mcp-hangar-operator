@@ -226,9 +226,9 @@ CILIUM_EXTRA_SETS = --set localRedirectPolicies.enabled=true
 endif
 
 .PHONY: e2e-cluster
-e2e-cluster: ## Create a kind cluster with a NetworkPolicy-enforcing CNI (E2E_CNI=calico|cilium).
+e2e-cluster: ## Create a kind cluster with a NetworkPolicy-enforcing CNI (E2E_CNI=calico|cilium|kindnet).
 	@kind get clusters 2>/dev/null | grep -qx $(E2E_CLUSTER) || \
-		printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: true\n  podSubnet: "192.168.0.0/16"\nnodes:\n  - role: control-plane\n' \
+		printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: $(if $(filter kindnet,$(E2E_CNI)),false,true)\n  podSubnet: "192.168.0.0/16"\nnodes:\n  - role: control-plane\n' \
 		| kind create cluster --name $(E2E_CLUSTER) --config -
 	@echo "waiting for the API server..."
 	@until kubectl --context kind-$(E2E_CLUSTER) get --raw /healthz >/dev/null 2>&1; do sleep 5; done
@@ -238,6 +238,10 @@ ifeq ($(E2E_CNI),cilium)
 	@$(CILIUM_CLI) status --context kind-$(E2E_CLUSTER) --wait
 	@echo "waiting for the node to become Ready (Cilium must be up first)..."
 	@until [ "$$(kubectl --context kind-$(E2E_CLUSTER) get nodes -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}')" = "True" ]; do sleep 10; done
+else ifeq ($(E2E_CNI),kindnet)
+	@# kind's own CNI enforces NetworkPolicy since kind 0.24: nothing to install,
+	@# and a CNI the operator does not know by name (#393).
+	@kubectl --context kind-$(E2E_CLUSTER) wait --for=condition=Ready nodes --all --timeout=180s
 else
 	@kubectl --context kind-$(E2E_CLUSTER) apply -f https://raw.githubusercontent.com/projectcalico/calico/$(CALICO_VERSION)/manifests/calico.yaml
 	@echo "waiting for the node to become Ready (Calico must be up first)..."

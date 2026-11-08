@@ -70,6 +70,12 @@ jobs:
           - leg: cilium-nodelocaldns
             cni: cilium
             nodelocaldns: "1"
+          # kindnet is kind's own CNI. It enforces NetworkPolicy and is on no
+          # list the operator knows, so it checks that enforcement status comes
+          # from an observed block and not from a CNI name (#393).
+          - leg: kindnet
+            cni: kindnet
+            nodelocaldns: ""
     name: reachability (${{ matrix.leg }})
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -80,9 +86,9 @@ jobs:
           go-version-file: go.mod
 
       - name: Create kind cluster with ${{ matrix.cni }}
-        # kind's default CNI (kindnet) does NOT enforce NetworkPolicy. Running
-        # these tests on it would pass every deny assertion for the wrong
-        # reason, which is worse than not running them.
+        # kindnet (kind's default CNI) enforces NetworkPolicy since kind 0.24;
+        # the kindnet leg keeps it. The other legs disable it and install
+        # their own CNI.
         run: make e2e-cluster E2E_CNI=${{ matrix.cni }} E2E_NODELOCAL_DNS=${{ matrix.nodelocaldns }}
 
       - name: Build and run the operator from this checkout
