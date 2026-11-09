@@ -73,13 +73,6 @@ spec:
                     maximum: 100
                     minimum: 0
                     type: integer
-                  unhealthyThreshold:
-                    default: 3
-                    description: UnhealthyThreshold is consecutive failures before
-                      marking unhealthy
-                    format: int32
-                    minimum: 1
-                    type: integer
                 type: object
               selector:
                 description: Selector selects MCPServers to include in the group

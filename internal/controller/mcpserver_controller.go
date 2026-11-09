@@ -765,10 +765,9 @@ func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, m
 
 	logger := log.FromContext(ctx)
 	now := metav1.Now()
-	enforcementMode := mcpServer.Spec.Capabilities.EnforcementMode
-	if enforcementMode == "" {
-		enforcementMode = "alert"
-	}
+	// A violation is recorded and raised; nothing is blocked, so the action is
+	// always alert.
+	const action = "alert"
 
 	var newViolations []mcpv1alpha2.ViolationRecord
 
@@ -786,7 +785,7 @@ func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, m
 				Type:      "capability_drift",
 				Detail:    "Network capabilities declared but NetworkPolicy not applied",
 				Severity:  "high",
-				Action:    enforcementMode,
+				Action:    action,
 				Timestamp: now,
 			})
 		}
@@ -799,7 +798,7 @@ func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, m
 				Type:      "undeclared_tool",
 				Detail:    fmt.Sprintf("Provider exposes %d tools but max declared is %d", mcpServer.Status.ToolsCount, mcpServer.Spec.Capabilities.Tools.MaxCount),
 				Severity:  "medium",
-				Action:    enforcementMode,
+				Action:    action,
 				Timestamp: now,
 			})
 		}

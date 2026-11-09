@@ -283,27 +283,6 @@ spec:
                           maxLength: 253
                           minLength: 1
                           type: string
-                        imageDigest:
-                          description: |-
-                            ImageDigest controls how the target's container image pin gates this
-                            upstream: "required" demands a pinned image, "inherited" defers to the
-                            operator-wide image-digest policy.
-                          enum:
-                          - required
-                          - inherited
-                          type: string
-                        issuers:
-                          description: Issuers restricts which token issuers may be
-                            brokered to this upstream.
-                          items:
-                            type: string
-                          maxItems: 32
-                          type: array
-                        toolSchemaDigestRef:
-                          description: ToolSchemaDigestRef references an existing
-                            per-tenant tool-schema pin.
-                          maxLength: 512
-                          type: string
                       required:
                       - host
                       type: object

@@ -32,7 +32,6 @@ var discoveryAnnotations = []string{
 
 func TestPodCarriesNoDiscoveryAnnotation(t *testing.T) {
 	server := containerServer("operator-probe")
-	server.Spec.HealthPath = "/healthz" // no longer stamped either
 	pod, err := BuildPodForMCPServer(server)
 	require.NoError(t, err)
 

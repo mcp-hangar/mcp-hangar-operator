@@ -187,10 +187,6 @@ spec:
               ownership:
                 description: Ownership configures owner references
                 properties:
-                  blockDeletion:
-                    default: false
-                    description: BlockDeletion blocks deletion until providers removed
-                    type: boolean
                   controller:
                     default: true
                     description: Controller sets controller owner reference
@@ -1162,15 +1158,6 @@ spec:
                           Capabilities declares what resources the MCP server needs.
                           Used by the operator for NetworkPolicy generation and enforcement.
                         properties:
-                          enforcementMode:
-                            default: alert
-                            description: 'EnforcementMode controls how violations
-                              are handled: alert, block, or quarantine.'
-                            enum:
-                            - alert
-                            - block
-                            - quarantine
-                            type: string
                           network:
                             description: Network defines allowed network access
                             properties:
@@ -1229,32 +1216,12 @@ spec:
                           tools:
                             description: Tools defines tool schema constraints
                             properties:
-                              expectedTools:
-                                description: |-
-                                  ExpectedTools is the list of tool names the provider is expected to expose.
-                                  Used for runtime drift detection: tools present at runtime but not in this
-                                  list trigger a schema_mismatch violation. Names must be non-empty and
-                                  unique.
-                                items:
-                                  maxLength: 256
-                                  minLength: 1
-                                  type: string
-                                maxItems: 256
-                                type: array
-                                x-kubernetes-validations:
-                                - message: expectedTools must not contain duplicates
-                                  rule: self.all(t, self.exists_one(u, u == t))
                               maxCount:
                                 description: MaxCount is the maximum number of tools
                                   the provider may advertise (0 = unlimited)
                                 format: int32
                                 minimum: 0
                                 type: integer
-                              schemaDriftAlert:
-                                default: true
-                                description: SchemaDriftAlert enables alerting when
-                                  tool schema changes between restarts
-                                type: boolean
                             type: object
                         type: object
                       command:
@@ -1622,17 +1589,6 @@ spec:
                           - name
                           type: object
                         type: array
-                      healthPath:
-                        description: |-
-                          HealthPath is no longer used. It was the HTTP path core's discovery
-                          probed on a container-mode server's pod, stamped on the pod as
-                          mcp-hangar.io/health-path. The operator now registers every
-                          container-mode server with core itself and stamps no discovery
-                          annotation, and core's start (an MCP initialize on /mcp) is the evidence
-                          that the server answers. Accepted and validated; nothing reads it.
-                        maxLength: 256
-                        pattern: ^/[^\s?#]*$
-                        type: string
                       image:
                         description: Image is the container image for the provider
                           (required for container mode)
@@ -1997,14 +1953,6 @@ spec:
                       shutdownGracePeriod:
                         description: |-
                           ShutdownGracePeriod is the grace period for graceful shutdown.
-                          Uses standard Kubernetes duration format (e.g. "30s").
-                        type: string
-                        x-kubernetes-validations:
-                        - message: must be a non-negative duration such as 30s
-                          rule: duration(self) >= duration('0s')
-                      startupTimeout:
-                        description: |-
-                          StartupTimeout is accepted and validated, but the operator does not act on it.
                           Uses standard Kubernetes duration format (e.g. "30s").
                         type: string
                         x-kubernetes-validations:
