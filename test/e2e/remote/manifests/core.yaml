@@ -45,6 +45,11 @@ metadata:
   labels: { app: mcp-hangar }
 spec:
   replicas: 1
+  # Recreate: the old pod is gone before the new one starts, so a restart is
+  # one gateway going away and coming back. A rolling update would have the
+  # new pod Ready while the old one is still a Service endpoint, and the
+  # operator's re-delivery could land on the pod about to terminate (#400).
+  strategy: { type: Recreate }
   selector:
     matchLabels: { app: mcp-hangar }
   template:

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -47,6 +48,19 @@ const redeliveryWindow = 30 * time.Second
 func testL7RedeliveredAfterCoreRestart(t *testing.T, cl crclient.Client, cs *kubernetes.Clientset) {
 	ctx := context.Background()
 	const name = "backend-egress-restart"
+
+	// The previous subtest's policy clears core's copy for "backend" when it is
+	// deleted, before its finalizer is released. Wait for that, or the clear
+	// can land after this policy's push and wipe it.
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(2 * time.Second) {
+		err := cl.Get(ctx, types.NamespacedName{Name: "backend-egress", Namespace: stackNamespace}, &mcpv1alpha2.MCPEgressPolicy{})
+		if apierrors.IsNotFound(err) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("MCPEgressPolicy backend-egress still present a minute after its subtest: %v", err)
+		}
+	}
 
 	delivered := applyBackendDenyPolicy(t, cl, name)
 	if delivered.Reason != "DeliveredNotPersisted" {
@@ -87,7 +101,8 @@ func testL7RedeliveredAfterCoreRestart(t *testing.T, cl crclient.Client, cs *kub
 		}
 		time.Sleep(time.Second)
 	}
-	t.Logf("policy held again within %s of Ready", time.Since(readyAt).Round(time.Second))
+	t.Logf("policy held again within %s of Ready; operator: %s", time.Since(readyAt).Round(time.Second),
+		operatorLogLines(t, cs, "gateway pod became ready"))
 
 	// The refusal is asserted on real client calls, not only on the route.
 	assertL7Enforced(t, pod, " after the core restart")
