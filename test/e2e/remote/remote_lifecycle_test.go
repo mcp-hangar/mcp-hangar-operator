@@ -21,6 +21,9 @@
 //     l7_policy route, not only reported on the CR (#208), and ENFORCED: an MCP
 //     client calling the denied tool through the gateway is refused, and the
 //     same client calling an allowed tool succeeds (#331);
+//   - core restarted with no persistence backend comes back without the
+//     policy, and the operator re-delivers it when the new pod turns Ready, so
+//     the denied call is refused again (#400);
 //   - deleting a remote CR that mirrors a config-defined server leaves that
 //     server in core (#202);
 //   - a container-mode CR runs a pod the operator registers with core at its
@@ -183,6 +186,9 @@ func TestRemoteLifecycle(t *testing.T) {
 	})
 	t.Run("EgressPolicyL7ReachesCore", func(t *testing.T) {
 		testL7Delivered(t, cl)
+	})
+	t.Run("EgressPolicyL7SurvivesCoreRestart", func(t *testing.T) {
+		testL7RedeliveredAfterCoreRestart(t, cl, cs)
 	})
 	t.Run("DeletingAMirrorLeavesCoreAlone", func(t *testing.T) {
 		testDeleteMirror(t, cl)
@@ -462,8 +468,16 @@ const l7DeniedTool = "long_job_consent"
 // pushL7Policy were a no-op the condition would never be set and core would
 // answer 404 no_l7_policy, so both assertions fail (#208).
 func testL7Delivered(t *testing.T, cl crclient.Client) {
+	applyBackendDenyPolicy(t, cl, "backend-egress")
+	assertL7Enforced(t, corePodName(t, "mcp-hangar"), "")
+}
+
+// applyBackendDenyPolicy creates an Enforce-mode MCPEgressPolicy for "backend"
+// that denies l7DeniedTool, deletes it when the test ends, and returns its
+// L7Delivered condition once that is True.
+func applyBackendDenyPolicy(t *testing.T, cl crclient.Client, name string) *metav1.Condition {
+	t.Helper()
 	ctx := context.Background()
-	name := "backend-egress"
 
 	old := &mcpv1alpha2.MCPEgressPolicy{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: stackNamespace}}
 	if err := cl.Delete(ctx, old); err != nil && !apierrors.IsNotFound(err) {
@@ -514,24 +528,30 @@ func testL7Delivered(t *testing.T, cl crclient.Client) {
 	if delivered == nil || delivered.Status != metav1.ConditionTrue {
 		t.Fatalf("MCPEgressPolicy %q never reported L7Delivered=True; last condition: %+v", name, delivered)
 	}
+	return delivered
+}
 
-	body := coreGet(t, "/api/mcp_servers/"+registeredName+"/l7_policy")
+// assertL7Enforced reads the policy back from the core pod named pod and
+// checks it on real client calls. when labels the failures.
+func assertL7Enforced(t *testing.T, pod, when string) {
+	t.Helper()
+	body := coreGetIn(t, pod, "/api/mcp_servers/"+registeredName+"/l7_policy")
 	if !strings.Contains(body, l7DeniedTool) {
-		t.Fatalf("core's l7_policy for %q does not deny %q, so the operator's claim is not what core holds: %s",
-			registeredName, l7DeniedTool, body)
+		t.Fatalf("core's l7_policy for %q does not deny %q%s, so the operator's claim is not what core holds: %s",
+			registeredName, l7DeniedTool, when, body)
 	}
 
 	// Holding the policy is not enforcing it: the outcome the product exists
 	// for is a refused tools/call. Both directions are asserted, so a gateway
 	// that refuses everything (or nothing) fails one of them (#331).
-	allowed := gatewayCall(t, l7AllowedTool)
+	allowed := gatewayCallIn(t, pod, l7AllowedTool)
 	if !allowed.Success {
-		t.Errorf("tool %q is not denied by the policy, but the gateway refused it: %+v", l7AllowedTool, allowed)
+		t.Errorf("tool %q is not denied by the policy, but the gateway refused it%s: %+v", l7AllowedTool, when, allowed)
 	}
-	denied := gatewayCall(t, l7DeniedTool)
+	denied := gatewayCallIn(t, pod, l7DeniedTool)
 	if denied.Success || denied.ErrorType != "EgressPolicyDeniedError" {
-		t.Errorf("tool %q is denied by the policy; the gateway answered %+v, want an EgressPolicyDeniedError refusal",
-			l7DeniedTool, denied)
+		t.Errorf("tool %q is denied by the policy; the gateway answered %+v%s, want an EgressPolicyDeniedError refusal",
+			l7DeniedTool, denied, when)
 	}
 }
 
@@ -545,18 +565,13 @@ type gatewayResult struct {
 	ErrorType string `json:"error_type"`
 }
 
-// gatewayCall calls tool on the backend the way an MCP client does: over the
-// gateway's streamable-HTTP endpoint, through hangar_call. It runs inside the
-// core pod because the port is not published and core rejects a Host it does
-// not trust; the image ships the MCP SDK it serves with, so the client is the
-// SDK's own.
-func gatewayCall(t *testing.T, tool string) gatewayResult {
+// gatewayCallIn calls tool on the backend the way an MCP client does: over
+// the gateway's streamable-HTTP endpoint, through hangar_call. It runs inside
+// the core pod named pod because the port is not published and core rejects a
+// Host it does not trust; the image ships the MCP SDK it serves with, so the
+// client is the SDK's own.
+func gatewayCallIn(t *testing.T, pod, tool string) gatewayResult {
 	t.Helper()
-	pod, err := exec.Command("kubectl", "-n", stackNamespace, "get", "pod", "-l", "app=mcp-hangar",
-		"-o", "jsonpath={.items[0].metadata.name}").Output()
-	if err != nil {
-		t.Fatalf("find core pod: %v", err)
-	}
 	script := `import asyncio, json, sys
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
@@ -570,7 +585,7 @@ async def main(server, tool):
 
 asyncio.run(main(sys.argv[1], sys.argv[2]))
 `
-	out, err := exec.Command("kubectl", "-n", stackNamespace, "exec", string(pod), "--",
+	out, err := exec.Command("kubectl", "-n", stackNamespace, "exec", pod, "--",
 		"python3", "-c", script, registeredName, tool).CombinedOutput()
 	if err != nil {
 		t.Fatalf("hangar_call %s in core: %v: %s", tool, err, out)
@@ -739,18 +754,30 @@ func coreGet(t *testing.T, path string) string {
 // coreGetFrom is coreGet against the core whose pods carry app=<app>.
 func coreGetFrom(t *testing.T, app, path string) string {
 	t.Helper()
+	return coreGetIn(t, corePodName(t, app), path)
+}
+
+// corePodName is the first pod that carries app=<app>.
+func corePodName(t *testing.T, app string) string {
+	t.Helper()
 	pod, err := exec.Command("kubectl", "-n", stackNamespace, "get", "pod", "-l", "app="+app,
 		"-o", "jsonpath={.items[0].metadata.name}").Output()
 	if err != nil {
 		t.Fatalf("find core pod: %v", err)
 	}
+	return string(pod)
+}
+
+// coreGetIn is coreGet inside the core pod named pod.
+func coreGetIn(t *testing.T, pod, path string) string {
+	t.Helper()
 	script := `import sys, urllib.request, urllib.error
 try:
     print(urllib.request.urlopen("http://localhost:8080" + sys.argv[1], timeout=30).read().decode())
 except urllib.error.HTTPError as e:
     print("HTTP %d: %s" % (e.code, e.read().decode()))
 `
-	out, err := exec.Command("kubectl", "-n", stackNamespace, "exec", string(pod), "--",
+	out, err := exec.Command("kubectl", "-n", stackNamespace, "exec", pod, "--",
 		"python3", "-c", script, path).CombinedOutput()
 	if err != nil {
 		t.Fatalf("GET %s in core: %v: %s", path, err, out)

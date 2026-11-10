@@ -49,7 +49,11 @@ spec:
     matchLabels: { app: mcp-hangar }
   template:
     metadata:
-      labels: { app: mcp-hangar }
+      # app.kubernetes.io/name is the label the mcp-hangar chart puts on core's
+      # pods and the operator's default --hangar-gateway-selector matches; it is
+      # what lets the operator re-deliver L7 policies when a new core pod turns
+      # Ready (#400). Pod template only: the Deployment selector stays app.
+      labels: { app: mcp-hangar, app.kubernetes.io/name: mcp-hangar }
     spec:
       serviceAccountName: mcp-hangar
       containers:
