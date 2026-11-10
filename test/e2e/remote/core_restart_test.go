@@ -70,6 +70,16 @@ func testL7RedeliveredAfterCoreRestart(t *testing.T, cl crclient.Client, cs *kub
 	before := corePodName(t, "mcp-hangar")
 	assertL7Enforced(t, before, "")
 
+	// Later subtests address core by the first app=mcp-hangar pod and expect
+	// the backend's tools to be discovered, as up.sh leaves it. The restarted
+	// core has not started the backend unless this test got as far as calling
+	// it, so start it whatever the outcome, and keep a failure here from
+	// cascading into theirs.
+	t.Cleanup(func() {
+		waitSingleCorePod(t, cs)
+		startBackend(t)
+	})
+
 	if out, err := exec.Command("kubectl", "-n", stackNamespace, "rollout", "restart", "deploy/mcp-hangar").CombinedOutput(); err != nil {
 		t.Fatalf("rollout restart core: %v: %s", err, out)
 	}
@@ -120,8 +130,6 @@ func testL7RedeliveredAfterCoreRestart(t *testing.T, cl crclient.Client, cs *kub
 		t.Errorf("L7Delivered after the restart = %+v, want True DeliveredNotPersisted", c)
 	}
 
-	// Later subtests address core by the first app=mcp-hangar pod.
-	waitSingleCorePod(t, cs)
 }
 
 // newReadyCorePod returns the Ready core pod that replaced before, with the
@@ -202,4 +210,20 @@ func operatorLogLines(t *testing.T, cs *kubernetes.Clientset, substr string) str
 		lines = lines[len(lines)-40:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// startBackend starts "backend" in core the way up.sh does, so its tools are
+// discovered.
+func startBackend(t *testing.T) {
+	t.Helper()
+	script := `import urllib.request
+req = urllib.request.Request("http://localhost:8080/api/mcp_servers/backend/start", method="POST")
+print(urllib.request.urlopen(req, timeout=60).read().decode())
+`
+	pod := corePodName(t, "mcp-hangar")
+	out, err := exec.Command("kubectl", "-n", stackNamespace, "exec", pod, "--",
+		"python3", "-c", script).CombinedOutput()
+	if err != nil {
+		t.Errorf("start backend in the restarted core: %v: %s", err, out)
+	}
 }
