@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"strings"
 	"time"
@@ -39,6 +41,7 @@ func (c *Client) observe(operation string) func(*error) {
 // Client communicates with MCP-Hangar core
 type Client struct {
 	baseURL     string
+	gatewayNS   string
 	httpClient  *http.Client
 	apiKey      string
 	maxRetries  int
@@ -69,6 +72,11 @@ type Config struct {
 	// plus the backoff in between -- about 43 s at 10 s and 3 retries -- and
 	// with it the reconcile worker that made the call (#201).
 	CallTimeout time.Duration
+
+	// GatewayNamespace is the namespace core's gateway pods run in, the only
+	// one whose pods are sent the API key directly (see ForAddress). Empty
+	// derives it from a URL host of the form <service>.<namespace>.svc.
+	GatewayNamespace string
 
 	// TLSConfig is used for an https core, e.g. one whose certificate a
 	// private CA signed (see TLSConfigFromCAFile). Nil uses the system roots.
@@ -143,12 +151,36 @@ func NewClient(config *Config) *Client {
 
 	return &Client{
 		baseURL:     config.URL,
+		gatewayNS:   gatewayNamespace(config),
 		apiKey:      config.APIKey,
 		httpClient:  newHTTPClient(timeout, config.TLSConfig),
 		maxRetries:  maxRetries,
 		baseDelay:   baseDelay,
 		callTimeout: config.CallTimeout,
 	}
+}
+
+// gatewayNamespace is the configured gateway namespace, or the namespace a
+// cluster Service URL names; empty for any other URL.
+func gatewayNamespace(config *Config) string {
+	if config.GatewayNamespace != "" {
+		return config.GatewayNamespace
+	}
+	u, err := neturl.Parse(config.URL)
+	if err != nil {
+		return ""
+	}
+	labels := strings.Split(u.Hostname(), ".")
+	if len(labels) >= 3 && labels[2] == "svc" && labels[0] != "" && labels[1] != "" {
+		return labels[1]
+	}
+	return ""
+}
+
+// GatewayNamespace is the namespace core's gateway pods run in, or empty when
+// the URL does not say and none was configured.
+func (c *Client) GatewayNamespace() string {
+	return c.gatewayNS
 }
 
 func newHTTPClient(timeout time.Duration, tlsConfig *tls.Config) *http.Client {
@@ -453,6 +485,68 @@ func (c *Client) SetL7Policy(ctx context.Context, mcpServerID string, policy *L7
 	// claim is withheld.
 	_ = json.Unmarshal(respBody, &ack)
 	return ack.Persisted, nil
+}
+
+// GetL7Policy reads back whether core holds an L7 policy for an mcp_server
+// (GET .../l7_policy, which needs policy:read). A 404 -- no policy, or no such
+// server -- is held=false with no error; any other non-2xx wraps a
+// *StatusError.
+func (c *Client) GetL7Policy(ctx context.Context, mcpServerID string) (held bool, err error) {
+	defer c.observe("get_l7_policy")(&err)
+	ctx, cancel := c.bound(ctx)
+	defer cancel()
+	url := fmt.Sprintf("%s/api/mcp_servers/%s/l7_policy", c.baseURL, mcpServerID)
+
+	resp, err := c.doWithRetry(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	}
+	return false, fmt.Errorf("get L7 policy failed: %w", &StatusError{StatusCode: resp.StatusCode, Body: string(body)})
+}
+
+// ForAddress returns a copy of the client that sends every request to
+// host:port -- one gateway pod -- while the URL, and so the Host header and
+// the TLS server name and verification, stay those of the configured core
+// URL. A request through the Service lands on whichever pod the Service
+// picks, which during a rolling update is the old one (#405). An empty port
+// keeps the URL's port. Connections are not kept alive: a pool shared by
+// address would hand one pod's connection to a request meant for another.
+func (c *Client) ForAddress(host, port string) *Client {
+	if port == "" {
+		port = "80"
+		if u, err := neturl.Parse(c.baseURL); err == nil {
+			switch {
+			case u.Port() != "":
+				port = u.Port()
+			case u.Scheme == "https":
+				port = "443"
+			}
+		}
+	}
+	addr := net.JoinHostPort(host, port)
+	var t *http.Transport
+	if base, ok := c.httpClient.Transport.(*http.Transport); ok {
+		t = base.Clone()
+	} else {
+		t = http.DefaultTransport.(*http.Transport).Clone()
+	}
+	t.Proxy = nil
+	t.DisableKeepAlives = true
+	dialer := &net.Dialer{Timeout: 30 * time.Second}
+	t.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return dialer.DialContext(ctx, network, addr)
+	}
+	cp := *c
+	cp.httpClient = &http.Client{Timeout: c.httpClient.Timeout, Transport: t}
+	return &cp
 }
 
 // ClearL7Policy removes the L7 egress policy for an mcp_server. A 404 is treated
