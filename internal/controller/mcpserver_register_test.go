@@ -199,7 +199,11 @@ func TestRemote_RegisteredButNotStartedIsNotReady(t *testing.T) {
 	degraded := degradedReason(t, r, "default", "notes")
 	require.NotNil(t, degraded)
 	assert.Equal(t, ReasonStartFailed, degraded.Reason)
-	assert.Nil(t, apimeta.FindStatusCondition(got.Status.Conditions, ConditionReady))
+	// Ready is written False with the same reason, not left unset (#409).
+	ready := apimeta.FindStatusCondition(got.Status.Conditions, ConditionReady)
+	require.NotNil(t, ready)
+	assert.Equal(t, metav1.ConditionFalse, ready.Status)
+	assert.Equal(t, ReasonStartFailed, ready.Reason)
 	assert.Equal(t, errorRequeueAfter, result.RequeueAfter, "the upstream's problem: retried soon")
 
 	c.mu.Lock()

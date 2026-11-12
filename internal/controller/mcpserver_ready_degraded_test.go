@@ -202,3 +202,24 @@ func TestMCPServer_CrashLoop_ThroughContainersStarting_WarnsOnce(t *testing.T) {
 	assert.Equal(t, stoppedAt, getMCPServer(t, r, "loop", "default").Status.LastStoppedAt,
 		"LastStoppedAt marks when the loop began")
 }
+
+// A registration that stops completing moves State to Degraded, and Ready
+// goes with it. Here core loses the server and refuses to take it back.
+func TestMCPServer_RegistrationFailure_ClearsReady(t *testing.T) {
+	core := newCore()
+	r, rec := overHTTPS(core.serve(t), remoteCR("default", "remote", "https://upstream.svc.example:8443/mcp"))
+
+	reconcileMCPServer(t, r, "remote", "default")
+	requireReady(t, r, "remote", "EndpointHealthy")
+	_ = warnings(rec)
+
+	core.mu.Lock()
+	delete(core.servers, "remote")
+	core.registerRefusal = `{"error":{"code":"ValidationError","message":"refused"}}`
+	core.mu.Unlock()
+	reconcileMCPServer(t, r, "remote", "default")
+	assertNotReady(t, r, "remote", ReasonRegistrationFailed)
+	reconcileMCPServer(t, r, "remote", "default")
+	assertNotReady(t, r, "remote", ReasonRegistrationFailed)
+	assert.Equal(t, 1, warnings(rec), "one Warning on the transition, not one per reconcile")
+}
