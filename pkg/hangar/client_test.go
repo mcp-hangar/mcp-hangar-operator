@@ -2,10 +2,14 @@ package hangar
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -476,4 +480,75 @@ func TestClient_GetMCPServerHealth_NotRegisteredIsTyped(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, IsNotRegistered(err))
 	assert.Contains(t, err.Error(), "not registered with core: default/notes")
+}
+
+func TestClient_GetL7Policy(t *testing.T) {
+	status := http.StatusOK
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/api/mcp_servers/srv/l7_policy", r.URL.Path)
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	c := NewClient(&Config{URL: server.URL, MaxRetries: 1})
+
+	held, err := c.GetL7Policy(context.Background(), "srv")
+	require.NoError(t, err)
+	assert.True(t, held)
+
+	status = http.StatusNotFound
+	held, err = c.GetL7Policy(context.Background(), "srv")
+	require.NoError(t, err)
+	assert.False(t, held, "a 404 is no policy, not an error")
+
+	status = http.StatusForbidden
+	_, err = c.GetL7Policy(context.Background(), "srv")
+	require.Error(t, err)
+	assert.True(t, IsAuthRejected(err), "a key without policy:read must surface as an auth refusal")
+}
+
+// ForAddress sends to one pod and keeps the configured URL's host: the Host
+// header, and for https the server name the certificate is verified against
+// (#405). The URL's host here does not even resolve; only the pod address is
+// dialled.
+func TestClient_ForAddress_DialsThePodWithTheServiceHost(t *testing.T) {
+	var host string
+	pod := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host = r.Host
+		_, _ = w.Write([]byte(`{"persisted":false}`))
+	}))
+	defer pod.Close()
+	_, port, err := net.SplitHostPort(strings.TrimPrefix(pod.URL, "https://"))
+	require.NoError(t, err)
+	pool := x509.NewCertPool()
+	pool.AddCert(pod.Certificate())
+	// httptest's certificate names example.com.
+	svc := NewClient(&Config{URL: "https://example.com:" + port, MaxRetries: 1,
+		TLSConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}})
+
+	_, err = svc.ForAddress("127.0.0.1", port).SetL7Policy(context.Background(), "srv", &L7PolicyPayload{})
+	require.NoError(t, err)
+	assert.Equal(t, "example.com:"+port, host)
+
+	// An empty port keeps the URL's.
+	_, err = svc.ForAddress("127.0.0.1", "").SetL7Policy(context.Background(), "srv", &L7PolicyPayload{})
+	require.NoError(t, err)
+}
+
+// The gateway namespace comes from a cluster Service URL, and from nothing
+// else: an IP, a bare name or an outside host names no namespace, and the
+// operator then sends the API key to no pod directly.
+func TestClient_GatewayNamespace(t *testing.T) {
+	for url, want := range map[string]string{
+		"http://mcp-hangar.mcp-hangar.svc.cluster.local:8080": "mcp-hangar",
+		"https://core.team-a.svc:8443":                        "team-a",
+		"http://mcp-hangar:8080":                              "",
+		"http://mcp-hangar.mcp-hangar:8080":                   "",
+		"http://10.0.0.5:8080":                                "",
+		"https://gateway.example.com":                         "",
+	} {
+		assert.Equal(t, want, NewClient(&Config{URL: url}).GatewayNamespace(), url)
+	}
+	assert.Equal(t, "core", NewClient(&Config{URL: "http://10.0.0.5:8080", GatewayNamespace: "core"}).GatewayNamespace())
 }
