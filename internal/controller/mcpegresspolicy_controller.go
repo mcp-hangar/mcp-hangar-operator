@@ -183,7 +183,7 @@ func (r *MCPEgressPolicyReconciler) reconcile(ctx context.Context, policy *mcpv1
 	// L7 push below addresses core by the same provider names, so this comes
 	// before the backstop decision: a policy that opts out of the backstop
 	// still has targets.
-	selector, targetName, hasPods, done, err := r.resolveTargetSelector(ctx, policy)
+	selector, targetName, hasPods, remote, done, err := r.resolveTargetSelector(ctx, policy)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -242,8 +242,11 @@ func (r *MCPEgressPolicyReconciler) reconcile(ctx context.Context, policy *mcpv1
 		r.setNoBackstop(policy, mcpv1alpha2.BackstopNotApplicable, "RemoteTargetHasNoPods",
 			"the target is a remote server: its traffic leaves from the gateway pod, so only the L7 rules in core apply")
 		r.clearDegraded(policy)
-	} else if err := r.applyFlavoredBackstop(ctx, logger, policy, selector, targetName); err != nil {
-		return ctrl.Result{}, err
+	} else {
+		if err := r.applyFlavoredBackstop(ctx, logger, policy, selector, targetName); err != nil {
+			return ctrl.Result{}, err
+		}
+		r.noteRemoteMembers(policy, remote)
 	}
 
 	// Deliver the compiled L7 policy to core so it is enforced at the
@@ -265,7 +268,7 @@ func (r *MCPEgressPolicyReconciler) handleDeletion(ctx context.Context, policy *
 	if r.HangarClient != nil {
 		// Best-effort resolve the targets; if they are already gone core will
 		// have dropped their policy with the server, so an empty set is fine.
-		selector, _, _, done, err := r.resolveTargetSelector(ctx, policy)
+		selector, _, _, _, done, err := r.resolveTargetSelector(ctx, policy)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -569,39 +572,43 @@ func appendUnique(dst []string, values ...string) []string {
 // the backstop. An MCPServer resolves to its single provider label; an
 // MCPServerGroup resolves to a set of member providers (provider In [...]).
 //
+// It also reports whether any target runs pods, and names the group members
+// that run none: they stay in the selector, because the L7 push addresses core
+// by the same names, but no backstop covers them.
+//
 // When it returns a non-nil *ctrl.Result, the target could not be resolved (a
 // terminal status condition has already been set) and the caller should return
 // that result without applying a backstop.
 func (r *MCPEgressPolicyReconciler) resolveTargetSelector(
 	ctx context.Context, policy *mcpv1alpha2.MCPEgressPolicy,
-) (metav1.LabelSelector, string, bool, *ctrl.Result, error) {
+) (metav1.LabelSelector, string, bool, []string, *ctrl.Result, error) {
 	name := policy.Spec.TargetRef.Name
 	switch policy.Spec.TargetRef.Kind {
 	case "MCPServer":
 		target := &mcpv1alpha2.MCPServer{}
 		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: policy.Namespace}, target); err != nil {
 			if apierrors.IsNotFound(err) {
-				return metav1.LabelSelector{}, "", false, r.targetNotFound(policy, fmt.Sprintf("MCPServer %q not found", name)), nil
+				return metav1.LabelSelector{}, "", false, nil, r.targetNotFound(policy, fmt.Sprintf("MCPServer %q not found", name)), nil
 			}
-			return metav1.LabelSelector{}, "", false, nil, err
+			return metav1.LabelSelector{}, "", false, nil, nil, err
 		}
 		sel := metav1.LabelSelector{MatchLabels: map[string]string{networkpolicy.LabelProvider: target.Name}}
-		return sel, target.Name, target.IsContainerMode(), nil, nil
+		return sel, target.Name, target.IsContainerMode(), nil, nil, nil
 
 	case "MCPServerGroup":
 		group := &mcpv1alpha2.MCPServerGroup{}
 		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: policy.Namespace}, group); err != nil {
 			if apierrors.IsNotFound(err) {
-				return metav1.LabelSelector{}, "", false, r.targetNotFound(policy, fmt.Sprintf("MCPServerGroup %q not found", name)), nil
+				return metav1.LabelSelector{}, "", false, nil, r.targetNotFound(policy, fmt.Sprintf("MCPServerGroup %q not found", name)), nil
 			}
-			return metav1.LabelSelector{}, "", false, nil, err
+			return metav1.LabelSelector{}, "", false, nil, nil, err
 		}
-		members, hasPods, err := r.groupMembers(ctx, group)
+		members, remote, err := r.groupMembers(ctx, group)
 		if err != nil {
-			return metav1.LabelSelector{}, "", false, nil, err
+			return metav1.LabelSelector{}, "", false, nil, nil, err
 		}
 		if len(members) == 0 {
-			return metav1.LabelSelector{}, "", false, r.targetNotFound(policy,
+			return metav1.LabelSelector{}, "", false, nil, r.targetNotFound(policy,
 				fmt.Sprintf("MCPServerGroup %q has no member servers", name)), nil
 		}
 		sel := metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
@@ -609,7 +616,7 @@ func (r *MCPEgressPolicyReconciler) resolveTargetSelector(
 			Operator: metav1.LabelSelectorOpIn,
 			Values:   members,
 		}}}
-		return sel, name, hasPods, nil, nil
+		return sel, name, len(remote) < len(members), remote, nil, nil
 
 	default:
 		// The CRD enum restricts kind to MCPServer|MCPServerGroup; this guards
@@ -622,35 +629,61 @@ func (r *MCPEgressPolicyReconciler) resolveTargetSelector(
 			"no backstop applied, so none is enforced")
 		r.setL7NotPushed(policy, "UnsupportedTargetKind", "no L7 policy pushed")
 		r.clearDegraded(policy)
-		return metav1.LabelSelector{}, "", false, &ctrl.Result{}, nil
+		return metav1.LabelSelector{}, "", false, nil, &ctrl.Result{}, nil
 	}
 }
 
 // groupMembers returns the sorted names of the MCPServers matching a group's
-// selector in the group's namespace, and whether any of them runs pods. A group
-// of remote servers has members and no pods.
-func (r *MCPEgressPolicyReconciler) groupMembers(ctx context.Context, group *mcpv1alpha2.MCPServerGroup) ([]string, bool, error) {
+// selector in the group's namespace, and the sorted names of those that run no
+// pods (mode: remote). A group of remote servers has the two lists equal.
+func (r *MCPEgressPolicyReconciler) groupMembers(ctx context.Context, group *mcpv1alpha2.MCPServerGroup) ([]string, []string, error) {
 	if group.Spec.Selector == nil {
-		return nil, false, nil
+		return nil, nil, nil
 	}
 	sel, err := metav1.LabelSelectorAsSelector(group.Spec.Selector)
 	if err != nil {
-		return nil, false, fmt.Errorf("group %q selector: %w", group.Name, err)
+		return nil, nil, fmt.Errorf("group %q selector: %w", group.Name, err)
 	}
 	var list mcpv1alpha2.MCPServerList
 	if err := r.List(ctx, &list,
 		client.InNamespace(group.Namespace),
 		client.MatchingLabelsSelector{Selector: sel}); err != nil {
-		return nil, false, fmt.Errorf("list group members: %w", err)
+		return nil, nil, fmt.Errorf("list group members: %w", err)
 	}
 	names := make([]string, 0, len(list.Items))
-	hasPods := false
+	var remote []string
 	for i := range list.Items {
 		names = append(names, list.Items[i].Name)
-		hasPods = hasPods || list.Items[i].IsContainerMode()
+		if !list.Items[i].IsContainerMode() {
+			remote = append(remote, list.Items[i].Name)
+		}
 	}
 	sort.Strings(names)
-	return names, hasPods, nil
+	sort.Strings(remote)
+	return names, remote, nil
+}
+
+// noteRemoteMembers qualifies an applied backstop on a group that also has
+// remote members (#410). The backstop selects the pods of the container
+// members only; a remote member's traffic leaves from the gateway pod, so
+// BackstopApplied names the remote members and an Enforcing verdict becomes
+// Partial. Unenforced and Unverified stand: they already say less than full
+// coverage. Degraded is left alone, as it is for a group of only remote
+// members: nothing is broken, the network layer just does not reach them.
+func (r *MCPEgressPolicyReconciler) noteRemoteMembers(policy *mcpv1alpha2.MCPEgressPolicy, remote []string) {
+	if len(remote) == 0 {
+		return
+	}
+	applied := meta.FindStatusCondition(policy.Status.Conditions, EgressPolicyConditionBackstopApplied)
+	if applied == nil || applied.Status != metav1.ConditionTrue {
+		return
+	}
+	r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionTrue, "RemoteMembersNotCovered",
+		fmt.Sprintf("%s; not covered: remote members %s, whose traffic leaves from the gateway pod, "+
+			"so only the L7 rules in core apply to them", applied.Message, strings.Join(remote, ", ")))
+	if policy.Status.BackstopEnforcement == mcpv1alpha2.BackstopEnforcing {
+		policy.Status.BackstopEnforcement = mcpv1alpha2.BackstopPartial
+	}
 }
 
 // targetNotFound sets the withheld-backstop conditions and returns a requeue

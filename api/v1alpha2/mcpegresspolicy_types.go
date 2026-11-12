@@ -82,6 +82,12 @@ const (
 	// is an address core dials, and its traffic leaves from the gateway pod. Not
 	// "Enforcing" over a selector that selects nothing (#326).
 	BackstopNotApplicable BackstopEnforcement = "NotApplicable"
+	// BackstopPartial means the backstop is applied and enforced for the
+	// members that run pods, and the target also has members it cannot cover:
+	// the remote servers of a group, whose traffic leaves from the gateway pod.
+	// BackstopApplied names them. Not "Enforcing" for a group part of which is
+	// outside the backstop (#410).
+	BackstopPartial BackstopEnforcement = "Partial"
 )
 
 // EgressTargetRef attaches a policy to a server or a group of servers, never to
@@ -282,7 +288,7 @@ type MCPEgressPolicyStatus struct {
 	// policy asking for Enforce in a cluster whose CNI never sees this API
 	// server reads Unenforced here, instead of looking exactly like one that
 	// works.
-	// +kubebuilder:validation:Enum=Enforcing;Unenforced;Unverified;Disabled;Pending;NotApplicable
+	// +kubebuilder:validation:Enum=Enforcing;Unenforced;Unverified;Disabled;Pending;NotApplicable;Partial
 	// +optional
 	BackstopEnforcement BackstopEnforcement `json:"backstopEnforcement,omitempty"`
 
