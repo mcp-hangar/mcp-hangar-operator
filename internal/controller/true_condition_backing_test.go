@@ -80,9 +80,17 @@ func requireEgressBackstop(t *testing.T, np *networkingv1.NetworkPolicy, owner c
 
 func requireBackstopEnforcing(t *testing.T, out *mcpv1alpha2.MCPEgressPolicy) {
 	t.Helper()
+	requireBackstopState(t, out, mcpv1alpha2.BackstopEnforcing)
+}
+
+// requireBackstopState is requireBackstopEnforcing for a verdict that may be
+// Partial: a group with remote members is enforced for its container members
+// only (#410).
+func requireBackstopState(t *testing.T, out *mcpv1alpha2.MCPEgressPolicy, want mcpv1alpha2.BackstopEnforcement) {
+	t.Helper()
 	require.Equal(t, metav1.ConditionTrue, condStatus(out, EgressPolicyConditionBackstopApplied).Status)
 	require.Equal(t, metav1.ConditionTrue, condStatus(out, EgressPolicyConditionBackstopEnforceable).Status)
-	require.Equal(t, mcpv1alpha2.BackstopEnforcing, out.Status.BackstopEnforcement)
+	require.Equal(t, want, out.Status.BackstopEnforcement)
 }
 
 // openUp plays another actor: the policy selects every pod, restricts
@@ -104,6 +112,7 @@ func TestTrueCondition_VanillaBackstop_IsASelectingNetworkPolicy(t *testing.T) {
 		target  mcpv1alpha2.EgressTargetRef
 		objs    []runtime.Object
 		members []*mcpv1alpha2.MCPServer // the container servers whose pods must be selected
+		state   mcpv1alpha2.BackstopEnforcement
 	}{
 		{
 			name:    "server",
@@ -122,9 +131,15 @@ func TestTrueCondition_VanillaBackstop_IsASelectingNetworkPolicy(t *testing.T) {
 			objs: []runtime.Object{testGroup("grp", "default", team),
 				remoteServer("a-remote", "default", team)},
 			members: []*mcpv1alpha2.MCPServer{labeledServer("b-container", "default", team)},
+			// The remote member runs no pod to select, so the backstop
+			// covers part of the group and must not claim all of it.
+			state: mcpv1alpha2.BackstopPartial,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.state == "" {
+				tc.state = mcpv1alpha2.BackstopEnforcing
+			}
 			p := cidrPolicy("pol")
 			p.Spec.TargetRef = tc.target
 			objs := append([]runtime.Object{p, outsider}, tc.objs...)
@@ -137,7 +152,7 @@ func TestTrueCondition_VanillaBackstop_IsASelectingNetworkPolicy(t *testing.T) {
 			r := withProbe(newEgressReconciler(objs...), networkpolicy.EnforcementObserved)
 
 			out := reconcilePolicy(t, r, p)
-			requireBackstopEnforcing(t, out)
+			requireBackstopState(t, out, tc.state)
 			np, err := getBackstop(t, r, "pol", "default")
 			require.NoError(t, err, "Enforcing over a NetworkPolicy that does not exist")
 			requireEgressBackstop(t, np, out, want, other, cidr)
@@ -146,7 +161,7 @@ func TestTrueCondition_VanillaBackstop_IsASelectingNetworkPolicy(t *testing.T) {
 			require.NoError(t, r.Update(context.Background(), np, client.FieldOwner("someone-else")))
 
 			out = reconcilePolicy(t, r, p)
-			requireBackstopEnforcing(t, out)
+			requireBackstopState(t, out, tc.state)
 			np, err = getBackstop(t, r, "pol", "default")
 			require.NoError(t, err)
 			requireEgressBackstop(t, np, out, want, other, cidr)
