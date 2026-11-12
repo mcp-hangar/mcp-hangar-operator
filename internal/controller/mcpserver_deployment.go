@@ -129,7 +129,7 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 		mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
 		mcpServer.Status.Replicas = 1
 		mcpServer.Status.ReadyReplicas = 0
-		setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "PodCreating",
+		setServerNotReady(mcpServer, ConditionProgressing, "PodCreating",
 			"Waiting for the Deployment to create the pod")
 		metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, string(mcpv1alpha2.MCPServerStateInitializing))
 		if err := writeStatus(ctx, r.Client, mcpServer); err != nil {

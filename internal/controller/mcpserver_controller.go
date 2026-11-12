@@ -316,7 +316,7 @@ func (r *MCPServerReconciler) syncPodStatus(ctx context.Context, mcpServer *mcpv
 		case corev1.PodPending:
 			mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
 			mcpServer.Status.ReadyReplicas = 0
-			setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "PodPending", "Pod is pending")
+			setServerNotReady(mcpServer, ConditionProgressing, "PodPending", "Pod is pending")
 			metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Initializing")
 		case corev1.PodFailed:
 			// Evicted, typically; the ReplicaSet starts a replacement.
@@ -359,7 +359,7 @@ func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *m
 	if !allReady {
 		mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
 		mcpServer.Status.ReadyReplicas = 0
-		setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "ContainersStarting", "Waiting for containers to be ready")
+		setServerNotReady(mcpServer, ConditionProgressing, "ContainersStarting", "Waiting for containers to be ready")
 		metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Initializing")
 		return defaultRequeueAfter
 	}
@@ -382,7 +382,7 @@ func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *m
 			if mcpServer.Status.ConsecutiveFailures < maxConsecutiveFailures {
 				mcpServer.Status.ConsecutiveFailures++
 			}
-			setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, "ToolsFetchFailed", err.Error())
+			setServerNotReady(mcpServer, ConditionDegraded, "ToolsFetchFailed", err.Error())
 			metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Degraded")
 			metrics.MCPServerHealthCheckFailures.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Inc()
 			return defaultRequeueAfter
@@ -496,7 +496,7 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 				r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonCoreAuthRejected, ActionReconcile,
 					"Core rejected the operator's credentials; check --hangar-api-key: %v", err)
 			}
-			setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, ReasonCoreAuthRejected,
+			setServerNotReady(mcpServer, ConditionDegraded, ReasonCoreAuthRejected,
 				"core rejected the operator's credentials (check the API key): "+err.Error())
 			requeueAfter = readyRequeueAfter
 		} else if err != nil {
@@ -520,7 +520,7 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 				r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonUnhealthy, ActionReconcile,
 					"Health check failed: %v", err)
 			}
-			setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, "HealthCheckFailed", err.Error())
+			setServerNotReady(mcpServer, ConditionDegraded, "HealthCheckFailed", err.Error())
 			metrics.MCPServerHealthCheckFailures.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Inc()
 			// Re-probe soon so recovery is detected fast, not after the full readyRequeueAfter window.
 			requeueAfter = errorRequeueAfter
@@ -555,7 +555,7 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 				r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonUnhealthy, ActionReconcile,
 					"Remote endpoint unhealthy")
 			}
-			setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, "EndpointUnhealthy",
+			setServerNotReady(mcpServer, ConditionDegraded, "EndpointUnhealthy",
 				fmt.Sprintf("Core reports %d consecutive failures (success rate %.2f)", health.ConsecutiveFailures, health.SuccessRate))
 			// Re-probe soon so recovery is detected fast, not after the full readyRequeueAfter window.
 			requeueAfter = errorRequeueAfter
@@ -683,6 +683,17 @@ func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpSer
 
 	r.recordPolicyEnforcement(ctx, mcpServer, fmt.Sprintf("NetworkPolicy %s applied", desired.Name))
 	return nil
+}
+
+// setServerNotReady records a server that is not serving: condType (Degraded
+// or Progressing) True and Ready False, under the same reason and message.
+// Every branch that moves State away from Ready goes through it. Writing only
+// condType left a server that had been Ready=True at Ready=True while core or
+// its pod said it was failing, and the Ready print column and
+// `kubectl wait --for=condition=Ready` went on reporting it as serving (#409).
+func setServerNotReady(mcpServer *mcpv1alpha2.MCPServer, condType, reason, message string) {
+	setServerCondition(mcpServer, condType, metav1.ConditionTrue, reason, message)
+	setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, reason, message)
 }
 
 // conditionChanges reports whether setting condition t to status/reason would
