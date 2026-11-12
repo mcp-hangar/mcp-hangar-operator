@@ -428,7 +428,11 @@ func (r *MCPServerReconciler) reportPodStuck(mcpServer *mcpv1alpha2.MCPServer, r
 	mcpServer.Status.ConsecutiveFailures = restarts
 	mcpServer.Status.ReadyReplicas = 0
 	mcpServer.Status.AvailableReplicas = 0
-	if conditionChanges(mcpServer.Status.Conditions, ConditionReady, metav1.ConditionFalse, reason) {
+	// Keyed on Degraded, not Ready: a crash loop passes through
+	// Running-but-not-Ready between back-offs, which writes
+	// Ready=False/ContainersStarting and leaves Degraded alone, so keying on
+	// Ready re-fired this Warning on every cycle.
+	if conditionChanges(mcpServer.Status.Conditions, ConditionDegraded, metav1.ConditionTrue, reason) {
 		now := metav1.Now()
 		mcpServer.Status.LastStoppedAt = &now
 		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonFailed, ActionReconcile,

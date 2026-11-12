@@ -163,3 +163,42 @@ func TestMCPServer_ContainerMode_DegradedClearsReady(t *testing.T) {
 		})
 	}
 }
+
+// A crash-looping container passes through Running-but-not-Ready between
+// back-offs. That step now writes Ready=False/ContainersStarting, and the
+// crash Warning must not take it for a new failure on every cycle (#210).
+func TestMCPServer_CrashLoop_ThroughContainersStarting_WarnsOnce(t *testing.T) {
+	p := &mcpv1alpha2.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "loop", Namespace: "default", UID: "uid-409-loop",
+			Generation: 1, Finalizers: []string{finalizerName}},
+		Spec: mcpv1alpha2.MCPServerSpec{Mode: mcpv1alpha2.MCPServerModeContainer, Image: "busybox:latest"},
+	}
+	pod := deploymentPod("loop", crashLooping(3))
+	r := newMCPServerReconciler(p, pod)
+	rec := events.NewFakeRecorder(50)
+	r.Recorder = rec
+
+	setPod := func(status corev1.PodStatus) {
+		current := &corev1.Pod{}
+		require.NoError(t, r.Get(t.Context(), types.NamespacedName{Name: pod.Name, Namespace: pod.Namespace}, current))
+		current.Status = status
+		require.NoError(t, r.Status().Update(t.Context(), current))
+	}
+	restarting := corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{
+		Name: "provider", RestartCount: 3, Ready: false,
+		State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+	}}}
+
+	reconcileMCPServer(t, r, "loop", "default")
+	stoppedAt := getMCPServer(t, r, "loop", "default").Status.LastStoppedAt
+	require.NotNil(t, stoppedAt)
+	setPod(restarting)
+	reconcileMCPServer(t, r, "loop", "default")
+	assertNotReady(t, r, "loop", "ContainersStarting")
+	setPod(crashLooping(4))
+	reconcileMCPServer(t, r, "loop", "default")
+
+	assert.Equal(t, 1, warnings(rec), "one Warning for the crash loop, not one per cycle")
+	assert.Equal(t, stoppedAt, getMCPServer(t, r, "loop", "default").Status.LastStoppedAt,
+		"LastStoppedAt marks when the loop began")
+}
