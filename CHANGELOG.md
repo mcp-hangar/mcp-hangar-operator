@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.17.39](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.38...v0.17.39) (2026-11-12)
+
+### Fixed
+
+- **controller:** an `MCPEgressPolicy` on an `MCPServerGroup` with both
+  `mode: container` and `mode: remote` members no longer reports
+  `backstopEnforcement: Enforcing` for the whole group. The backstop selects the
+  pods of the container members only; a remote member's traffic leaves from the
+  gateway pod, so only the L7 rules in core apply to it. Such a policy now keeps
+  its backstop, reports `BackstopApplied=True` with reason
+  `RemoteMembersNotCovered` and a message naming the remote members, and reads
+  `backstopEnforcement: Partial` where it used to read `Enforcing`. `Unenforced`
+  and `Unverified` are reported as before, and `Degraded` is not set. Groups of
+  only container members, and groups of only remote members (`NotApplicable`),
+  report as before ([#412](https://github.com/mcp-hangar/mcp-hangar-operator/pull/412))
+- **controller:** an MCPServer that leaves the Ready state now reports
+  `Ready=False` under the reason of what went wrong. A remote server that core
+  reports failing, cannot be asked about, or refuses the operator's credentials
+  for, a container server whose pod is pending, starting, gone or whose tool
+  list cannot be read, and a server whose registration with core does not
+  complete, used to keep an earlier `Ready=True`, so the `Ready` column and
+  `kubectl wait --for=condition=Ready` reported it as serving ([#411](https://github.com/mcp-hangar/mcp-hangar-operator/pull/411))
+
 ## [0.17.38](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.37...v0.17.38) (2026-11-12)
 
 ### Fixed
