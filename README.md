@@ -241,7 +241,10 @@ means the target runs no pods: a `mode: remote` server is an address core dials,
 and its traffic leaves from the gateway pod, so there is nothing a network policy
 could select and none is written. For a remote target the L7 rules in core are
 the only enforcement; control of the network path is the gateway pod's own egress
-policy. A group is `NotApplicable` only when every member is remote.
+policy. A group is `NotApplicable` only when every member is remote. A group
+with both kinds of member reads `Partial`: the backstop covers the container
+members, and `BackstopApplied` (reason `RemoteMembersNotCovered`) names the
+remote members it does not cover.
 
 The look is evidence, not proof: an agent can be installed and broken. For a
 CNI this operator does not recognize, or the reverse, override it:
