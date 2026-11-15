@@ -180,10 +180,6 @@ type OwnershipConfig struct {
 	// Controller sets controller owner reference
 	// +kubebuilder:default=true
 	Controller *bool `json:"controller,omitempty"`
-
-	// BlockDeletion blocks deletion until providers removed
-	// +kubebuilder:default=false
-	BlockDeletion bool `json:"blockDeletion,omitempty"`
 }
 
 // MCPDiscoverySourceStatus defines the observed state of MCPDiscoverySource

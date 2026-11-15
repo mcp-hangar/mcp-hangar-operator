@@ -40,8 +40,8 @@ func (v *MCPServerV1alpha2Validator) ValidateDelete(_ context.Context, _ *mcpv1a
 // It refuses nothing but a nil object.
 //
 // The structural rules -- image required in container mode, an http(s)
-// endpoint with a host in remote mode, non-negative durations, non-empty and
-// unique expectedTools, a well-formed cidr, mode immutable -- are CEL and
+// endpoint with a host in remote mode, non-negative durations, a well-formed
+// cidr, mode immutable -- are CEL and
 // schema rules on the CRD (#196). The apiserver evaluates them before any
 // validating webhook is called, and with the webhook off as well, so a copy
 // here could never fire. The image digest policy and the wildcard egress

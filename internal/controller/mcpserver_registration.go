@@ -424,7 +424,7 @@ func (r *MCPServerReconciler) writeRegistrationStatus(ctx context.Context, mcpSe
 	if conditionChanges(mcpServer.Status.Conditions, ConditionDegraded, metav1.ConditionTrue, reason) {
 		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, reason, ActionReconcile, "%s", msg)
 	}
-	setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, reason, msg)
+	setServerNotReady(mcpServer, ConditionDegraded, reason, msg)
 	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, string(mcpServer.Status.State))
 	return writeStatus(ctx, r.Client, mcpServer)
 }

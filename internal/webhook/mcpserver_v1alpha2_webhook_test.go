@@ -55,7 +55,6 @@ func TestV2_ValidDurations(t *testing.T) {
 	v := &webhook.MCPServerV1alpha2Validator{}
 	p := newProviderV2("valid-dur", mcpv1alpha2.MCPServerModeContainer)
 	p.Spec.Image = "test:latest"
-	p.Spec.StartupTimeout = dur("1m30s")
 	p.Spec.ShutdownGracePeriod = dur("45s")
 
 	warnings, err := v.ValidateCreate(context.Background(), p)

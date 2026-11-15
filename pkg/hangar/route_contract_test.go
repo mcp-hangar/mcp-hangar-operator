@@ -96,6 +96,7 @@ func exercise(ctx context.Context, c *Client) {
 	_, _ = c.GetMCPServerTools(ctx, "srv", "ns")
 	_, _ = c.GetMCPServerHealth(ctx, "srv", "ns")
 	_, _ = c.SetL7Policy(ctx, "srv", &L7PolicyPayload{})
+	_, _ = c.GetL7Policy(ctx, "srv")
 	_ = c.ClearL7Policy(ctx, "srv")
 	_ = c.DeregisterMCPServer(ctx, "srv", "ns")
 	_ = c.RegisterRemoteMCPServer(ctx, "srv", "http://srv:8080/mcp")

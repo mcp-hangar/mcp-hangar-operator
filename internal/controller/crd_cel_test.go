@@ -97,40 +97,65 @@ func TestCRDRules_RemoteModeNeedsAnHTTPEndpoint(t *testing.T) {
 }
 
 func TestCRDRules_DurationsMustBeNonNegative(t *testing.T) {
-	s := celServer("cel-neg-startup", mcpv1alpha2.MCPServerModeContainer)
-	s.Spec.StartupTimeout = &metav1.Duration{Duration: -5 * time.Second}
-	requireRejected(t, createAndCleanup(t, s), "must be a non-negative duration")
-
-	s = celServer("cel-neg-shutdown", mcpv1alpha2.MCPServerModeContainer)
+	s := celServer("cel-neg-shutdown", mcpv1alpha2.MCPServerModeContainer)
 	s.Spec.ShutdownGracePeriod = &metav1.Duration{Duration: -time.Second}
 	requireRejected(t, createAndCleanup(t, s), "must be a non-negative duration")
 
 	// A value that does not parse used to be stored, after which the typed
 	// client could not decode the object.
 	garbage := celServerUnstructured("cel-garbage-dur", map[string]any{
-		"mode": "container", "image": "ghcr.io/example/provider:1.0", "startupTimeout": "banana",
+		"mode": "container", "image": "ghcr.io/example/provider:1.0", "shutdownGracePeriod": "banana",
 	})
 	require.Error(t, createAndCleanup(t, garbage))
 
 	s = celServer("cel-good-dur", mcpv1alpha2.MCPServerModeContainer)
-	s.Spec.StartupTimeout = &metav1.Duration{Duration: 90 * time.Second}
-	s.Spec.ShutdownGracePeriod = &metav1.Duration{}
+	s.Spec.ShutdownGracePeriod = &metav1.Duration{Duration: 90 * time.Second}
 	require.NoError(t, createAndCleanup(t, s))
 }
 
-func TestCRDRules_ExpectedToolsAreNonEmptyAndUnique(t *testing.T) {
-	withTools := func(name string, tools ...string) *mcpv1alpha2.MCPServer {
-		s := celServer(name, mcpv1alpha2.MCPServerModeContainer)
-		s.Spec.Capabilities = &mcpv1alpha2.MCPServerCapabilities{
-			Tools: &mcpv1alpha2.ToolCapabilitiesSpec{ExpectedTools: tools},
-		}
-		return s
+// The fields #328 removed never did anything. Under the strict field
+// validation kubectl applies by default the apiserver now refuses each one as
+// unknown, rather than storing a declaration that reads as behaviour.
+func TestCRDRules_RemovedFieldsAreUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		kind  string
+		spec  map[string]any
+		field string
+	}{
+		{"MCPServer", map[string]any{"mode": "container", "image": "ghcr.io/example/provider:1.0", "startupTimeout": "30s"}, "spec.startupTimeout"},
+		{"MCPServer", map[string]any{"mode": "container", "image": "ghcr.io/example/provider:1.0", "healthPath": "/healthz"}, "spec.healthPath"},
+		{"MCPServer", map[string]any{"mode": "container", "image": "ghcr.io/example/provider:1.0",
+			"capabilities": map[string]any{"enforcementMode": "block"}}, "spec.capabilities.enforcementMode"},
+		{"MCPServer", map[string]any{"mode": "container", "image": "ghcr.io/example/provider:1.0",
+			"capabilities": map[string]any{"tools": map[string]any{"expectedTools": []any{"calc"}}}}, "spec.capabilities.tools.expectedTools"},
+		{"MCPServer", map[string]any{"mode": "container", "image": "ghcr.io/example/provider:1.0",
+			"capabilities": map[string]any{"tools": map[string]any{"schemaDriftAlert": true}}}, "spec.capabilities.tools.schemaDriftAlert"},
+		{"MCPServerGroup", map[string]any{"selector": map[string]any{},
+			"healthPolicy": map[string]any{"unhealthyThreshold": int64(3)}}, "spec.healthPolicy.unhealthyThreshold"},
+		{"MCPDiscoverySource", map[string]any{"type": "Annotations",
+			"ownership": map[string]any{"blockDeletion": true}}, "spec.ownership.blockDeletion"},
+		{"MCPEgressPolicy", map[string]any{"targetRef": map[string]any{"kind": "MCPServer", "name": "x"},
+			"upstreams": []any{map[string]any{"name": "u", "match": map[string]any{"host": "api.example.com", "imageDigest": "required"}}}},
+			"spec.upstreams[0].match.imageDigest"},
+		{"MCPEgressPolicy", map[string]any{"targetRef": map[string]any{"kind": "MCPServer", "name": "x"},
+			"upstreams": []any{map[string]any{"name": "u", "match": map[string]any{"host": "api.example.com", "issuers": []any{"https://issuer.example.com"}}}}},
+			"spec.upstreams[0].match.issuers"},
+		{"MCPEgressPolicy", map[string]any{"targetRef": map[string]any{"kind": "MCPServer", "name": "x"},
+			"upstreams": []any{map[string]any{"name": "u", "match": map[string]any{"host": "api.example.com", "toolSchemaDigestRef": "pin"}}}},
+			"spec.upstreams[0].match.toolSchemaDigestRef"},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			u := &unstructured.Unstructured{Object: map[string]any{"spec": tc.spec}}
+			u.SetGroupVersionKind(schema.GroupVersionKind{Group: "mcp-hangar.io", Version: "v1alpha2", Kind: tc.kind})
+			u.SetGenerateName("removed-field-")
+			u.SetNamespace("default")
+			err := k8sClient.Create(ctx, u, client.FieldValidation("Strict"))
+			if err == nil {
+				t.Cleanup(func() { _ = k8sClient.Delete(ctx, u) })
+			}
+			requireRejected(t, err, `unknown field "`+tc.field+`"`)
+		})
 	}
-
-	requireRejected(t, createAndCleanup(t, withTools("cel-dup-tools", "calc", "search", "calc")),
-		"expectedTools must not contain duplicates")
-	requireRejected(t, createAndCleanup(t, withTools("cel-empty-tool", "calc", "")), "expectedTools")
-	require.NoError(t, createAndCleanup(t, withTools("cel-tools", "calc", "search")))
 }
 
 func TestCRDRules_EgressCIDRMustBeWellFormed(t *testing.T) {

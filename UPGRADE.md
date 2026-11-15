@@ -1,5 +1,107 @@
 # Upgrade notes
 
+## Upgrade to 0.17.39
+
+### A policy on a group with remote members reports `Partial`, not `Enforcing`
+
+An `MCPEgressPolicy` that targets an `MCPServerGroup` with at least one
+`mode: container` member and at least one `mode: remote` member used to report
+`BackstopApplied=True` and `status.backstopEnforcement: Enforcing`, and nothing
+in its status named the remote members. The backstop never covered them: their
+traffic leaves from the gateway pod. Such a policy now reports
+`backstopEnforcement: Partial`, and `BackstopApplied=True` with reason
+`RemoteMembersNotCovered` and a message that names the remote members.
+
+- Nothing is enforced less than before. The container members keep their
+  backstop, and the L7 rules in core still reach every member.
+- The CRD's `backstopEnforcement` enum gains `Partial`; apply the new CRD before
+  or with the new operator image. With the old CRD the API server rejects the
+  status write of every such policy.
+- An alert, dashboard or script that treats anything but `Enforcing` as a
+  problem will see these policies now. `Partial` does not set `Degraded`; to
+  cover a remote member at the network level, restrict the gateway pod's own
+  egress.
+- Groups of only container members still report `Enforcing`, and groups of only
+  remote members still report `NotApplicable`.
+
+## Upgrade to 0.17.38
+
+### the operator reads each L7 policy back from every gateway pod
+
+When `--hangar-url` is a cluster Service name
+(`<service>.<namespace>.svc...`), the operator now delivers an L7 policy to
+each Ready gateway pod in that namespace matched by
+`--hangar-gateway-selector`, at the pod's IP, and reads it back with
+`GET /api/mcp_servers/<id>/l7_policy`. Before, it pushed once through
+`--hangar-url` and took a 2xx as delivered. `L7Delivered=True` now means that
+every serving gateway pod answered the read-back with the policy. Pods with
+the gateway label in other namespaces are not contacted. With any other
+`--hangar-url` (an IP, a bare or external host name) nothing changes.
+
+Check these before you upgrade:
+
+- The operator's core API key needs `policy:read` as well as `policy:write`.
+  The built-in `kubernetes-operator` and `provider-admin` roles hold both. A
+  custom role with only `policy:write` turns every MCPEgressPolicy to
+  `L7Delivered=False` (`CoreAuthRejected`) and Degraded.
+- The operator must reach the gateway pods' IPs on their container port named
+  `http`. A pod that names no such port is dialled on the port of
+  `--hangar-url`. A NetworkPolicy that admits the operator to core's Service
+  already admits it to the pods, because policy applies after the Service
+  translates the address. An operator run outside the cluster (`make run`)
+  usually cannot reach pod IPs and reports `L7Delivered=False` naming the pod.
+- With TLS, the certificate is still verified against the `--hangar-url` host,
+  or `--hangar-tls-server-name` when set, so no certificate change is needed.
+
+The workaround of giving core's Deployment `strategy.type: Recreate` is no
+longer needed for L7 re-delivery.
+
+## Upgrade to 0.17.37
+
+### Spec fields that never did anything are removed from v1alpha2
+
+These fields were accepted, validated and stored, and no controller acted on them. They are gone from the `v1alpha2` schema, which stays the only served version:
+
+| Kind | Removed field | What it claimed | What happened |
+| --- | --- | --- | --- |
+| `MCPServer` | `spec.startupTimeout` | a startup deadline | nothing |
+| `MCPServer` | `spec.healthPath` | the path core's discovery probed | already ignored since the last release, which registers container-mode servers itself |
+| `MCPServer` | `spec.capabilities.enforcementMode` | `block` or `quarantine` a violating server | copied into each violation record's `action`; nothing was blocked or quarantined |
+| `MCPServer` | `spec.capabilities.tools.expectedTools` | a `schema_mismatch` violation for an unexpected tool | nothing |
+| `MCPServer` | `spec.capabilities.tools.schemaDriftAlert` | an alert on schema change | nothing |
+| `MCPServerGroup` | `spec.healthPolicy.unhealthyThreshold` | consecutive failures before unhealthy | nothing |
+| `MCPDiscoverySource` | `spec.ownership.blockDeletion` | hold deletion until servers are gone | nothing |
+| `MCPEgressPolicy` | `spec.upstreams[].match.toolSchemaDigestRef`, `.imageDigest`, `.issuers` | per-upstream trust conditions | dropped; only `match.host` reaches the backstop |
+
+The `MCPServer` fields go from `MCPDiscoverySource` `spec.providerTemplate.spec` too, which embeds `MCPServerSpec`, and `enforcementMode` from `MCPServer` `status.capabilities`, which mirrors the spec. `status.violations[].type` now accepts only `capability_drift` and `undeclared_tool`, the two the operator ever wrote; `egress_denied`, `schema_mismatch` and `quarantine_triggered` were never emitted. `status.violations[].action` is always `alert` from now on; records an older operator stored with `block` or `quarantine` still validate.
+
+**A manifest that sets a removed field is rejected, not silently changed.** `kubectl apply`, `create` and `replace` use strict field validation by default, so the API server refuses the field as unknown (`unknown field "spec.startupTimeout"`). A client that sends no `fieldValidation` gets a warning instead, and the API server prunes the field before storing the object. Delete the fields from your manifests, Helm values and GitOps sources before applying them again.
+
+Objects already stored need nothing. Their stored values, including the API-server defaults several of these fields carried (`enforcementMode: alert`, `schemaDriftAlert: true`, `unhealthyThreshold: 3`, `blockDeletion: false`), are pruned on the next write of the object. The order of applying the CRDs and upgrading the operator does not matter: the operator never read the fields.
+
+The schema is now guarded by a test that fails when a spec field has no reader in the operator, so a declaration that does nothing cannot land again.
+
+### An operator against a core older than 2.27.0 now refuses it
+
+The operator now needs core 2.27.0 or newer. Against an older core it stops calling core, where it used to set each `MCPServer` `Degraded` with its own reason, usually `EndpointNotTrusted`. Instead:
+
+- **Event:** a Warning Event `CoreIncompatible` regarding the operator's Pod names both versions (`kubectl -n <operator namespace> get events --field-selector reason=CoreIncompatible`).
+- **Metric:** `mcp_operator_core_compatibility{state="incompatible"}` is 1.
+- **Status:** every `MCPServer` reports `Ready=False` with reason `CoreIncompatible`, and every `MCPEgressPolicy` reports `L7Delivered=False` with the same reason. No server is registered, no pod is started for a new container-mode server and no L7 policy is delivered until core is upgraded. Running Deployments are left as they are, and NetworkPolicies and backstops are applied as before.
+
+Upgrade core, and the operator picks it up within about two minutes, without a restart.
+
+The version is read from `GET /api/system/`. Since core 2.34.9 that route needs `mcp_servers:read` at global scope, which the `kubernetes-operator` role holds. A key without it now holds the operator with reason `CoreVersionUnknown`; grant the permission.
+
+### Backstop enforcement is reported from an observed block
+
+`BackstopEnforcement`, `BackstopEnforceable` and an MCPServer's `NetworkPolicyApplied` now rest on the operator's reachability probe, not on recognizing the CNI. With `--networkpolicy-enforcement=auto` (the default) the operator creates two Deployments in its own namespace, `mcp-hangar-enforcement-probe-fenced` and `mcp-hangar-enforcement-probe-target`, and a NetworkPolicy `mcp-hangar-enforcement-probe`. They run the operator's own image with no service account token, request 5m CPU and 16Mi memory each, and are owned by the operator's pod, so they go with it.
+
+- **kindnet and other CNIs the operator did not recognize** move from `Unenforced` with `Degraded=True` to `Enforcing`. If you set `operator.networkPolicyEnforcement: enforced` only to silence that, you can go back to `auto`.
+- **Calico, Cilium and the other recognized CNIs** read `Unverified` for the first minute after the operator starts, then `Enforcing` once the block is observed. They stay `Unverified` if the canaries cannot run or the operator cannot reach the fenced one on port 6443, for example under a namespace policy that denies ingress to all pods; allow that port from the operator to pods labelled `mcp-hangar.io/enforcement-probe`.
+- **A cluster where the probe connects through its own policy** reads `Unenforced`, whatever CNI it names.
+- **To run no canaries**, set `--networkpolicy-enforcement` to `enforced` or `unenforced`; the status then states the asserted answer as before.
+
 ## Upgrade to 0.17.36
 
 ### Container servers are registered by the operator and need the pod network trusted in core

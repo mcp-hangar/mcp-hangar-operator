@@ -30,6 +30,7 @@ func TestNoCallSitePassesAnEmptyConditionReason(t *testing.T) {
 	reasonArg := map[string]int{
 		"setServerCondition": 3, // (server, condType, status, reason, message)
 		"setGroupCondition":  3, // (group,  condType, status, reason, message)
+		"setServerNotReady":  2, // (server, condType, reason, message)
 		"upsertCondition":    4, // (conds, generation, condType, status, reason, message)
 	}
 
