@@ -11,4 +11,4 @@ concurrency:
 
 jobs:
   pr-body:
-    uses: mcp-hangar/.github/.github/workflows/pr-body.yml@2ca382cad799aba046b435917ae322cb770db373 # main
+    uses: mcp-hangar/.github/.github/workflows/pr-body.yml@01170f40d203c12064ad58542d5a613b37bc9993 # main

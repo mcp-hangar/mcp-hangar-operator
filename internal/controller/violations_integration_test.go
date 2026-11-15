@@ -212,40 +212,22 @@ func TestViolationDetection_PersistingViolationIsRecordedOnce(t *testing.T) {
 	assert.Equal(t, 2, typeCount["undeclared_tool"], "cleared and returned")
 }
 
-// TestViolationDetection_EnforcementModePropagatesToAction verifies that
-// the capabilities.enforcementMode field propagates to ViolationRecord.Action.
-func TestViolationDetection_EnforcementModePropagatesToAction(t *testing.T) {
-	tests := []struct {
-		name            string
-		enforcementMode string
-		expectedAction  string
-	}{
-		{"alert mode", "alert", "alert"},
-		{"block mode", "block", "block"},
-		{"quarantine mode", "quarantine", "quarantine"},
-		{"empty defaults to alert", "", "alert"},
-	}
+// TestViolationDetection_ActionIsAlert: a violation is recorded and raised,
+// never blocked, so every record says alert (#328 removed enforcementMode,
+// whose block and quarantine only relabelled the record).
+func TestViolationDetection_ActionIsAlert(t *testing.T) {
+	provider := newTestProvider("vio-enforce", "default", &mcpv1alpha2.MCPServerCapabilities{
+		Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
+			Egress: []mcpv1alpha2.EgressRuleSpec{
+				{Host: "api.example.com", Port: 443, Protocol: "https"},
+			},
+		},
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			provider := newTestProvider("vio-enforce", "default", &mcpv1alpha2.MCPServerCapabilities{
-				Network: &mcpv1alpha2.NetworkCapabilitiesSpec{
-					Egress: []mcpv1alpha2.EgressRuleSpec{
-						{Host: "api.example.com", Port: 443, Protocol: "https"},
-					},
-				},
-				EnforcementMode: tt.enforcementMode,
-			})
-
-			r, _ := newViolationTestReconciler(provider)
-			ctx := context.Background()
-
-			err := r.reconcileViolationDetection(ctx, provider)
-			require.NoError(t, err)
-			require.Len(t, provider.Status.Violations, 1)
-			assert.Equal(t, tt.expectedAction, provider.Status.Violations[0].Action)
-		})
-	}
+	r, _ := newViolationTestReconciler(provider)
+	require.NoError(t, r.reconcileViolationDetection(context.Background(), provider))
+	require.Len(t, provider.Status.Violations, 1)
+	assert.Equal(t, "alert", provider.Status.Violations[0].Action)
 }
 
 // TestViolationDetection_MaxViolationsCapped verifies that violations are capped

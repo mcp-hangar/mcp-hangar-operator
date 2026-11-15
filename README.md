@@ -119,13 +119,10 @@ under an older operator is moved under the claim, not registered twice.
 | `spec.mode` | Execution mode: `container` or `remote` | Required |
 | `spec.image` | Container image (for container mode) | Required for container |
 | `spec.endpoint` | HTTP endpoint (for remote mode) | Required for remote |
-| `spec.healthPath` | No longer used: the operator registers container-mode servers itself and stamps no discovery annotation | — |
 | `spec.replicas` | On (`1`) or off (`0`, no pod); a server runs at most one pod, and there is no scale subresource | `1` |
-| `spec.startupTimeout` | Accepted and validated; the operator does not act on it | — |
 | `spec.shutdownGracePeriod` | Pod termination grace period | `30s` when unset (operator default) |
 | `spec.capabilities.network` | Egress the server declares; feeds the generated `NetworkPolicy` | — |
-| `spec.capabilities.tools` | `maxCount` / `expectedTools`; drives capability-violation events | — |
-| `spec.capabilities.enforcementMode` | What a violation does (`alert` / `block` / `quarantine`) | — |
+| `spec.capabilities.tools` | `maxCount`; more tools than that records an `undeclared_tool` violation and a Warning Event, and blocks nothing | — |
 
 ### MCPServerGroup
 
@@ -244,7 +241,10 @@ means the target runs no pods: a `mode: remote` server is an address core dials,
 and its traffic leaves from the gateway pod, so there is nothing a network policy
 could select and none is written. For a remote target the L7 rules in core are
 the only enforcement; control of the network path is the gateway pod's own egress
-policy. A group is `NotApplicable` only when every member is remote.
+policy. A group is `NotApplicable` only when every member is remote. A group
+with both kinds of member reads `Partial`: the backstop covers the container
+members, and `BackstopApplied` (reason `RemoteMembersNotCovered`) names the
+remote members it does not cover.
 
 The look is evidence, not proof: an agent can be installed and broken. For a
 CNI this operator does not recognize, or the reverse, override it:

@@ -135,7 +135,30 @@ var (
 		},
 		[]string{"namespace", "name", "violation_type"},
 	)
+
+	// CoreCompatibility is the operator's verdict on the core it talks to
+	// (#330): 1 on the current state, 0 on the others.
+	CoreCompatibility = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "mcp",
+			Subsystem: "operator",
+			Name:      "core_compatibility",
+			Help:      "Verdict on core's version (1 = in this state): pending, compatible, incompatible, unknown",
+		},
+		[]string{"state"},
+	)
 )
+
+// SetCoreCompatibility sets the given verdict to 1 and the others to 0.
+func SetCoreCompatibility(state string) {
+	for _, s := range []string{"pending", "compatible", "incompatible", "unknown"} {
+		val := float64(0)
+		if s == state {
+			val = 1
+		}
+		CoreCompatibility.WithLabelValues(s).Set(val)
+	}
+}
 
 func init() {
 	// Register all metrics with the controller-runtime metrics registry
@@ -151,6 +174,7 @@ func init() {
 		HangarClientErrors,
 		HangarClientLatency,
 		CapabilityViolationsTotal,
+		CoreCompatibility,
 	)
 }
 

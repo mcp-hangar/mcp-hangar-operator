@@ -1,0 +1,66 @@
+# A core older than hangar.MinCoreVersion, for the refusal case (#330). Same
+# shape as core.yaml, with no ssrf.trusted_networks (2.26.0 has no such key) and
+# no servers: the test points the operator at it and expects to be refused.
+# pkg/hangar's compat test fails if this tag ever meets the minimum.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hangar-config-old
+  namespace: hangar-e2e
+data:
+  config.yaml: |
+    logging:
+      level: INFO
+      json_format: true
+    mcp_servers: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-hangar-old
+  namespace: hangar-e2e
+  labels: { app: mcp-hangar-old }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mcp-hangar-old }
+  template:
+    metadata:
+      labels: { app: mcp-hangar-old }
+    spec:
+      serviceAccountName: mcp-hangar
+      containers:
+        - name: core
+          image: ghcr.io/mcp-hangar/mcp-hangar:2.26.0
+          args: [serve, --http, --host, 0.0.0.0, --port, "8080", --unsafe-no-auth]
+          env:
+            - name: MCP_TRUSTED_HOSTS
+              value: "mcp-hangar-old.hangar-e2e.svc.cluster.local,mcp-hangar-old.hangar-e2e.svc,mcp-hangar-old,localhost,127.0.0.1"
+            - { name: MCP_CONFIG, value: /etc/mcp-hangar/config.yaml }
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mcp-hangar
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: hangar-config-old
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-hangar-old
+  namespace: hangar-e2e
+spec:
+  selector: { app: mcp-hangar-old }
+  ports:
+    - port: 8080
+      targetPort: 8080

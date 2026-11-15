@@ -2,6 +2,9 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -157,4 +160,65 @@ func (r *MCPEgressPolicyReconciler) warnIfGatewayUnmatched(ctx context.Context, 
 			"when the gateway restarts; set it to the gateway pods' labels",
 			"selector", r.GatewayPodSelector.String())
 	}
+}
+
+// gatewayPodRetry is how soon a policy is pushed again while a Ready gateway
+// pod does not hold it (#405).
+const gatewayPodRetry = 10 * time.Second
+
+// readyGatewayPods lists the gateway pods that serve: in core's namespace,
+// matched by the gateway selector, Ready, not terminating, and with an
+// address. Only core's namespace: each of these pods is sent the operator's
+// API key, and anyone who can create a pod there can already take the
+// Service's traffic, whereas a labelled pod in any other namespace could not.
+// None when the watch is off or the namespace is unknown (a --hangar-url that
+// is not a cluster Service name), which keeps the push going through
+// --hangar-url alone.
+func (r *MCPEgressPolicyReconciler) readyGatewayPods(ctx context.Context) ([]corev1.Pod, error) {
+	ns := ""
+	if r.gatewayWatchEnabled() {
+		ns = r.HangarClient.GatewayNamespace()
+	}
+	if ns == "" {
+		return nil, nil
+	}
+	var pods corev1.PodList
+	if err := r.List(ctx, &pods, client.InNamespace(ns),
+		client.MatchingLabelsSelector{Selector: r.GatewayPodSelector}); err != nil {
+		return nil, fmt.Errorf("list gateway pods: %w", err)
+	}
+	ready := make([]corev1.Pod, 0, len(pods.Items))
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.DeletionTimestamp.IsZero() && pod.Status.PodIP != "" && podIsReady(pod) {
+			ready = append(ready, *pod)
+		}
+	}
+	sort.Slice(ready, func(i, j int) bool {
+		return client.ObjectKeyFromObject(&ready[i]).String() < client.ObjectKeyFromObject(&ready[j]).String()
+	})
+	return ready, nil
+}
+
+// gatewayPodPort is the gateway's container port named http -- the one the
+// chart's Service targets, which need not equal the Service port in
+// --hangar-url. Empty when the pod names none, which falls back to the URL's
+// port.
+func gatewayPodPort(pod *corev1.Pod) string {
+	for _, c := range pod.Spec.Containers {
+		for _, p := range c.Ports {
+			if p.Name == "http" && p.ContainerPort > 0 {
+				return strconv.Itoa(int(p.ContainerPort))
+			}
+		}
+	}
+	return ""
+}
+
+// soonest is the shorter of two requeue intervals, a zero meaning none.
+func soonest(a, b time.Duration) time.Duration {
+	if a == 0 || (b != 0 && b < a) {
+		return b
+	}
+	return a
 }

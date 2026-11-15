@@ -111,17 +111,6 @@ type MCPServerSpec struct {
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
 
-	// HealthPath is no longer used. It was the HTTP path core's discovery
-	// probed on a container-mode server's pod, stamped on the pod as
-	// mcp-hangar.io/health-path. The operator now registers every
-	// container-mode server with core itself and stamps no discovery
-	// annotation, and core's start (an MCP initialize on /mcp) is the evidence
-	// that the server answers. Accepted and validated; nothing reads it.
-	// +kubebuilder:validation:MaxLength=256
-	// +kubebuilder:validation:Pattern=`^/[^\s?#]*$`
-	// +optional
-	HealthPath string `json:"healthPath,omitempty"`
-
 	// TLS pins the server's upstream by its key: core accepts a connection
 	// only when the peer presents one of the listed keys, whatever certificate
 	// it shows (ADR-030). Setting it needs mcp_servers:peer_identity in core.
@@ -135,12 +124,6 @@ type MCPServerSpec struct {
 	// +kubebuilder:validation:Maximum=1
 	// +optional
 	Replicas *int32 `json:"replicas,omitempty"`
-
-	// StartupTimeout is accepted and validated, but the operator does not act on it.
-	// Uses standard Kubernetes duration format (e.g. "30s").
-	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('0s')",message="must be a non-negative duration such as 30s"
-	// +optional
-	StartupTimeout *metav1.Duration `json:"startupTimeout,omitempty"`
 
 	// ShutdownGracePeriod is the grace period for graceful shutdown.
 	// Uses standard Kubernetes duration format (e.g. "30s").
@@ -241,12 +224,6 @@ type MCPServerCapabilities struct {
 	// Tools defines tool schema constraints
 	// +optional
 	Tools *ToolCapabilitiesSpec `json:"tools,omitempty"`
-
-	// EnforcementMode controls how violations are handled: alert, block, or quarantine.
-	// +kubebuilder:validation:Enum=alert;block;quarantine
-	// +kubebuilder:default=alert
-	// +optional
-	EnforcementMode string `json:"enforcementMode,omitempty"`
 }
 
 // NetworkCapabilitiesSpec declares network access requirements
@@ -303,22 +280,6 @@ type ToolCapabilitiesSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	MaxCount int32 `json:"maxCount,omitempty"`
-
-	// SchemaDriftAlert enables alerting when tool schema changes between restarts
-	// +kubebuilder:default=true
-	// +optional
-	SchemaDriftAlert *bool `json:"schemaDriftAlert,omitempty"`
-
-	// ExpectedTools is the list of tool names the provider is expected to expose.
-	// Used for runtime drift detection: tools present at runtime but not in this
-	// list trigger a schema_mismatch violation. Names must be non-empty and
-	// unique.
-	// +kubebuilder:validation:MaxItems=256
-	// +kubebuilder:validation:items:MinLength=1
-	// +kubebuilder:validation:items:MaxLength=256
-	// +kubebuilder:validation:XValidation:rule="self.all(t, self.exists_one(u, u == t))",message="expectedTools must not contain duplicates"
-	// +optional
-	ExpectedTools []string `json:"expectedTools,omitempty"`
 }
 
 // MCPServerStatus defines the observed state of MCPServer
@@ -396,8 +357,9 @@ type InitDataDigests struct {
 // ViolationRecord represents a detected capability violation.
 // Stored in MCPServerStatus.Violations for audit and visibility via kubectl.
 type ViolationRecord struct {
-	// Type of violation: egress_denied, capability_drift, undeclared_tool, schema_mismatch, quarantine_triggered
-	// +kubebuilder:validation:Enum=egress_denied;capability_drift;undeclared_tool;schema_mismatch;quarantine_triggered
+	// Type of violation: capability_drift (network egress declared, its
+	// NetworkPolicy not applied) or undeclared_tool (more tools than maxCount).
+	// +kubebuilder:validation:Enum=capability_drift;undeclared_tool
 	Type string `json:"type"`
 
 	// Detail is a human-readable description of the violation
@@ -408,7 +370,9 @@ type ViolationRecord struct {
 	// +kubebuilder:validation:Enum=critical;high;medium;low
 	Severity string `json:"severity"`
 
-	// Action is the enforcement action taken: alert, block, quarantine
+	// Action is always alert: a violation is recorded and raised as an Event,
+	// nothing is blocked. block and quarantine stay in the enum so records an
+	// older operator stored still validate when the list is rewritten.
 	// +kubebuilder:validation:Enum=alert;block;quarantine
 	Action string `json:"action"`
 

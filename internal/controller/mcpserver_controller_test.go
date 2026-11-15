@@ -302,7 +302,6 @@ func TestMCPServer_CapabilitiesPropagatedToStatus(t *testing.T) {
 						{Host: "db.internal", Port: 5432, Protocol: "tcp", CIDR: "10.0.0.0/8"},
 					},
 				},
-				EnforcementMode: "block",
 			},
 		},
 	}
@@ -312,7 +311,6 @@ func TestMCPServer_CapabilitiesPropagatedToStatus(t *testing.T) {
 
 	result := getMCPServer(t, r, "caps-test", "default")
 	require.NotNil(t, result.Status.Capabilities)
-	assert.Equal(t, "block", result.Status.Capabilities.EnforcementMode)
 	require.NotNil(t, result.Status.Capabilities.Network)
 	require.Len(t, result.Status.Capabilities.Network.Egress, 1)
 	assert.Equal(t, "db.internal", result.Status.Capabilities.Network.Egress[0].Host)

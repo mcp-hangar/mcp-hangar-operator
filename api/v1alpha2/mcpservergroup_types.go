@@ -27,11 +27,6 @@ type HealthPolicy struct {
 	// MinHealthyCount is minimum healthy provider count (overrides percentage)
 	// +optional
 	MinHealthyCount *int32 `json:"minHealthyCount,omitempty"`
-
-	// UnhealthyThreshold is consecutive failures before marking unhealthy
-	// +kubebuilder:default=3
-	// +kubebuilder:validation:Minimum=1
-	UnhealthyThreshold int32 `json:"unhealthyThreshold,omitempty"`
 }
 
 // MCPServerGroupStatus defines the observed state of MCPServerGroup

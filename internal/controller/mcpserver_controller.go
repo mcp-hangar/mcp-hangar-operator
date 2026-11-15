@@ -124,6 +124,9 @@ type MCPServerReconciler struct {
 	// Claims records which MCPServer registered each server name in core
 	// (#164). Nil: the operator registers nothing and only mirrors.
 	Claims *RegistrationClaims
+	// CoreGate holds every call to core while core is older than
+	// hangar.MinCoreVersion (#330). Nil: no check.
+	CoreGate *CoreGate
 	// MaxConcurrentReconciles is how many MCPServers reconcile at once; zero
 	// keeps controller-runtime's default of one. With one worker, a reconcile
 	// stuck on a slow core held up every other server's, pod create and
@@ -272,6 +275,9 @@ func (r *MCPServerReconciler) reconcileContainerProvider(ctx context.Context, mc
 	// carries discovery annotations any more (ADR-030 §4a, §4c). Without a
 	// core client nothing is registered; a key-pinned server was held above.
 	if r.HangarClient != nil {
+		if held, result, err := r.holdForCore(ctx, mcpServer); held {
+			return result, err
+		}
 		endpoint, err := r.podEndpoint(ctx, mcpServer)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -310,7 +316,7 @@ func (r *MCPServerReconciler) syncPodStatus(ctx context.Context, mcpServer *mcpv
 		case corev1.PodPending:
 			mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
 			mcpServer.Status.ReadyReplicas = 0
-			setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "PodPending", "Pod is pending")
+			setServerNotReady(mcpServer, ConditionProgressing, "PodPending", "Pod is pending")
 			metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Initializing")
 		case corev1.PodFailed:
 			// Evicted, typically; the ReplicaSet starts a replacement.
@@ -353,7 +359,7 @@ func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *m
 	if !allReady {
 		mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
 		mcpServer.Status.ReadyReplicas = 0
-		setServerCondition(mcpServer, ConditionProgressing, metav1.ConditionTrue, "ContainersStarting", "Waiting for containers to be ready")
+		setServerNotReady(mcpServer, ConditionProgressing, "ContainersStarting", "Waiting for containers to be ready")
 		metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Initializing")
 		return defaultRequeueAfter
 	}
@@ -376,7 +382,7 @@ func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *m
 			if mcpServer.Status.ConsecutiveFailures < maxConsecutiveFailures {
 				mcpServer.Status.ConsecutiveFailures++
 			}
-			setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, "ToolsFetchFailed", err.Error())
+			setServerNotReady(mcpServer, ConditionDegraded, "ToolsFetchFailed", err.Error())
 			metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Degraded")
 			metrics.MCPServerHealthCheckFailures.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Inc()
 			return defaultRequeueAfter
@@ -422,7 +428,11 @@ func (r *MCPServerReconciler) reportPodStuck(mcpServer *mcpv1alpha2.MCPServer, r
 	mcpServer.Status.ConsecutiveFailures = restarts
 	mcpServer.Status.ReadyReplicas = 0
 	mcpServer.Status.AvailableReplicas = 0
-	if conditionChanges(mcpServer.Status.Conditions, ConditionReady, metav1.ConditionFalse, reason) {
+	// Keyed on Degraded, not Ready: a crash loop passes through
+	// Running-but-not-Ready between back-offs, which writes
+	// Ready=False/ContainersStarting and leaves Degraded alone, so keying on
+	// Ready re-fired this Warning on every cycle.
+	if conditionChanges(mcpServer.Status.Conditions, ConditionDegraded, metav1.ConditionTrue, reason) {
 		now := metav1.Now()
 		mcpServer.Status.LastStoppedAt = &now
 		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonFailed, ActionReconcile,
@@ -473,6 +483,9 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 		// Two distinct failures, kept distinct: we could not ask core, or core
 		// says the upstream is failing. The first is our problem, the second is
 		// the upstream's, and conflating them made both unreadable.
+		if held, result, err := r.holdForCore(ctx, mcpServer); held {
+			return result, err
+		}
 		if done, result, err := r.reconcileRegistration(ctx, mcpServer); done || err != nil {
 			return result, err
 		}
@@ -487,7 +500,7 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 				r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonCoreAuthRejected, ActionReconcile,
 					"Core rejected the operator's credentials; check --hangar-api-key: %v", err)
 			}
-			setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, ReasonCoreAuthRejected,
+			setServerNotReady(mcpServer, ConditionDegraded, ReasonCoreAuthRejected,
 				"core rejected the operator's credentials (check the API key): "+err.Error())
 			requeueAfter = readyRequeueAfter
 		} else if err != nil {
@@ -511,7 +524,7 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 				r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonUnhealthy, ActionReconcile,
 					"Health check failed: %v", err)
 			}
-			setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, "HealthCheckFailed", err.Error())
+			setServerNotReady(mcpServer, ConditionDegraded, "HealthCheckFailed", err.Error())
 			metrics.MCPServerHealthCheckFailures.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Inc()
 			// Re-probe soon so recovery is detected fast, not after the full readyRequeueAfter window.
 			requeueAfter = errorRequeueAfter
@@ -546,7 +559,7 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 				r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonUnhealthy, ActionReconcile,
 					"Remote endpoint unhealthy")
 			}
-			setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, "EndpointUnhealthy",
+			setServerNotReady(mcpServer, ConditionDegraded, "EndpointUnhealthy",
 				fmt.Sprintf("Core reports %d consecutive failures (success rate %.2f)", health.ConsecutiveFailures, health.SuccessRate))
 			// Re-probe soon so recovery is detected fast, not after the full readyRequeueAfter window.
 			requeueAfter = errorRequeueAfter
@@ -676,6 +689,17 @@ func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpSer
 	return nil
 }
 
+// setServerNotReady records a server that is not serving: condType (Degraded
+// or Progressing) True and Ready False, under the same reason and message.
+// Every branch that moves State away from Ready goes through it. Writing only
+// condType left a server that had been Ready=True at Ready=True while core or
+// its pod said it was failing, and the Ready print column and
+// `kubectl wait --for=condition=Ready` went on reporting it as serving (#409).
+func setServerNotReady(mcpServer *mcpv1alpha2.MCPServer, condType, reason, message string) {
+	setServerCondition(mcpServer, condType, metav1.ConditionTrue, reason, message)
+	setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, reason, message)
+}
+
 // conditionChanges reports whether setting condition t to status/reason would
 // change it -- the moment worth an Event. Emitting on every poll instead put a
 // Warning in the event stream every 10 s per unhealthy server (#210).
@@ -756,10 +780,9 @@ func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, m
 
 	logger := log.FromContext(ctx)
 	now := metav1.Now()
-	enforcementMode := mcpServer.Spec.Capabilities.EnforcementMode
-	if enforcementMode == "" {
-		enforcementMode = "alert"
-	}
+	// A violation is recorded and raised; nothing is blocked, so the action is
+	// always alert.
+	const action = "alert"
 
 	var newViolations []mcpv1alpha2.ViolationRecord
 
@@ -777,7 +800,7 @@ func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, m
 				Type:      "capability_drift",
 				Detail:    "Network capabilities declared but NetworkPolicy not applied",
 				Severity:  "high",
-				Action:    enforcementMode,
+				Action:    action,
 				Timestamp: now,
 			})
 		}
@@ -790,7 +813,7 @@ func (r *MCPServerReconciler) reconcileViolationDetection(ctx context.Context, m
 				Type:      "undeclared_tool",
 				Detail:    fmt.Sprintf("Provider exposes %d tools but max declared is %d", mcpServer.Status.ToolsCount, mcpServer.Spec.Capabilities.Tools.MaxCount),
 				Severity:  "medium",
-				Action:    enforcementMode,
+				Action:    action,
 				Timestamp: now,
 			})
 		}

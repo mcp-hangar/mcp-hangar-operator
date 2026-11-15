@@ -28,10 +28,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/hangar"
@@ -68,6 +71,9 @@ const (
 	l7ReasonPushFailed            = "PushFailed"
 	l7ReasonCoreIntegrationOff    = "CoreIntegrationOff"
 	degradedReasonL7PushFailed    = "L7PushFailed"
+	// l7ReasonGatewayPodMissingPolicy: a Ready gateway pod did not answer
+	// the read-back with the policy (#405).
+	l7ReasonGatewayPodMissingPolicy = "GatewayPodMissingPolicy"
 )
 
 // targetNotFoundRequeueAfter is how long to wait before re-checking a policy
@@ -90,6 +96,9 @@ type MCPEgressPolicyReconciler struct {
 	// HangarClient talks to the core REST API to deliver the L7 policy. Nil when
 	// core integration is disabled (no --hangar-url); L7 push is then skipped.
 	HangarClient *hangar.Client
+	// CoreGate holds the L7 push while core is older than
+	// hangar.MinCoreVersion (#330). Nil: no check.
+	CoreGate *CoreGate
 	// EnforcementProbe reports whether the API server this operator writes to
 	// has anything that enforces a NetworkPolicy. Nil reports Unknown, which
 	// surfaces as Unverified rather than as a claim either way.
@@ -103,6 +112,9 @@ type MCPEgressPolicyReconciler struct {
 	// MaxConcurrentReconciles is how many policies reconcile at once; zero
 	// keeps controller-runtime's default of one (#201).
 	MaxConcurrentReconciles int
+	// EnforcementUpdates fires when the enforcement verdict changes, so every
+	// policy's BackstopEnforcement is re-read without waiting for a resync.
+	EnforcementUpdates <-chan event.GenericEvent
 
 	gatewayCheck gatewayMatchCheck
 
@@ -171,7 +183,7 @@ func (r *MCPEgressPolicyReconciler) reconcile(ctx context.Context, policy *mcpv1
 	// L7 push below addresses core by the same provider names, so this comes
 	// before the backstop decision: a policy that opts out of the backstop
 	// still has targets.
-	selector, targetName, hasPods, done, err := r.resolveTargetSelector(ctx, policy)
+	selector, targetName, hasPods, remote, done, err := r.resolveTargetSelector(ctx, policy)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -230,17 +242,21 @@ func (r *MCPEgressPolicyReconciler) reconcile(ctx context.Context, policy *mcpv1
 		r.setNoBackstop(policy, mcpv1alpha2.BackstopNotApplicable, "RemoteTargetHasNoPods",
 			"the target is a remote server: its traffic leaves from the gateway pod, so only the L7 rules in core apply")
 		r.clearDegraded(policy)
-	} else if err := r.applyFlavoredBackstop(ctx, logger, policy, selector, targetName); err != nil {
-		return ctrl.Result{}, err
+	} else {
+		if err := r.applyFlavoredBackstop(ctx, logger, policy, selector, targetName); err != nil {
+			return ctrl.Result{}, err
+		}
+		r.noteRemoteMembers(policy, remote)
 	}
 
 	// Deliver the compiled L7 policy to core so it is enforced at the
 	// tool-invocation chokepoint (skipped when core integration is off).
-	if err := r.pushL7Policy(ctx, logger, policy, selector); err != nil {
+	retry, err := r.pushL7Policy(ctx, logger, policy, selector)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 	r.warnIfGatewayUnmatched(ctx, false)
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: soonest(retry, r.CoreGate.requeue())}, nil
 }
 
 // handleDeletion clears the L7 policy from core for the policy's targets and
@@ -252,7 +268,7 @@ func (r *MCPEgressPolicyReconciler) handleDeletion(ctx context.Context, policy *
 	if r.HangarClient != nil {
 		// Best-effort resolve the targets; if they are already gone core will
 		// have dropped their policy with the server, so an empty set is fine.
-		selector, _, _, done, err := r.resolveTargetSelector(ctx, policy)
+		selector, _, _, _, done, err := r.resolveTargetSelector(ctx, policy)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -286,13 +302,32 @@ func (r *MCPEgressPolicyReconciler) handleDeletion(ctx context.Context, policy *
 // outage retries); the caller still persists status before the error
 // propagates, which is the whole point -- a Warning Event was the only trace a
 // rejected push used to leave (#191).
-func (r *MCPEgressPolicyReconciler) pushL7Policy(ctx context.Context, logger logr.Logger, policy *mcpv1alpha2.MCPEgressPolicy, selector metav1.LabelSelector) error {
+//
+// When the gateway selector matches Ready gateway pods, the policy goes to
+// each of them directly and is read back from each (#405); the returned
+// duration is then how soon to try again for a pod that does not hold it.
+func (r *MCPEgressPolicyReconciler) pushL7Policy(ctx context.Context, logger logr.Logger, policy *mcpv1alpha2.MCPEgressPolicy, selector metav1.LabelSelector) (time.Duration, error) {
 	if r.HangarClient == nil {
 		r.setL7CoreIntegrationOff(policy)
-		return nil
+		return 0, nil
+	}
+	if proceed, reason, msg := r.CoreGate.verdict(); !proceed {
+		// Held, not failed: no Degraded. Before core's first answer the
+		// condition is left as it was.
+		if reason != "" {
+			r.setCondition(policy, EgressPolicyConditionL7Delivered, metav1.ConditionFalse, reason, msg)
+		}
+		return 0, nil
 	}
 	payload := compileL7Policy(policy)
 	names := providerNamesFromSelector(selector)
+	pods, err := r.readyGatewayPods(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if len(pods) > 0 {
+		return r.pushL7ToGatewayPods(ctx, logger, policy, names, payload, pods)
+	}
 	persisted := true
 	for _, name := range names {
 		p, err := r.HangarClient.SetL7Policy(ctx, name, payload)
@@ -303,20 +338,84 @@ func (r *MCPEgressPolicyReconciler) pushL7Policy(ctx context.Context, logger log
 				"Failed to deliver L7 policy to core for %q: %v", name, err)
 			r.setCondition(policy, EgressPolicyConditionL7Delivered, metav1.ConditionFalse, reason, msg)
 			r.degradeForL7(policy, msg)
-			return fmt.Errorf("push L7 policy for %q: %w", name, err)
+			return 0, fmt.Errorf("push L7 policy for %q: %w", name, err)
 		}
 		persisted = persisted && p
 		logger.Info("Delivered L7 policy to core", "policy", policy.Name, "server", name, "persisted", p)
 	}
+	r.setL7Delivered(policy, persisted, fmt.Sprintf("L7 policy delivered to core for %s", strings.Join(names, ", ")))
+	return 0, nil
+}
+
+// setL7Delivered records a confirmed delivery, saying whether core keeps it
+// across a restart.
+func (r *MCPEgressPolicyReconciler) setL7Delivered(policy *mcpv1alpha2.MCPEgressPolicy, persisted bool, msg string) {
 	if persisted {
-		r.setCondition(policy, EgressPolicyConditionL7Delivered, metav1.ConditionTrue, l7ReasonDelivered,
-			fmt.Sprintf("L7 policy delivered to core for %s", strings.Join(names, ", ")))
-		return nil
+		r.setCondition(policy, EgressPolicyConditionL7Delivered, metav1.ConditionTrue, l7ReasonDelivered, msg)
+		return
 	}
 	r.setCondition(policy, EgressPolicyConditionL7Delivered, metav1.ConditionTrue, l7ReasonDeliveredNotPersisted,
-		fmt.Sprintf("L7 policy delivered to core for %s; core does not persist it, so it is "+
-			"re-delivered when a gateway pod becomes Ready", strings.Join(names, ", ")))
-	return nil
+		msg+"; core does not persist it, so it is re-delivered when a gateway pod becomes Ready")
+}
+
+// pushL7ToGatewayPods delivers the policy to every Ready gateway pod by its
+// address and reads it back from the same pod. Pushing through --hangar-url
+// lets the Service pick the pod: during a rolling update of a single replica
+// that is the old pod, about to be deleted, and the pod that turned Ready
+// served with no policy until the informer resync, up to about 11 h, while
+// this condition said delivered (#405). So L7Delivered is True only once each
+// pod has answered the read-back with a policy; otherwise it is False naming
+// the pods that did not, Degraded, and retried after gatewayPodRetry. Every
+// pod is tried on every pass, so one that fails does not keep the policy from
+// the others.
+func (r *MCPEgressPolicyReconciler) pushL7ToGatewayPods(ctx context.Context, logger logr.Logger,
+	policy *mcpv1alpha2.MCPEgressPolicy, names []string, payload *hangar.L7PolicyPayload, pods []corev1.Pod) (time.Duration, error) {
+	persisted := true
+	podNames := make([]string, 0, len(pods))
+	var failures []string
+	reason := ""
+	for i := range pods {
+		pod := &pods[i]
+		key := client.ObjectKeyFromObject(pod).String()
+		podNames = append(podNames, key)
+		pc := r.HangarClient.ForAddress(pod.Status.PodIP, gatewayPodPort(pod))
+		for _, name := range names {
+			p, err := pc.SetL7Policy(ctx, name, payload)
+			why := l7PushReason(err)
+			if err == nil {
+				var held bool
+				held, err = pc.GetL7Policy(ctx, name)
+				why = l7ReasonGatewayPodMissingPolicy
+				if err == nil && !held {
+					err = errors.New("the read-back found no L7 policy")
+				} else if hangar.IsAuthRejected(err) {
+					why = l7ReasonCoreAuthRejected
+				}
+			}
+			if err != nil {
+				if reason == "" {
+					reason = why
+				}
+				failures = append(failures, fmt.Sprintf("%q on %s: %v", name, key, err))
+				logger.Info("L7 policy not confirmed on a gateway pod; retrying", "policy", policy.Name,
+					"server", name, "pod", key, "error", err.Error())
+				continue
+			}
+			persisted = persisted && p
+			logger.Info("Delivered L7 policy to a gateway pod and read it back", "policy", policy.Name,
+				"server", name, "pod", key, "persisted", p)
+		}
+	}
+	if len(failures) > 0 {
+		msg := "L7 policy not confirmed on gateway pod(s): " + strings.Join(failures, "; ")
+		r.Recorder.Eventf(policy, nil, corev1.EventTypeWarning, "L7PushFailed", ActionReconcile, "%s", msg)
+		r.setCondition(policy, EgressPolicyConditionL7Delivered, metav1.ConditionFalse, reason, msg)
+		r.degradeForL7(policy, msg)
+		return gatewayPodRetry, nil
+	}
+	r.setL7Delivered(policy, persisted, fmt.Sprintf("L7 policy delivered to core for %s and read back from gateway pod(s) %s",
+		strings.Join(names, ", "), strings.Join(podNames, ", ")))
+	return 0, nil
 }
 
 // l7PushReason maps a SetL7Policy error to the L7Delivered reason. A status
@@ -473,39 +572,43 @@ func appendUnique(dst []string, values ...string) []string {
 // the backstop. An MCPServer resolves to its single provider label; an
 // MCPServerGroup resolves to a set of member providers (provider In [...]).
 //
+// It also reports whether any target runs pods, and names the group members
+// that run none: they stay in the selector, because the L7 push addresses core
+// by the same names, but no backstop covers them.
+//
 // When it returns a non-nil *ctrl.Result, the target could not be resolved (a
 // terminal status condition has already been set) and the caller should return
 // that result without applying a backstop.
 func (r *MCPEgressPolicyReconciler) resolveTargetSelector(
 	ctx context.Context, policy *mcpv1alpha2.MCPEgressPolicy,
-) (metav1.LabelSelector, string, bool, *ctrl.Result, error) {
+) (metav1.LabelSelector, string, bool, []string, *ctrl.Result, error) {
 	name := policy.Spec.TargetRef.Name
 	switch policy.Spec.TargetRef.Kind {
 	case "MCPServer":
 		target := &mcpv1alpha2.MCPServer{}
 		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: policy.Namespace}, target); err != nil {
 			if apierrors.IsNotFound(err) {
-				return metav1.LabelSelector{}, "", false, r.targetNotFound(policy, fmt.Sprintf("MCPServer %q not found", name)), nil
+				return metav1.LabelSelector{}, "", false, nil, r.targetNotFound(policy, fmt.Sprintf("MCPServer %q not found", name)), nil
 			}
-			return metav1.LabelSelector{}, "", false, nil, err
+			return metav1.LabelSelector{}, "", false, nil, nil, err
 		}
 		sel := metav1.LabelSelector{MatchLabels: map[string]string{networkpolicy.LabelProvider: target.Name}}
-		return sel, target.Name, target.IsContainerMode(), nil, nil
+		return sel, target.Name, target.IsContainerMode(), nil, nil, nil
 
 	case "MCPServerGroup":
 		group := &mcpv1alpha2.MCPServerGroup{}
 		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: policy.Namespace}, group); err != nil {
 			if apierrors.IsNotFound(err) {
-				return metav1.LabelSelector{}, "", false, r.targetNotFound(policy, fmt.Sprintf("MCPServerGroup %q not found", name)), nil
+				return metav1.LabelSelector{}, "", false, nil, r.targetNotFound(policy, fmt.Sprintf("MCPServerGroup %q not found", name)), nil
 			}
-			return metav1.LabelSelector{}, "", false, nil, err
+			return metav1.LabelSelector{}, "", false, nil, nil, err
 		}
-		members, hasPods, err := r.groupMembers(ctx, group)
+		members, remote, err := r.groupMembers(ctx, group)
 		if err != nil {
-			return metav1.LabelSelector{}, "", false, nil, err
+			return metav1.LabelSelector{}, "", false, nil, nil, err
 		}
 		if len(members) == 0 {
-			return metav1.LabelSelector{}, "", false, r.targetNotFound(policy,
+			return metav1.LabelSelector{}, "", false, nil, r.targetNotFound(policy,
 				fmt.Sprintf("MCPServerGroup %q has no member servers", name)), nil
 		}
 		sel := metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
@@ -513,7 +616,7 @@ func (r *MCPEgressPolicyReconciler) resolveTargetSelector(
 			Operator: metav1.LabelSelectorOpIn,
 			Values:   members,
 		}}}
-		return sel, name, hasPods, nil, nil
+		return sel, name, len(remote) < len(members), remote, nil, nil
 
 	default:
 		// The CRD enum restricts kind to MCPServer|MCPServerGroup; this guards
@@ -526,35 +629,61 @@ func (r *MCPEgressPolicyReconciler) resolveTargetSelector(
 			"no backstop applied, so none is enforced")
 		r.setL7NotPushed(policy, "UnsupportedTargetKind", "no L7 policy pushed")
 		r.clearDegraded(policy)
-		return metav1.LabelSelector{}, "", false, &ctrl.Result{}, nil
+		return metav1.LabelSelector{}, "", false, nil, &ctrl.Result{}, nil
 	}
 }
 
 // groupMembers returns the sorted names of the MCPServers matching a group's
-// selector in the group's namespace, and whether any of them runs pods. A group
-// of remote servers has members and no pods.
-func (r *MCPEgressPolicyReconciler) groupMembers(ctx context.Context, group *mcpv1alpha2.MCPServerGroup) ([]string, bool, error) {
+// selector in the group's namespace, and the sorted names of those that run no
+// pods (mode: remote). A group of remote servers has the two lists equal.
+func (r *MCPEgressPolicyReconciler) groupMembers(ctx context.Context, group *mcpv1alpha2.MCPServerGroup) ([]string, []string, error) {
 	if group.Spec.Selector == nil {
-		return nil, false, nil
+		return nil, nil, nil
 	}
 	sel, err := metav1.LabelSelectorAsSelector(group.Spec.Selector)
 	if err != nil {
-		return nil, false, fmt.Errorf("group %q selector: %w", group.Name, err)
+		return nil, nil, fmt.Errorf("group %q selector: %w", group.Name, err)
 	}
 	var list mcpv1alpha2.MCPServerList
 	if err := r.List(ctx, &list,
 		client.InNamespace(group.Namespace),
 		client.MatchingLabelsSelector{Selector: sel}); err != nil {
-		return nil, false, fmt.Errorf("list group members: %w", err)
+		return nil, nil, fmt.Errorf("list group members: %w", err)
 	}
 	names := make([]string, 0, len(list.Items))
-	hasPods := false
+	var remote []string
 	for i := range list.Items {
 		names = append(names, list.Items[i].Name)
-		hasPods = hasPods || list.Items[i].IsContainerMode()
+		if !list.Items[i].IsContainerMode() {
+			remote = append(remote, list.Items[i].Name)
+		}
 	}
 	sort.Strings(names)
-	return names, hasPods, nil
+	sort.Strings(remote)
+	return names, remote, nil
+}
+
+// noteRemoteMembers qualifies an applied backstop on a group that also has
+// remote members (#410). The backstop selects the pods of the container
+// members only; a remote member's traffic leaves from the gateway pod, so
+// BackstopApplied names the remote members and an Enforcing verdict becomes
+// Partial. Unenforced and Unverified stand: they already say less than full
+// coverage. Degraded is left alone, as it is for a group of only remote
+// members: nothing is broken, the network layer just does not reach them.
+func (r *MCPEgressPolicyReconciler) noteRemoteMembers(policy *mcpv1alpha2.MCPEgressPolicy, remote []string) {
+	if len(remote) == 0 {
+		return
+	}
+	applied := meta.FindStatusCondition(policy.Status.Conditions, EgressPolicyConditionBackstopApplied)
+	if applied == nil || applied.Status != metav1.ConditionTrue {
+		return
+	}
+	r.setCondition(policy, EgressPolicyConditionBackstopApplied, metav1.ConditionTrue, "RemoteMembersNotCovered",
+		fmt.Sprintf("%s; not covered: remote members %s, whose traffic leaves from the gateway pod, "+
+			"so only the L7 rules in core apply to them", applied.Message, strings.Join(remote, ", ")))
+	if policy.Status.BackstopEnforcement == mcpv1alpha2.BackstopEnforcing {
+		policy.Status.BackstopEnforcement = mcpv1alpha2.BackstopPartial
+	}
 }
 
 // targetNotFound sets the withheld-backstop conditions and returns a requeue
@@ -943,6 +1072,20 @@ func (r *MCPEgressPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			Group: networkpolicy.CiliumGroup, Version: networkpolicy.CiliumVersion, Kind: networkpolicy.CiliumNetworkPolicyKind,
 		})
 		b = b.Owns(cnp)
+	}
+	if r.EnforcementUpdates != nil {
+		b = b.WatchesRawSource(source.Channel(r.EnforcementUpdates,
+			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, _ client.Object) []reconcile.Request {
+				var list mcpv1alpha2.MCPEgressPolicyList
+				if err := r.List(ctx, &list); err != nil {
+					log.FromContext(ctx).Error(err, "list MCPEgressPolicies after an enforcement verdict change")
+				}
+				reqs := make([]reconcile.Request, 0, len(list.Items))
+				for i := range list.Items {
+					reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
+				}
+				return reqs
+			})))
 	}
 	if r.gatewayWatchEnabled() {
 		// Pods are already in the manager's cache (the MCPServer controller

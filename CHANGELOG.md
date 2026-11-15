@@ -1,5 +1,72 @@
 # Changelog
 
+## [0.17.39](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.38...v0.17.39) (2026-11-12)
+
+### Fixed
+
+- **controller:** an `MCPEgressPolicy` on an `MCPServerGroup` with both
+  `mode: container` and `mode: remote` members no longer reports
+  `backstopEnforcement: Enforcing` for the whole group. The backstop selects the
+  pods of the container members only; a remote member's traffic leaves from the
+  gateway pod, so only the L7 rules in core apply to it. Such a policy now keeps
+  its backstop, reports `BackstopApplied=True` with reason
+  `RemoteMembersNotCovered` and a message naming the remote members, and reads
+  `backstopEnforcement: Partial` where it used to read `Enforcing`. `Unenforced`
+  and `Unverified` are reported as before, and `Degraded` is not set. Groups of
+  only container members, and groups of only remote members (`NotApplicable`),
+  report as before ([#412](https://github.com/mcp-hangar/mcp-hangar-operator/pull/412))
+- **controller:** an MCPServer that leaves the Ready state now reports
+  `Ready=False` under the reason of what went wrong. A remote server that core
+  reports failing, cannot be asked about, or refuses the operator's credentials
+  for, a container server whose pod is pending, starting, gone or whose tool
+  list cannot be read, and a server whose registration with core does not
+  complete, used to keep an earlier `Ready=True`, so the `Ready` column and
+  `kubectl wait --for=condition=Ready` reported it as serving ([#411](https://github.com/mcp-hangar/mcp-hangar-operator/pull/411))
+
+## [0.17.38](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.37...v0.17.38) (2026-11-12)
+
+### Fixed
+
+- **controller:** deliver an L7 policy to each Ready gateway pod and read it
+  back there before reporting `L7Delivered=True`. The operator used to push
+  through `--hangar-url` and take a 2xx as delivered. During a rolling update of
+  a single-replica gateway with no durable backend (the mcp-hangar chart
+  default) the Service could route that push to the old pod, which was about to
+  be deleted. The new pod then served with no L7 policy until the informer
+  resync, up to about 11 hours, while the status still said delivered. When
+  `--hangar-url` is a cluster Service name (`<service>.<namespace>.svc...`), the
+  operator now dials each Ready, non-terminating pod in that namespace that
+  `--hangar-gateway-selector` matches. It uses the pod IP and the container port
+  named `http`, keeps the Service host for the Host header and TLS
+  verification, and reads the policy back with
+  `GET /api/mcp_servers/<id>/l7_policy`. Until every such pod holds the policy,
+  `L7Delivered` is False with a message naming the pods, the policy is
+  Degraded, and the push is retried every 10 seconds. Gateway-labelled pods in
+  other namespaces are never sent the API key. The operator's core API key now
+  needs `policy:read` as well as `policy:write`; the built-in
+  `kubernetes-operator` and `provider-admin` roles hold both. With any other
+  `--hangar-url`, or no Ready gateway pod in the namespace, the push goes
+  through `--hangar-url` as before ([#406](https://github.com/mcp-hangar/mcp-hangar-operator/pull/406))
+
+## [0.17.37](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.36...v0.17.37) (2026-11-09)
+
+### Added
+
+- **controller:** the operator reads core's version from `GET /api/system/` on start, on every reconnect and once a minute, and refuses a core older than 2.27.0, the first with `ssrf.trusted_networks`, which every registration it makes needs. Against such a core it registers no `MCPServer`, starts no pod for a new container-mode one and delivers no L7 policy. It reports the refusal once for the whole operator: a Warning Event `CoreIncompatible` regarding the operator's Pod, an error log line and the new `mcp_operator_core_compatibility{state}` gauge. An `MCPServer` reports `Ready=False` with reason `CoreIncompatible` and an `MCPEgressPolicy` reports `L7Delivered=False` with that reason; neither goes `Degraded`. A version the operator cannot read, for example because its API key lacks `mcp_servers:read`, holds it the same way with reason `CoreVersionUnknown`. NetworkPolicies and backstops are applied as before. The `hangar_client_*` metrics label the version read `system_info`, which was `capabilities` ([#330](https://github.com/mcp-hangar/mcp-hangar-operator/pull/330))
+
+### Removed
+
+- **api:** remove the v1alpha2 spec fields no controller read: `MCPServer` `spec.startupTimeout`, `spec.healthPath`, `spec.capabilities.enforcementMode`, `spec.capabilities.tools.expectedTools` and `spec.capabilities.tools.schemaDriftAlert` (also under `MCPDiscoverySource` `spec.providerTemplate.spec`), `MCPServerGroup` `spec.healthPolicy.unhealthyThreshold`, `MCPDiscoverySource` `spec.ownership.blockDeletion`, and `MCPEgressPolicy` `spec.upstreams[].match.toolSchemaDigestRef`, `.imageDigest` and `.issuers`. None of them ever changed what the operator did. The violation type enum keeps only the two types the operator emits, `capability_drift` and `undeclared_tool`, and every violation record's `action` is `alert`. `kubectl apply` now rejects a manifest that sets a removed field; see UPGRADE.md ([#401](https://github.com/mcp-hangar/mcp-hangar-operator/pull/401))
+
+### Fixed
+
+- **controller:** whether a NetworkPolicy is enforced is now decided by the operator's own reachability probe instead of the CNI's name. Two canary pods of the operator image run in its namespace behind a NetworkPolicy, and the backstop reads `Enforcing` only when the probe sees that policy block a connection while its control goes through.
+  kindnet and any other enforcing CNI the operator does not know now read `Enforcing`; a recognized CNI that does not block reads `Unenforced`; a probe that cannot run reads `Unverified`. The MCPServer `NetworkPolicyApplied` condition and the enforce-egress namespace warning follow the same verdict ([#393](https://github.com/mcp-hangar/mcp-hangar-operator/pull/393))
+
+### Security
+
+- Bump `golang.org/x/net` to v0.62.0 for CVE-2026-78661 (#396). ([#396](https://github.com/mcp-hangar/mcp-hangar-operator/pull/396))
+
 ## [0.17.36](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.35...v0.17.36) (2026-11-05)
 
 ### Changed

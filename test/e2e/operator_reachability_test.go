@@ -183,6 +183,20 @@ func TestOperator_EgressPolicyBackstopIsEnforced(t *testing.T) {
 	if canReach(t, cs, ns, "probe-denied", clientLabels, denied.Status.PodIP, 8080) {
 		t.Error("traffic to a destination the policy does not list got through the operator's backstop")
 	}
+
+	// The CNI blocks, so the operator's own reachability probe must see it
+	// and say Enforcing -- on every leg, whether or not the CNI's name is one
+	// the operator knows (#393).
+	deadline = time.Now().Add(3 * time.Minute)
+	for time.Now().Before(deadline) {
+		if err := cl.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "pol"}, last); err == nil &&
+			last.Status.BackstopEnforcement == mcpv1alpha2.BackstopEnforcing {
+			return
+		}
+		time.Sleep(5 * time.Second)
+	}
+	t.Errorf("the backstop blocks, but the operator reports %q: %+v",
+		last.Status.BackstopEnforcement, last.Status.Conditions)
 }
 
 func conditionTrue(conds []metav1.Condition, condType string) bool {

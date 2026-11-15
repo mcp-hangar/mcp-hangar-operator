@@ -51,10 +51,12 @@ func newCiliumCRDReconciler(t *testing.T, objs ...client.Object) *MCPEgressPolic
 		WithStatusSubresource(&mcpv1alpha2.MCPEgressPolicy{}).
 		Build()
 	return &MCPEgressPolicyReconciler{
-		Client:           c,
-		Scheme:           scheme,
-		Recorder:         events.NewFakeRecorder(10),
-		EnforcementProbe: &networkpolicy.EnforcementProbe{Mapper: mapper, Reader: c},
+		Client:   c,
+		Scheme:   scheme,
+		Recorder: events.NewFakeRecorder(10),
+		// The block is observed: these tests are about the flavor choice.
+		EnforcementProbe: &networkpolicy.EnforcementProbe{Mapper: mapper, Reader: c,
+			Reachability: reachStub(networkpolicy.EnforcementObserved)},
 	}
 }
 
@@ -104,10 +106,12 @@ func TestEgressPolicy_CiliumCRDWithoutAgent_UsesVanilla(t *testing.T) {
 	assert.NotContains(t, enforceable.Message, "Cilium")
 }
 
-// Nothing runs at all: the leftover CRD must not read as an enforcer.
+// Nothing runs and nothing blocks: the leftover CRD must not make the Cilium
+// flavor, and the unblocked probe reads Unenforced.
 func TestEgressPolicy_CiliumCRDOnly_NotEnforcing(t *testing.T) {
 	p := cidrPolicy("pol")
 	r := newCiliumCRDReconciler(t, testServer("srv", "default"), p)
+	r.EnforcementProbe.Reachability = reachStub(networkpolicy.EnforcementNotObserved)
 
 	out := reconcilePolicy(t, r, p)
 
@@ -139,7 +143,8 @@ func TestEgressPolicy_CiliumUninstalled_RemovesTheStaleCNP(t *testing.T) {
 	require.True(t, ciliumBackstopExists(t, r, "pol"))
 
 	require.NoError(t, r.Delete(context.Background(), ds))
-	r.EnforcementProbe = &networkpolicy.EnforcementProbe{Mapper: r.EnforcementProbe.Mapper, Reader: r.Client}
+	r.EnforcementProbe = &networkpolicy.EnforcementProbe{Mapper: r.EnforcementProbe.Mapper, Reader: r.Client,
+		Reachability: r.EnforcementProbe.Reachability}
 	reconcilePolicy(t, r, p)
 
 	assert.False(t, ciliumBackstopExists(t, r, "pol"), "the stale CiliumNetworkPolicy must be deleted")

@@ -59,7 +59,7 @@ func TestProbe_CNIPolicyAPIServedHere_Observed(t *testing.T) {
 		Mapper: mapperWith(schema.GroupKind{Group: "crd.projectcalico.org", Kind: "GlobalNetworkPolicy"}, "v1"),
 	}
 
-	signal := p.Signal(context.Background())
+	signal := p.observe(context.Background())
 
 	assert.Equal(t, EnforcementObserved, signal.Verdict)
 	assert.Contains(t, signal.Source, "Calico")
@@ -75,7 +75,7 @@ func ciliumCRDMapper() meta.RESTMapper {
 func TestProbe_CiliumCRDWithoutAgent_NotObserved(t *testing.T) {
 	p := &EnforcementProbe{Mapper: ciliumCRDMapper(), Reader: daemonSetReader(t, "coredns")}
 
-	signal := p.Signal(context.Background())
+	signal := p.observe(context.Background())
 
 	assert.Equal(t, EnforcementNotObserved, signal.Verdict)
 	assert.False(t, signal.CiliumAgent)
@@ -85,7 +85,7 @@ func TestProbe_CiliumCRDWithoutAgent_NotObserved(t *testing.T) {
 func TestProbe_CiliumCRDAndAgent_Observed(t *testing.T) {
 	p := &EnforcementProbe{Mapper: ciliumCRDMapper(), Reader: daemonSetReader(t, "cilium")}
 
-	signal := p.Signal(context.Background())
+	signal := p.observe(context.Background())
 
 	assert.Equal(t, EnforcementObserved, signal.Verdict)
 	assert.True(t, signal.CiliumAgent)
@@ -96,7 +96,7 @@ func TestProbe_CiliumCRDAndAgent_Observed(t *testing.T) {
 func TestProbe_CiliumCRDAgentsUnlistable_Unknown(t *testing.T) {
 	p := &EnforcementProbe{Mapper: ciliumCRDMapper(), Reader: &erroringReader{}}
 
-	signal := p.Signal(context.Background())
+	signal := p.observe(context.Background())
 
 	assert.Equal(t, EnforcementUnknown, signal.Verdict)
 	assert.False(t, signal.CiliumAgent)
@@ -115,7 +115,7 @@ func TestProbe_CalicoWithLeftoverCiliumCRD_ObservedNotCilium(t *testing.T) {
 	m.Add(gvs[1].WithKind("GlobalNetworkPolicy"), meta.RESTScopeRoot)
 	p := &EnforcementProbe{Mapper: m, Reader: daemonSetReader(t, "calico-node")}
 
-	signal := p.Signal(context.Background())
+	signal := p.observe(context.Background())
 
 	assert.Equal(t, EnforcementObserved, signal.Verdict)
 	assert.False(t, signal.CiliumAgent)
@@ -128,7 +128,7 @@ func TestProbe_EnforcerAPIMatchesAnyVersion(t *testing.T) {
 		Mapper: mapperWith(schema.GroupKind{Group: "crd.antrea.io", Kind: "AntreaAgentInfo"}, "v1beta2"),
 	}
 
-	assert.Equal(t, EnforcementObserved, p.Signal(context.Background()).Verdict)
+	assert.Equal(t, EnforcementObserved, p.observe(context.Background()).Verdict)
 }
 
 // An enforcer with no CRD to recognize it by is still an enforcer. Without this
@@ -136,7 +136,7 @@ func TestProbe_EnforcerAPIMatchesAnyVersion(t *testing.T) {
 func TestProbe_AgentWithoutCRD_Observed(t *testing.T) {
 	p := &EnforcementProbe{Mapper: emptyMapper(), Reader: daemonSetReader(t, "azure-npm")}
 
-	signal := p.Signal(context.Background())
+	signal := p.observe(context.Background())
 
 	assert.Equal(t, EnforcementObserved, signal.Verdict)
 	assert.Contains(t, signal.Source, "Azure NPM")
@@ -147,20 +147,64 @@ func TestProbe_AgentWithoutCRD_Observed(t *testing.T) {
 func TestProbe_NoAPIAndNoAgent_NotObserved(t *testing.T) {
 	p := &EnforcementProbe{Mapper: emptyMapper(), Reader: daemonSetReader(t, "coredns", "kube-proxy")}
 
-	signal := p.Signal(context.Background())
+	signal := p.observe(context.Background())
 
 	assert.Equal(t, EnforcementNotObserved, signal.Verdict)
-	assert.Contains(t, signal.Source, "no reader")
+	assert.Contains(t, signal.Source, "no CNI agent this operator recognizes")
 }
 
 // A question the operator was not allowed to ask is doubt, not a fault.
 func TestProbe_ListForbidden_Unknown(t *testing.T) {
 	p := &EnforcementProbe{Mapper: emptyMapper(), Reader: &erroringReader{}}
 
-	signal := p.Signal(context.Background())
+	signal := p.observe(context.Background())
 
 	assert.Equal(t, EnforcementUnknown, signal.Verdict)
 	assert.Contains(t, signal.Source, "forbidden")
+}
+
+// fixedReach is a reachability probe that has already answered.
+type fixedReach struct {
+	verdict EnforcementVerdict
+	source  string
+}
+
+func (f fixedReach) Result() (EnforcementVerdict, string) { return f.verdict, f.source }
+
+// The kind walkthrough's cluster (#393): kindnet is on no list, so the name
+// lookup says NotObserved, and the block was observed: the verdict is the
+// probe's.
+func TestSignal_UnrecognizedCNIThatBlocks_Observed(t *testing.T) {
+	p := &EnforcementProbe{Mapper: emptyMapper(), Reader: daemonSetReader(t, "kindnet", "kube-proxy"),
+		Reachability: fixedReach{EnforcementObserved, "blocked"}}
+
+	signal := p.Signal(context.Background())
+
+	assert.Equal(t, EnforcementObserved, signal.Verdict)
+	assert.Contains(t, signal.Source, "blocked")
+}
+
+// A recognized agent is a name, not a block.
+func TestSignal_RecognizedAgentThatDoesNotBlock_NotObserved(t *testing.T) {
+	p := &EnforcementProbe{Mapper: emptyMapper(), Reader: daemonSetReader(t, "calico-node"),
+		Reachability: fixedReach{EnforcementNotObserved, "went through"}}
+
+	signal := p.Signal(context.Background())
+
+	assert.Equal(t, EnforcementNotObserved, signal.Verdict)
+	assert.Contains(t, signal.Source, "went through")
+	assert.Contains(t, signal.Source, "Calico (kube-system/calico-node)", "the name stays as context")
+}
+
+// Without a reachability answer there is no claim, whatever runs; the flavor
+// fact is still gathered.
+func TestSignal_NoReachability_UnknownEvenWithAnAgent(t *testing.T) {
+	p := &EnforcementProbe{Mapper: ciliumCRDMapper(), Reader: daemonSetReader(t, "cilium")}
+
+	signal := p.Signal(context.Background())
+
+	assert.Equal(t, EnforcementUnknown, signal.Verdict)
+	assert.True(t, signal.CiliumAgent)
 }
 
 func TestProbe_NilProbe_Unknown(t *testing.T) {

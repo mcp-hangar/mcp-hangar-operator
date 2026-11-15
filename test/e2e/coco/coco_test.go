@@ -320,7 +320,6 @@ func buildServer(document, pin string) *mcpv1alpha2.MCPServer {
 			Env:                          []corev1.EnvVar{{Name: "KBS_RESOURCE", Value: keyPath}},
 			RuntimeClassName:             &rc,
 			AutomountServiceAccountToken: &noToken,
-			StartupTimeout:               &metav1.Duration{Duration: readyWithin},
 			// The guest pulls the image, so genpolicy cannot take the user from
 			// it and wants the group stated; the rest is the operator's default.
 			PodSecurityContext: &corev1.PodSecurityContext{

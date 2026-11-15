@@ -116,20 +116,96 @@ func TestEgressPolicy_GroupOfOnlyRemoteServers_AppliesNoBackstop(t *testing.T) {
 	assert.Equal(t, mcpv1alpha2.BackstopNotApplicable, out.Status.BackstopEnforcement)
 }
 
-func TestEgressPolicy_GroupWithAContainerMember_StillGetsABackstop(t *testing.T) {
+// A group with a container member and a remote member: the backstop selects
+// the container member's pod and nothing of the remote one, whose traffic
+// leaves from the gateway pod. The policy said BackstopApplied and Enforcing
+// for the whole group and never named the remote member (#410).
+func mixedGroupReconciler(verdict networkpolicy.EnforcementVerdict, p *mcpv1alpha2.MCPEgressPolicy) *MCPEgressPolicyReconciler {
+	team := map[string]string{"team": "x"}
+	return withProbe(newEgressReconciler(testGroup("grp", "default", team),
+		remoteServer("a-remote", "default", team),
+		labeledServer("b-container", "default", team),
+		remoteServer("c-remote", "default", team), p), verdict)
+}
+
+func groupPolicy() *mcpv1alpha2.MCPEgressPolicy {
 	p := testPolicy("pol", "default")
 	p.Spec.TargetRef = mcpv1alpha2.EgressTargetRef{Kind: "MCPServerGroup", Name: "grp"}
-	group := testGroup("grp", "default", map[string]string{"team": "x"})
-	r := withProbe(newEgressReconciler(group,
-		remoteServer("a-remote", "default", map[string]string{"team": "x"}),
-		labeledServer("b-container", "default", map[string]string{"team": "x"}), p), networkpolicy.EnforcementObserved)
+	p.Spec.Upstreams = []mcpv1alpha2.UpstreamRule{{Name: "u", Match: mcpv1alpha2.UpstreamMatch{Host: "10.0.0.0/8"}}}
+	return p
+}
+
+func TestEgressPolicy_GroupWithAContainerMember_StillGetsABackstop(t *testing.T) {
+	p := groupPolicy()
+	r := mixedGroupReconciler(networkpolicy.EnforcementObserved, p)
 
 	out := reconcilePolicy(t, r, p)
 
-	_, err := getBackstop(t, r, "pol", "default")
+	np, err := getBackstop(t, r, "pol", "default")
 	require.NoError(t, err, "the container member has pods to select")
-	assert.Equal(t, metav1.ConditionTrue, condStatus(out, EgressPolicyConditionBackstopApplied).Status)
+	require.Len(t, np.Spec.PodSelector.MatchExpressions, 1)
+	assert.Equal(t, []string{"a-remote", "b-container", "c-remote"}, np.Spec.PodSelector.MatchExpressions[0].Values,
+		"the selector keeps every member; the L7 push addresses core by the same names")
+	applied := condStatus(out, EgressPolicyConditionBackstopApplied)
+	require.NotNil(t, applied)
+	assert.Equal(t, metav1.ConditionTrue, applied.Status)
+	assert.Equal(t, "RemoteMembersNotCovered", applied.Reason)
+	assert.Contains(t, applied.Message, "remote members a-remote, c-remote,",
+		"the members outside the backstop are named, sorted")
+	assert.NotContains(t, applied.Message, "b-container", "the container member is covered")
+	assert.Equal(t, mcpv1alpha2.BackstopPartial, out.Status.BackstopEnforcement,
+		"Enforcing for a group part of which the backstop cannot reach is the over-claim")
+	assert.Equal(t, metav1.ConditionTrue, condStatus(out, EgressPolicyConditionBackstopEnforceable).Status,
+		"the enforcer is there; it is the coverage that is partial")
+	assert.Equal(t, metav1.ConditionFalse, condStatus(out, EgressPolicyConditionDegraded).Status,
+		"nothing is broken, as for a group of only remote members")
+}
+
+func TestEgressPolicy_GroupWithARemoteMember_UnenforcedStaysUnenforced(t *testing.T) {
+	p := groupPolicy()
+	r := mixedGroupReconciler(networkpolicy.EnforcementNotObserved, p)
+
+	out := reconcilePolicy(t, r, p)
+
+	assert.Equal(t, mcpv1alpha2.BackstopUnenforced, out.Status.BackstopEnforcement,
+		"an unread backstop covers nothing, which outranks partial coverage")
+	assert.Equal(t, "RemoteMembersNotCovered", condStatus(out, EgressPolicyConditionBackstopApplied).Reason)
+	assert.Equal(t, "EnforcementNotObserved", condStatus(out, EgressPolicyConditionDegraded).Reason)
+}
+
+func TestEgressPolicy_GroupOfOnlyContainerServers_ReportsAsBefore(t *testing.T) {
+	p := groupPolicy()
+	team := map[string]string{"team": "x"}
+	r := withProbe(newEgressReconciler(testGroup("grp", "default", team),
+		labeledServer("a", "default", team), labeledServer("b", "default", team), p), networkpolicy.EnforcementObserved)
+
+	out := reconcilePolicy(t, r, p)
+
+	applied := condStatus(out, EgressPolicyConditionBackstopApplied)
+	require.NotNil(t, applied)
+	assert.Equal(t, metav1.ConditionTrue, applied.Status)
+	assert.Equal(t, "BackstopApplied", applied.Reason)
+	assert.NotContains(t, applied.Message, "not covered")
 	assert.Equal(t, mcpv1alpha2.BackstopEnforcing, out.Status.BackstopEnforcement)
+}
+
+// The Cilium flavor sets BackstopApplied on its own path; the remote members
+// are named there too.
+func TestEgressPolicy_GroupWithARemoteMember_CiliumFlavorSaysSo(t *testing.T) {
+	p := groupPolicy()
+	team := map[string]string{"team": "x"}
+	r := newCiliumCRDReconciler(t, testGroup("grp", "default", team),
+		remoteServer("a-remote", "default", team), labeledServer("b-container", "default", team),
+		p, agentDaemonSet("cilium"))
+
+	out := reconcilePolicy(t, r, p)
+
+	applied := condStatus(out, EgressPolicyConditionBackstopApplied)
+	require.NotNil(t, applied)
+	assert.Contains(t, applied.Message, "Cilium backstop")
+	assert.Equal(t, "RemoteMembersNotCovered", applied.Reason)
+	assert.Contains(t, applied.Message, "remote members a-remote,")
+	assert.Equal(t, mcpv1alpha2.BackstopPartial, out.Status.BackstopEnforcement)
 }
 
 // Against a real API server, because the status enum is part of the CRD: a
@@ -168,4 +244,37 @@ func TestEgressPolicy_RemoteTarget_Envtest_StatusIsAcceptedAndNoNetworkPolicyExi
 	for _, np := range policies.Items {
 		assert.NotContains(t, np.Name, "pol", "no NetworkPolicy may exist for a remote target")
 	}
+}
+
+// Partial is a new value of the status enum, so a real API server must take
+// it: a CRD without it would reject every status write of a mixed group (#410).
+func TestEgressPolicy_MixedGroup_Envtest_PartialIsAccepted(t *testing.T) {
+	const nsName = "mixed-group-backstop"
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsName}}
+	if err := k8sClient.Create(ctx, ns); err != nil && !apierrors.IsAlreadyExists(err) {
+		require.NoError(t, err)
+	}
+	team := map[string]string{"team": "x"}
+	require.NoError(t, k8sClient.Create(ctx, testGroup("grp", nsName, team)))
+	require.NoError(t, k8sClient.Create(ctx, remoteServer("a-remote", nsName, team)))
+	require.NoError(t, k8sClient.Create(ctx, labeledServer("b-container", nsName, team)))
+	policy := groupPolicy()
+	policy.Namespace = nsName
+	require.NoError(t, k8sClient.Create(ctx, policy))
+
+	r := withProbe(&MCPEgressPolicyReconciler{
+		Client:   k8sClient,
+		Scheme:   k8sClient.Scheme(),
+		Recorder: events.NewFakeRecorder(20),
+	}, networkpolicy.EnforcementObserved)
+	key := types.NamespacedName{Name: "pol", Namespace: nsName}
+	for range 2 {
+		_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: key})
+		require.NoError(t, err)
+	}
+
+	var got mcpv1alpha2.MCPEgressPolicy
+	require.NoError(t, k8sClient.Get(ctx, key, &got))
+	assert.Equal(t, mcpv1alpha2.BackstopPartial, got.Status.BackstopEnforcement)
+	assert.Equal(t, "RemoteMembersNotCovered", condStatus(&got, EgressPolicyConditionBackstopApplied).Reason)
 }

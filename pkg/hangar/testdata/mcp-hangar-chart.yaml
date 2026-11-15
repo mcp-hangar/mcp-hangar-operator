@@ -1,0 +1,21 @@
+# Vendored from mcp-hangar/helm-charts@aa29a6a66cd90149263827ccd84d05b95b3eb521
+# mcp-hangar/Chart.yaml. compat_test.go holds hangar.MinCoreVersion at or below
+# its appVersion: the core this chart ships. Refresh it when the chart moves.
+apiVersion: v2
+name: mcp-hangar
+description: MCP gateway with tool pinning and approvals
+type: application
+kubeVersion: ">=1.25.0-0"
+appVersion: "2.36.1"
+version: 0.15.56
+home: https://mcp-hangar.io
+sources:
+  - https://github.com/mcp-hangar/mcp-hangar
+maintainers:
+  - name: mcp-hangar
+    email: marcin@mcp-hangar.io
+keywords:
+  - mcp
+  - model-context-protocol
+  - ai
+  - llm

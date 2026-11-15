@@ -25,21 +25,21 @@ import (
 // the reconcile reports success, and the pod it claims to govern reaches the
 // cloud metadata endpoint.
 //
-// The operator cannot see the host's data plane from inside such a cluster, so
-// it cannot prove enforcement. What it can do is look for whoever would have to
-// be here for enforcement to happen, and say so when nobody is.
+// So the verdict rests on a packet, not a name (#393): the operator's own
+// reachability probe (reachability.go) writes a NetworkPolicy here and checks
+// that it blocks a connection. The name lookup below only adds context.
 type EnforcementVerdict string
 
 const (
-	// EnforcementObserved means something that enforces NetworkPolicy is
-	// present in this API server. It is evidence of an enforcer, not proof of
-	// enforcement: an agent can be installed and still be broken.
+	// EnforcementObserved means a NetworkPolicy written here was seen to block
+	// a connection whose control went through. It is evidence about the
+	// probe's own pods, not a test of every policy.
 	EnforcementObserved EnforcementVerdict = "Observed"
-	// EnforcementNotObserved means the probe ran, found nothing that enforces
-	// NetworkPolicy, and therefore the written backstop is likely inert.
+	// EnforcementNotObserved means the denied connection went through as well,
+	// so a written backstop is likely inert.
 	EnforcementNotObserved EnforcementVerdict = "NotObserved"
-	// EnforcementUnknown means the probe could not answer -- typically because
-	// the operator may not list DaemonSets. Reported as doubt, never as a
+	// EnforcementUnknown means the probe could not answer: its canaries are not
+	// up, or its control connection failed. Reported as doubt, never as a
 	// failure: degrading on a question nobody could ask would page people over
 	// working policies.
 	EnforcementUnknown EnforcementVerdict = "Unknown"
@@ -163,7 +163,11 @@ type EnforcementProbe struct {
 	// a cluster whose enforcer this code does not recognize (and for the
 	// reverse: an operator knowingly writing into a split control plane).
 	Override EnforcementVerdict
-	// TTL bounds how long a verdict is reused; defaultEnforcementProbeTTL when zero.
+	// Reachability supplies the verdict; without one it is Unknown.
+	Reachability interface {
+		Result() (EnforcementVerdict, string)
+	}
+	// TTL bounds how long the name lookup is reused; defaultEnforcementProbeTTL when zero.
 	TTL time.Duration
 	// Now is the clock, injectable for tests.
 	Now func() time.Time
@@ -181,6 +185,14 @@ func (p *EnforcementProbe) Signal(ctx context.Context) EnforcementSignal {
 		return EnforcementSignal{Verdict: EnforcementUnknown, Source: "no enforcement probe is configured"}
 	}
 	signal := p.observe(ctx)
+	// The name lookup's own verdict is a guess (#393): kindnet enforces and is
+	// on no list. Only its evidence and its agent facts are kept.
+	names := signal.Source
+	signal.Verdict, signal.Source = EnforcementUnknown, "no reachability probe is configured"
+	if p.Reachability != nil {
+		signal.Verdict, signal.Source = p.Reachability.Result()
+	}
+	signal.Source += "; by name: " + names
 	if p.Override != "" {
 		// The flag asserts whether policy is enforced, not which CNI does
 		// it, so the agent facts still come from a look at the cluster: an
@@ -295,7 +307,6 @@ func (p *EnforcementProbe) probe(ctx context.Context) EnforcementSignal {
 	}
 	return EnforcementSignal{
 		Verdict: EnforcementNotObserved,
-		Source: ciliumCRD + "this API server serves no policy-enforcing API and runs no recognized CNI agent, " +
-			"so a NetworkPolicy written here has no reader",
+		Source:  ciliumCRD + "this API server serves no policy-enforcing API and runs no CNI agent this operator recognizes",
 	}
 }

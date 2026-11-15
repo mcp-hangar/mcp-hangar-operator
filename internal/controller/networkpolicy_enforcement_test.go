@@ -51,8 +51,16 @@ func createEgressServer(t *testing.T, srv *mcpv1alpha2.MCPServer) {
 
 // liveProbe is a fresh probe against the envtest apiserver. Fresh per test so
 // the TTL cache cannot carry one test's verdict into the next.
-func liveProbe() *networkpolicy.EnforcementProbe {
-	return &networkpolicy.EnforcementProbe{Mapper: k8sClient.RESTMapper(), Reader: k8sClient}
+func liveProbe(verdict networkpolicy.EnforcementVerdict) *networkpolicy.EnforcementProbe {
+	return &networkpolicy.EnforcementProbe{Mapper: k8sClient.RESTMapper(), Reader: k8sClient,
+		Reachability: reachStub(verdict)}
+}
+
+// reachStub is a reachability probe that has already answered.
+type reachStub networkpolicy.EnforcementVerdict
+
+func (s reachStub) Result() (networkpolicy.EnforcementVerdict, string) {
+	return networkpolicy.EnforcementVerdict(s), "reachability stub: " + string(s)
 }
 
 func countEvents(rec *fakeEventRecorder, reason string) int {
@@ -65,8 +73,8 @@ func countEvents(rec *fakeEventRecorder, reason string) int {
 	return n
 }
 
-// The #199 cluster: envtest serves no policy-enforcing API and runs no CNI
-// agent. The per-server policy is still written, and the server must not claim
+// The #199 cluster: the reachability probe saw its denied connection go
+// through (and envtest runs no CNI agent). The per-server policy is still written, and the server must not claim
 // it is applied in the sense anyone reads: False/PolicyWrittenUnenforced, one
 // Warning on the transition, and no capability_drift spam on every reconcile.
 func TestMCPServerNetworkPolicy_NoEnforcer_ReportsUnenforced(t *testing.T) {
@@ -74,7 +82,7 @@ func TestMCPServerNetworkPolicy_NoEnforcer_ReportsUnenforced(t *testing.T) {
 	createEgressServer(t, srv)
 
 	rec := &fakeEventRecorder{}
-	r := &MCPServerReconciler{Client: k8sClient, Scheme: scheme.Scheme, Recorder: rec, EnforcementProbe: liveProbe()}
+	r := &MCPServerReconciler{Client: k8sClient, Scheme: scheme.Scheme, Recorder: rec, EnforcementProbe: liveProbe(networkpolicy.EnforcementNotObserved)}
 
 	require.NoError(t, r.reconcileNetworkPolicy(ctx, srv))
 	require.NoError(t, r.reconcileViolationDetection(ctx, srv))
@@ -98,7 +106,8 @@ func TestMCPServerNetworkPolicy_NoEnforcer_ReportsUnenforced(t *testing.T) {
 		getCondition(srv.Status.Conditions, ConditionNetworkPolicyApplied).Reason)
 }
 
-// With a CNI agent running, the same write is reported as applied.
+// With the block observed, the same write is reported as applied, and the
+// agent listed by name is kept as context.
 func TestMCPServerNetworkPolicy_EnforcerObserved_ReportsApplied(t *testing.T) {
 	ds := &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "cilium", Namespace: "kube-system"},
@@ -117,7 +126,7 @@ func TestMCPServerNetworkPolicy_EnforcerObserved_ReportsApplied(t *testing.T) {
 	createEgressServer(t, srv)
 
 	rec := &fakeEventRecorder{}
-	r := &MCPServerReconciler{Client: k8sClient, Scheme: scheme.Scheme, Recorder: rec, EnforcementProbe: liveProbe()}
+	r := &MCPServerReconciler{Client: k8sClient, Scheme: scheme.Scheme, Recorder: rec, EnforcementProbe: liveProbe(networkpolicy.EnforcementObserved)}
 	require.NoError(t, r.reconcileNetworkPolicy(ctx, srv))
 
 	cond := getCondition(srv.Status.Conditions, ConditionNetworkPolicyApplied)
@@ -206,7 +215,7 @@ func TestMCPServerNetworkPolicy_NoEnforcer_FullReconcileWarnsOnce(t *testing.T) 
 	})
 
 	rec := &fakeEventRecorder{}
-	r := &MCPServerReconciler{Client: k8sClient, Scheme: scheme.Scheme, Recorder: rec, EnforcementProbe: liveProbe()}
+	r := &MCPServerReconciler{Client: k8sClient, Scheme: scheme.Scheme, Recorder: rec, EnforcementProbe: liveProbe(networkpolicy.EnforcementNotObserved)}
 	// Finalizer, Pod creation, then a pass over the existing Pod.
 	for range 3 {
 		_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: key})
