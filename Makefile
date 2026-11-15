@@ -191,6 +191,9 @@ endef
 
 E2E_CLUSTER ?= mcp-np-e2e
 E2E_CNI ?= calico
+# E2E_NODE_IMAGE pins the kind node image; empty keeps the default of the
+# installed kind.
+E2E_NODE_IMAGE ?=
 # E2E_NODELOCAL_DNS=1 puts NodeLocal DNSCache in the cluster's DNS path the
 # way Cilium supports it (#178): the cache runs as an ordinary pod and a
 # CiliumLocalRedirectPolicy steers traffic for the kube-dns service to the
@@ -229,7 +232,7 @@ endif
 e2e-cluster: ## Create a kind cluster with a NetworkPolicy-enforcing CNI (E2E_CNI=calico|cilium|kindnet).
 	@kind get clusters 2>/dev/null | grep -qx $(E2E_CLUSTER) || \
 		printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnetworking:\n  disableDefaultCNI: $(if $(filter kindnet,$(E2E_CNI)),false,true)\n  podSubnet: "192.168.0.0/16"\nnodes:\n  - role: control-plane\n' \
-		| kind create cluster --name $(E2E_CLUSTER) --config -
+		| kind create cluster --name $(E2E_CLUSTER) $(if $(E2E_NODE_IMAGE),--image $(E2E_NODE_IMAGE)) --config -
 	@echo "waiting for the API server..."
 	@until kubectl --context kind-$(E2E_CLUSTER) get --raw /healthz >/dev/null 2>&1; do sleep 5; done
 ifeq ($(E2E_CNI),cilium)

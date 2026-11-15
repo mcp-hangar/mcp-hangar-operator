@@ -76,6 +76,12 @@ jobs:
           - leg: kindnet
             cni: kindnet
             nodelocaldns: ""
+          # Diagnostic leg for #395: the same CNI on the node image the docs
+          # walkthrough uses, where kindnet did block egress. Not meant to merge.
+          - leg: kindnet-node-1.34
+            cni: kindnet
+            nodelocaldns: ""
+            node_image: kindest/node:v1.34.0
     name: reachability (${{ matrix.leg }})
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -89,7 +95,7 @@ jobs:
         # kindnet (kind's default CNI) enforces NetworkPolicy since kind 0.24;
         # the kindnet leg keeps it. The other legs disable it and install
         # their own CNI.
-        run: make e2e-cluster E2E_CNI=${{ matrix.cni }} E2E_NODELOCAL_DNS=${{ matrix.nodelocaldns }}
+        run: make e2e-cluster E2E_CNI=${{ matrix.cni }} E2E_NODELOCAL_DNS=${{ matrix.nodelocaldns }} E2E_NODE_IMAGE=${{ matrix.node_image }}
 
       - name: Build and run the operator from this checkout
         run: make e2e-operator
@@ -105,6 +111,13 @@ jobs:
           kubectl get ciliumnetworkpolicies -A -o yaml || true
           kubectl get mcpservers,mcpegresspolicies -A -o yaml || true
           kubectl -n mcp-hangar logs -l control-plane=controller-manager --tail=200 || true
+          kind version || true
+          uname -r || true
+          lsmod | grep -E 'nfnetlink_queue|nf_tables|nft_queue' || true
+          kubectl get nodes -o wide || true
+          kubectl -n kube-system get daemonset kindnet -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}' || true
+          kubectl -n kube-system logs -l app=kindnet --tail=300 || true
+          docker exec mcp-np-e2e-control-plane nft list ruleset 2>/dev/null | head -150 || true
           kubectl -n kube-system logs -l k8s-app=calico-node --tail=100 || true
           kubectl -n kube-system logs -l k8s-app=cilium --tail=100 || true
           kubectl -n kube-system logs -l k8s-app=node-local-dns --tail=100 || true
