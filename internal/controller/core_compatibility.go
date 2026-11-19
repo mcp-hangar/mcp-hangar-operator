@@ -183,8 +183,9 @@ func (g *CoreGate) requeue() time.Duration {
 
 // holdForCore stops an MCPServer reconcile before it calls core when the gate
 // says not to. A held server reports Ready=False with the gate's reason and is
-// not Degraded: nothing about the server failed. Before core's first answer it
-// writes nothing, so a restart does not flip every server's status.
+// not Degraded: nothing about the server failed. Its State is Initializing, so
+// State and Ready agree: it is not serving yet (#413). Before core's first
+// answer it writes nothing, so a restart does not flip every server's status.
 func (r *MCPServerReconciler) holdForCore(ctx context.Context, mcpServer *mcpv1alpha2.MCPServer) (bool, ctrl.Result, error) {
 	proceed, reason, msg := r.CoreGate.verdict()
 	if proceed {
@@ -194,6 +195,8 @@ func (r *MCPServerReconciler) holdForCore(ctx context.Context, mcpServer *mcpv1a
 	if reason == "" {
 		return true, result, nil
 	}
-	setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, reason, msg)
+	mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
+	setServerNotReady(mcpServer, ConditionProgressing, reason, msg)
+	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, string(mcpv1alpha2.MCPServerStateInitializing))
 	return true, result, writeStatus(ctx, r.Client, mcpServer)
 }

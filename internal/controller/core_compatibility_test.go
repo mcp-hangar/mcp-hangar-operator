@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/events"
 
+	mcpv1alpha2 "github.com/mcp-hangar/operator/api/v1alpha2"
 	"github.com/mcp-hangar/operator/pkg/hangar"
 	"github.com/mcp-hangar/operator/pkg/metrics"
 	"github.com/mcp-hangar/operator/pkg/networkpolicy"
@@ -154,6 +155,8 @@ func TestOlderCore_NoServerIsRegisteredAndNoneIsDegraded(t *testing.T) {
 		assert.Equal(t, metav1.ConditionFalse, ready.Status)
 		assert.Equal(t, ReasonCoreIncompatible, ready.Reason)
 		assert.False(t, meta.IsStatusConditionTrue(s.Status.Conditions, ConditionDegraded), name)
+		// State agrees with Ready: held, not serving yet (#413).
+		assert.Equal(t, mcpv1alpha2.MCPServerStateInitializing, s.Status.State, name)
 		assert.Zero(t, s.Status.ConsecutiveFailures, name)
 	}
 	assert.Equal(t, []string{"GET /api/system/"}, core.sent(http.MethodGet), "core was asked for its version only")
