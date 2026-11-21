@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.41](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.40...v0.17.41) (2026-11-21)
+
+### Security
+
+- **deps:** the operator image is built with Go 1.27.4, which fixes CVE-2026-97054 in `net/http` (HIGH). The image built with 1.27.3, up to v0.17.40, carried it in its standard library. ([#420](https://github.com/mcp-hangar/mcp-hangar-operator/pull/420))
+
 ## [0.17.40](https://github.com/mcp-hangar/mcp-hangar-operator/compare/v0.17.39...v0.17.40) (2026-11-19)
 
 ### Fixed
