@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
@@ -31,6 +32,19 @@ func assertNotReady(t *testing.T, r *MCPServerReconciler, name, reason string) {
 	require.NotNil(t, ready)
 	assert.Equal(t, metav1.ConditionFalse, ready.Status, "Ready follows State away from Ready")
 	assert.Equal(t, reason, ready.Reason)
+}
+
+// assertServesNothing checks a container server that left Ready reports no
+// replica and Available=False under the branch's reason (#413).
+func assertServesNothing(t *testing.T, r *MCPServerReconciler, name, reason string) {
+	t.Helper()
+	got := getMCPServer(t, r, name, "default")
+	assert.Zero(t, got.Status.ReadyReplicas, "ready replicas")
+	assert.Zero(t, got.Status.AvailableReplicas, "available replicas")
+	available := getCondition(got.Status.Conditions, ConditionAvailable)
+	require.NotNil(t, available)
+	assert.Equal(t, metav1.ConditionFalse, available.Status, "Available follows Ready")
+	assert.Equal(t, reason, available.Reason)
 }
 
 func requireReady(t *testing.T, r *MCPServerReconciler, name, reason string) {
@@ -160,6 +174,7 @@ func TestMCPServer_ContainerMode_DegradedClearsReady(t *testing.T) {
 
 			reconcileMCPServer(t, r, "box", "default")
 			assertNotReady(t, r, "box", c.reason)
+			assertServesNothing(t, r, "box", c.reason)
 		})
 	}
 }
@@ -222,4 +237,43 @@ func TestMCPServer_RegistrationFailure_ClearsReady(t *testing.T) {
 	reconcileMCPServer(t, r, "remote", "default")
 	assertNotReady(t, r, "remote", ReasonRegistrationFailed)
 	assert.Equal(t, 1, warnings(rec), "one Warning on the transition, not one per reconcile")
+}
+
+// #413: a remote server that recovers clears the Degraded=True its failing
+// branch wrote, as a container's Ready does. A stale Degraded kept an alert
+// firing after recovery.
+func TestMCPServer_RemoteMode_RecoveryClearsDegraded(t *testing.T) {
+	var failing atomic.Bool
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if failing.Load() {
+			_, _ = w.Write([]byte(`{"consecutive_failures":3,"total_invocations":10,"total_failures":3,"success_rate":0.7,"can_retry":true}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(core.Close)
+
+	r := newMCPServerReconciler(remoteCR("default", "remote", "http://example.com:8080"))
+	r.HangarClient = hangarClientPointingAt(core.URL)
+	rec := events.NewFakeRecorder(50)
+	r.Recorder = rec
+
+	reconcileMCPServer(t, r, "remote", "default")
+	failing.Store(true)
+	reconcileMCPServer(t, r, "remote", "default")
+	assertNotReady(t, r, "remote", "EndpointUnhealthy")
+	require.True(t, meta.IsStatusConditionTrue(getMCPServer(t, r, "remote", "default").Status.Conditions, ConditionDegraded))
+	_ = warnings(rec)
+
+	failing.Store(false)
+	reconcileMCPServer(t, r, "remote", "default")
+	requireReady(t, r, "remote", "EndpointHealthy")
+	degraded := getCondition(getMCPServer(t, r, "remote", "default").Status.Conditions, ConditionDegraded)
+	require.NotNil(t, degraded)
+	assert.Equal(t, metav1.ConditionFalse, degraded.Status, "recovery clears Degraded")
+	reconcileMCPServer(t, r, "remote", "default")
+	assert.Zero(t, warnings(rec), "recovery emits no Warning")
+	assert.Nil(t, getCondition(getMCPServer(t, r, "remote", "default").Status.Conditions, ConditionAvailable),
+		"a remote server gets no Available condition")
 }

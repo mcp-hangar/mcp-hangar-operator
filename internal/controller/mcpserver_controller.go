@@ -315,7 +315,6 @@ func (r *MCPServerReconciler) syncPodStatus(ctx context.Context, mcpServer *mcpv
 			requeueAfter = r.handlePodRunning(ctx, mcpServer, pod)
 		case corev1.PodPending:
 			mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
-			mcpServer.Status.ReadyReplicas = 0
 			setServerNotReady(mcpServer, ConditionProgressing, "PodPending", "Pod is pending")
 			metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Initializing")
 		case corev1.PodFailed:
@@ -358,7 +357,6 @@ func (r *MCPServerReconciler) handlePodRunning(ctx context.Context, mcpServer *m
 
 	if !allReady {
 		mcpServer.Status.State = mcpv1alpha2.MCPServerStateInitializing
-		mcpServer.Status.ReadyReplicas = 0
 		setServerNotReady(mcpServer, ConditionProgressing, "ContainersStarting", "Waiting for containers to be ready")
 		metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Initializing")
 		return defaultRequeueAfter
@@ -426,8 +424,6 @@ func (r *MCPServerReconciler) reportPodStuck(mcpServer *mcpv1alpha2.MCPServer, r
 	}
 	mcpServer.Status.State = mcpv1alpha2.MCPServerStateDead
 	mcpServer.Status.ConsecutiveFailures = restarts
-	mcpServer.Status.ReadyReplicas = 0
-	mcpServer.Status.AvailableReplicas = 0
 	// Keyed on Degraded, not Ready: a crash loop passes through
 	// Running-but-not-Ready between back-offs, which writes
 	// Ready=False/ContainersStarting and leaves Degraded alone, so keying on
@@ -438,8 +434,7 @@ func (r *MCPServerReconciler) reportPodStuck(mcpServer *mcpv1alpha2.MCPServer, r
 		r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonFailed, ActionReconcile,
 			"Pod cannot run: %s: %s", reason, msg)
 	}
-	setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, reason, msg)
-	setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionTrue, reason, msg)
+	setServerNotReady(mcpServer, ConditionDegraded, reason, msg)
 	metrics.SetMCPServerState(mcpServer.Namespace, mcpServer.Name, "Dead")
 	return defaultRequeueAfter
 }
@@ -538,6 +533,9 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 					"Remote endpoint is healthy")
 			}
 			setServerCondition(mcpServer, ConditionReady, metav1.ConditionTrue, "EndpointHealthy", "Remote endpoint is healthy")
+			// The failing branches set Degraded=True; recovery clears it, as a
+			// container's Ready does, or a stale Degraded keeps an alert firing (#413).
+			setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionFalse, "Healthy", "Remote endpoint is healthy")
 
 			// Tools come from the read model, which is the right source for a
 			// catalogue and the wrong one for liveness -- hence the separate
@@ -568,6 +566,7 @@ func (r *MCPServerReconciler) reconcileRemoteProvider(ctx context.Context, mcpSe
 		// No Hangar client - just mark as ready (assume healthy)
 		mcpServer.Status.State = mcpv1alpha2.MCPServerStateReady
 		setServerCondition(mcpServer, ConditionReady, metav1.ConditionTrue, "Assumed", "No Hangar client, assuming healthy")
+		setServerCondition(mcpServer, ConditionDegraded, metav1.ConditionFalse, "Assumed", "No Hangar client, assuming healthy")
 	}
 
 	mcpServer.Status.Endpoint = endpoint
@@ -695,9 +694,22 @@ func (r *MCPServerReconciler) reconcileNetworkPolicy(ctx context.Context, mcpSer
 // condType left a server that had been Ready=True at Ready=True while core or
 // its pod said it was failing, and the Ready print column and
 // `kubectl wait --for=condition=Ready` went on reporting it as serving (#409).
+//
+// It also takes the replicas with it: a server that is not serving has no
+// ready or available replica, and one that reports Available (a container
+// server, once it has been Ready) reads Available=False under the same reason.
+// Each branch used to clear only what it was written for, so a container in
+// ContainersStarting or ToolsFetchFailed kept Available=True and the replica
+// counts of its last Ready (#413). A remote server has no Available condition
+// and gets none here.
 func setServerNotReady(mcpServer *mcpv1alpha2.MCPServer, condType, reason, message string) {
 	setServerCondition(mcpServer, condType, metav1.ConditionTrue, reason, message)
 	setServerCondition(mcpServer, ConditionReady, metav1.ConditionFalse, reason, message)
+	mcpServer.Status.ReadyReplicas = 0
+	mcpServer.Status.AvailableReplicas = 0
+	if meta.FindStatusCondition(mcpServer.Status.Conditions, ConditionAvailable) != nil {
+		setServerCondition(mcpServer, ConditionAvailable, metav1.ConditionFalse, reason, message)
+	}
 }
 
 // conditionChanges reports whether setting condition t to status/reason would
