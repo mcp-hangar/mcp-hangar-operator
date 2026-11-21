@@ -2,7 +2,7 @@
 # Base images are digest-pinned (Dependabot's docker ecosystem bumps them):
 # the operator enforces pinning on the servers it runs, and so builds the
 # same way (#216).
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS builder
 
 ARG TARGETOS=linux
 ARG TARGETARCH
