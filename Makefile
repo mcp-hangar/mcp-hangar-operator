@@ -174,8 +174,10 @@ endef
 # CNI, so neither can tell you whether a packet is actually dropped. These
 # targets build a cluster whose CNI enforces NetworkPolicy and check reachability.
 #
-# kind's default CNI (kindnet) does NOT enforce NetworkPolicy -- every deny test
-# would pass for the wrong reason. Hence disableDefaultCNI + a real CNI.
+# kind's default CNI (kindnet) enforces NetworkPolicy, but not on a pod's first
+# connections right after it starts (about one second, #395). The probes are new
+# pods that connect at once, so on kindnet the deny tests see that fail-open
+# window. Hence disableDefaultCNI + a real CNI.
 #
 # E2E_CNI selects which one:
 #   calico (default) -- enforces the Vanilla NetworkPolicy path (CIDR peers).
