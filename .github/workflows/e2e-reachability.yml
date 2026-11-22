@@ -80,9 +80,13 @@ jobs:
           go-version-file: go.mod
 
       - name: Create kind cluster with ${{ matrix.cni }}
-        # kind's default CNI (kindnet) does NOT enforce NetworkPolicy. Running
-        # these tests on it would pass every deny assertion for the wrong
-        # reason, which is worse than not running them.
+        # kind's default CNI (kindnet) enforces NetworkPolicy, but not on a
+        # pod's first connections right after it starts (about one second):
+        # a new pod that connects at once gets through a default-deny egress
+        # policy. These probes are such pods, so a kindnet leg would fail on
+        # that fail-open window rather than on the operator, and the matrix
+        # has none. Diagnosis:
+        # https://github.com/mcp-hangar/mcp-hangar-operator/pull/395#issuecomment-6899128663
         run: make e2e-cluster E2E_CNI=${{ matrix.cni }} E2E_NODELOCAL_DNS=${{ matrix.nodelocaldns }}
 
       - name: Build and run the operator from this checkout

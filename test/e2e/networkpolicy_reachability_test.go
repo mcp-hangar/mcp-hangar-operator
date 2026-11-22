@@ -17,10 +17,11 @@
 // change to the builder is exercised here rather than a hand-written copy of
 // what the builder is believed to emit.
 //
-// Requires: a cluster whose CNI enforces NetworkPolicy (kind's default kindnet
-// does NOT -- see `make e2e-cluster`, which builds kind + Calico), and, for
-// operator_reachability_test.go, the operator running in it (`make
-// e2e-operator`).
+// Requires: a cluster whose CNI enforces NetworkPolicy from a pod's first
+// connection (kind's default kindnet lets a just-started pod's first
+// connections through, #395 -- see `make e2e-cluster`, which builds kind +
+// Calico), and, for operator_reachability_test.go, the operator running in it
+// (`make e2e-operator`).
 package e2e
 
 import (
